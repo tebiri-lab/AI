@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Previz Studio</title>
+  <meta name="description" content="three.js 기반 프리비즈(Previsualization) 생성기 — 샷 설명으로 카메라 무빙을 만들고 애니매틱·glTF·AI 영상 프롬프트로 내보냅니다." />
+  <link rel="stylesheet" href="css/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.min.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand"><span class="dot"></span>PREVIZ<span class="brand-sub">STUDIO</span></div>
+    <input id="projectName" class="project-name" spellcheck="false" aria-label="프로젝트 이름" />
+    <div class="top-actions">
+      <button id="btnUndo" title="실행 취소 (Ctrl+Z)">↶</button>
+      <button id="btnRedo" title="다시 실행 (Ctrl+Shift+Z)">↷</button>
+      <span class="sep"></span>
+      <button id="btnNew">새로 만들기</button>
+      <button id="btnSample">예제</button>
+      <button id="btnOpen">열기</button>
+      <button id="btnSave">저장</button>
+      <input id="fileInput" type="file" accept=".json,application/json" hidden />
+      <div class="menu">
+        <button id="btnExport" class="primary">내보내기 ▾</button>
+        <div id="exportMenu" class="menu-pop" hidden>
+          <button data-export="png">현재 프레임 PNG</button>
+          <button data-export="webm-shot">현재 샷 영상 (WebM)</button>
+          <button data-export="webm-all">전체 애니매틱 (WebM)</button>
+          <button data-export="gltf">glTF (.glb) — 씬 + 카메라 애니메이션</button>
+          <button data-export="prompts">샷리스트 · AI 영상 프롬프트</button>
+          <button data-export="json">프로젝트 JSON</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- LEFT PANEL -->
+    <aside id="left" class="panel">
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="gen">생성</button>
+        <button class="tab" data-tab="scene">씬</button>
+        <button class="tab" data-tab="project">프로젝트</button>
+      </nav>
+
+      <section class="tab-body" data-body="gen">
+        <div class="group">
+          <label class="lbl">샷 설명으로 생성 <span class="hint">한 줄 = 한 샷</span></label>
+          <textarea id="genText" rows="5" spellcheck="false" placeholder="예)
+배우A 클로즈업 로우앵글 천천히 달리인 85mm 4초
+배우B 오버숄더 미디엄 50mm 3초
+자동차 와이드 드론 24mm 6초
+배우A 풀샷 트래킹 핸드헬드 35mm 5초"></textarea>
+          <div class="row">
+            <button id="btnGenText" class="primary grow">텍스트로 샷 생성</button>
+            <label class="chk"><input type="checkbox" id="genReplace" /> 현재 샷 교체</label>
+          </div>
+          <div id="genLog" class="gen-log"></div>
+        </div>
+
+        <div class="group">
+          <label class="lbl">샷 빌더</label>
+          <div class="grid2">
+            <label>피사체<select id="gSubject"></select></label>
+            <label>보조 피사체<select id="gSubject2"></select></label>
+            <label>샷 사이즈<select id="gSize"></select></label>
+            <label>앵글<select id="gAngle"></select></label>
+            <label>방향<select id="gDir"></select></label>
+            <label>카메라 무브<select id="gMove"></select></label>
+            <label>속도<select id="gSpeed">
+              <option value="slow">천천히</option>
+              <option value="normal" selected>보통</option>
+              <option value="fast">빠르게</option>
+            </select></label>
+            <label>렌즈 (mm)<input id="gLens" type="number" min="8" max="400" step="1" value="35" list="lensList" /></label>
+            <label>길이 (초)<input id="gDur" type="number" min="0.5" max="60" step="0.5" value="4" /></label>
+            <label>이징<select id="gEase">
+              <option value="inout" selected>Ease In/Out</option>
+              <option value="linear">Linear</option>
+              <option value="in">Ease In</option>
+              <option value="out">Ease Out</option>
+            </select></label>
+          </div>
+          <div class="row">
+            <label class="chk"><input type="checkbox" id="gHandheld" /> 핸드헬드</label>
+            <label class="chk"><input type="checkbox" id="gDutch" /> 더치 앵글</label>
+          </div>
+          <div class="row">
+            <button id="btnGenApply" class="grow">현재 샷에 적용</button>
+            <button id="btnGenNew" class="primary grow">새 샷으로 생성</button>
+          </div>
+          <datalist id="lensList">
+            <option value="14"></option><option value="18"></option><option value="24"></option>
+            <option value="35"></option><option value="50"></option><option value="65"></option>
+            <option value="85"></option><option value="100"></option><option value="135"></option>
+          </datalist>
+        </div>
+      </section>
+
+      <section class="tab-body" data-body="scene" hidden>
+        <div class="group">
+          <label class="lbl">오브젝트 추가</label>
+          <div class="add-grid">
+            <button data-add="actor">인물</button>
+            <button data-add="car">자동차</button>
+            <button data-add="box">박스</button>
+            <button data-add="cylinder">기둥</button>
+            <button data-add="wall">벽</button>
+            <button data-add="tree">나무</button>
+            <button data-add="table">테이블</button>
+            <button data-add="mark">바닥 마크</button>
+          </div>
+        </div>
+        <div class="group">
+          <label class="lbl">씬 오브젝트</label>
+          <ul id="objList" class="obj-list"></ul>
+        </div>
+        <div class="group" id="objInspector" hidden>
+          <label class="lbl">선택 오브젝트</label>
+          <div class="grid2">
+            <label class="span2">이름<input id="oName" /></label>
+            <label>색상<input id="oColor" type="color" /></label>
+            <label>회전 Y (°)<input id="oRot" type="number" step="5" /></label>
+            <label>X (m)<input id="oX" type="number" step="0.1" /></label>
+            <label>Z (m)<input id="oZ" type="number" step="0.1" /></label>
+            <label>Y (m)<input id="oY" type="number" step="0.1" /></label>
+            <label id="oHWrap">키 (m)<input id="oH" type="number" step="0.05" min="0.3" /></label>
+            <label class="dims">폭<input id="oSX" type="number" step="0.1" min="0.05" /></label>
+            <label class="dims">높이<input id="oSY" type="number" step="0.1" min="0.05" /></label>
+            <label class="dims">깊이<input id="oSZ" type="number" step="0.1" min="0.05" /></label>
+          </div>
+          <p class="hint block">이 샷에 키가 없으면 이동은 <b>모든 샷의 기본 위치</b>를 바꿉니다. 키를 추가하면 이 샷에서만 애니메이션됩니다.</p>
+          <div class="row">
+            <button id="btnObjKey" class="grow">이 샷에서 키 추가</button>
+            <button id="btnObjClearKeys" class="grow">키 모두 삭제</button>
+          </div>
+          <ul id="objKeys" class="key-list"></ul>
+          <div class="row">
+            <button id="btnObjDup" class="grow">복제</button>
+            <button id="btnObjDel" class="grow danger">삭제</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-body" data-body="project" hidden>
+        <div class="group grid2">
+          <label>화면비<select id="pAspect"></select></label>
+          <label>센서<select id="pSensor"></select></label>
+          <label>FPS<select id="pFps">
+            <option value="24">24</option><option value="25">25</option>
+            <option value="30">30</option><option value="60">60</option>
+          </select></label>
+          <label>라이팅<select id="pLight"></select></label>
+          <label class="span2">프롬프트 스타일 꼬리말<textarea id="pStyle" rows="3" spellcheck="false"></textarea></label>
+        </div>
+        <div class="group">
+          <label class="lbl">단축키</label>
+          <ul class="shortcuts">
+            <li><kbd>Space</kbd> 재생 / 정지</li>
+            <li><kbd>K</kbd> 카메라 키 추가</li>
+            <li><kbd>W</kbd> / <kbd>E</kbd> 이동 / 회전 기즈모</li>
+            <li><kbd>F</kbd> 선택 대상에 포커스</li>
+            <li><kbd>C</kbd> 카메라 선택 · <kbd>T</kbd> 타깃 선택</li>
+            <li><kbd>Del</kbd> 선택 오브젝트 삭제</li>
+            <li><kbd>←</kbd>/<kbd>→</kbd> 1프레임 이동</li>
+            <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> 실행 취소</li>
+          </ul>
+        </div>
+      </section>
+    </aside>
+
+    <!-- CENTER -->
+    <section id="center">
+      <div id="viewbar">
+        <div class="seg" id="layoutSeg">
+          <button data-layout="split" class="active">분할</button>
+          <button data-layout="camera">카메라</button>
+          <button data-layout="director">디렉터</button>
+        </div>
+        <div class="seg" id="gizmoSeg">
+          <button data-gizmo="translate" class="active" title="W">이동</button>
+          <button data-gizmo="rotate" title="E">회전</button>
+        </div>
+        <div class="seg">
+          <button id="tgThirds" class="toggle active">3분할</button>
+          <button id="tgSafe" class="toggle">세이프</button>
+          <button id="tgHud" class="toggle active">HUD</button>
+        </div>
+        <span class="grow"></span>
+        <button id="btnCamFromView" title="디렉터 뷰의 시점을 현재 시간의 카메라 키로">디렉터 뷰 → 카메라</button>
+      </div>
+      <div id="viewports" class="layout-split">
+        <div id="directorPane" class="pane">
+          <canvas id="directorCanvas"></canvas>
+          <div class="pane-label">디렉터 뷰</div>
+          <div id="selBadge" class="sel-badge" hidden></div>
+        </div>
+        <div id="shotPane" class="pane">
+          <div id="shotFrame">
+            <canvas id="shotCanvas"></canvas>
+            <div id="ovThirds" class="ov thirds"><i></i><i></i><i></i><i></i></div>
+            <div id="ovSafe" class="ov safe" hidden></div>
+            <div id="ovHud" class="ov hud">
+              <div class="hud-tl" id="hudTL"></div>
+              <div class="hud-tr" id="hudTR"></div>
+              <div class="hud-bl" id="hudBL"></div>
+              <div class="hud-br" id="hudBR"></div>
+            </div>
+            <div id="recBadge" class="rec" hidden>● REC</div>
+          </div>
+          <div class="pane-label">샷 카메라</div>
+        </div>
+      </div>
+
+      <!-- TIMELINE -->
+      <div id="timeline">
+        <div class="transport">
+          <button id="btnStart" title="처음으로">⏮</button>
+          <button id="btnPlay" class="play" title="재생 (Space)">▶</button>
+          <button id="btnEnd" title="끝으로">⏭</button>
+          <label class="chk"><input type="checkbox" id="chkLoop" checked /> 반복</label>
+          <label class="chk"><input type="checkbox" id="chkAll" /> 전체 샷 재생</label>
+          <span id="timecode" class="tc">00:00:00</span>
+          <span class="grow"></span>
+          <button id="btnAddKey" title="K">◆ 카메라 키</button>
+        </div>
+        <div id="track">
+          <div id="ticks"></div>
+          <div class="lane" id="laneCam"><span class="lane-name">카메라</span></div>
+          <div class="lane" id="laneObj"><span class="lane-name" id="laneObjName">오브젝트</span></div>
+          <div id="playhead"></div>
+        </div>
+        <div id="shotStrip">
+          <div id="shotCards"></div>
+          <button id="btnShotAdd" class="shot-add" title="빈 샷 추가">＋</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL -->
+    <aside id="right" class="panel">
+      <div class="group">
+        <label class="lbl">샷 <span id="shotIndex" class="hint"></span></label>
+        <div class="grid2">
+          <label class="span2">이름<input id="sName" /></label>
+          <label>길이 (초)<input id="sDur" type="number" min="0.5" max="120" step="0.5" /></label>
+          <label>이징<select id="sEase">
+            <option value="inout">Ease In/Out</option>
+            <option value="linear">Linear</option>
+            <option value="in">Ease In</option>
+            <option value="out">Ease Out</option>
+          </select></label>
+          <label class="span2">액션 / 설명<textarea id="sDesc" rows="3" placeholder="예) 비 내리는 골목, 그녀가 천천히 뒤돌아본다"></textarea></label>
+        </div>
+        <div class="row">
+          <button id="btnShotDup" class="grow">복제</button>
+          <button id="btnShotUp" title="앞으로">◀</button>
+          <button id="btnShotDown" title="뒤로">▶</button>
+          <button id="btnShotDel" class="danger">삭제</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <label class="lbl">카메라 <span class="hint">현재 시간 기준</span></label>
+        <div class="slider-row">
+          <span>렌즈</span>
+          <input id="cFocal" type="range" min="10" max="200" step="1" />
+          <input id="cFocalN" type="number" min="8" max="400" step="1" class="num" />
+          <span class="unit">mm</span>
+        </div>
+        <div class="slider-row">
+          <span>롤</span>
+          <input id="cRoll" type="range" min="-45" max="45" step="1" />
+          <input id="cRollN" type="number" min="-90" max="90" step="1" class="num" />
+          <span class="unit">°</span>
+        </div>
+        <div class="slider-row">
+          <span>흔들림</span>
+          <input id="cShake" type="range" min="0" max="1" step="0.05" />
+          <output id="cShakeN" class="num"></output>
+          <span class="unit"></span>
+        </div>
+        <div class="row">
+          <label class="chk"><input type="checkbox" id="chkAutoKey" checked /> 자동 키</label>
+          <span class="grow"></span>
+          <button id="btnSelCam">카메라 선택</button>
+          <button id="btnSelTgt">타깃 선택</button>
+        </div>
+        <ul id="camKeys" class="key-list"></ul>
+      </div>
+
+      <div class="group">
+        <label class="lbl">AI 영상 프롬프트</label>
+        <pre id="promptOut" class="prompt"></pre>
+        <div class="row">
+          <button id="btnCopyPrompt" class="grow">복사</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
