@@ -1141,7 +1141,7 @@ function bindUI() {
   $('projectName').addEventListener('change', (e) => mutate(() => { project.name = e.target.value.trim() || '프리비즈'; }));
   $('btnUndo').onclick = undo;
   $('btnRedo').onclick = redo;
-  $('btnNew').onclick = () => { if (confirm('새 프로젝트를 시작할까요? (현재 작업은 되돌리기로 복구 가능)')) loadProject(blankProject(), true); };
+  $('btnNew').onclick = () => { loadProject(blankProject(), true); toast('새 프로젝트를 시작했습니다 — Ctrl+Z 로 이전 작업 복구'); };
   $('btnSample').onclick = () => loadProject(sampleProject(), true);
   $('btnSave').onclick = () => exportJSON(project);
   $('btnOpen').onclick = () => $('fileInput').click();
