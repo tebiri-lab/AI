@@ -115,3 +115,24 @@ export function sampleObject(obj, shot, t) {
 export function keyIndexAt(keys, t, tol) {
   return keys.findIndex((k) => Math.abs(k.t - t) <= tol);
 }
+
+// Live target of a shot whose camera is locked onto a (possibly moving) object.
+export function lockTarget(shot, objects, t) {
+  const lock = shot.lookAt;
+  if (!lock) return null;
+  const o = objects.find((x) => x.id === lock.id);
+  if (!o) return null;
+  const s = sampleObject(o, shot, t);
+  return new THREE.Vector3(s.pos[0] + lock.offset[0], s.pos[1] + lock.offset[1], s.pos[2] + lock.offset[2]);
+}
+
+// Camera sample with the look-at lock applied (handheld shake still rides on top).
+export function resolveCamera(shot, t, objects, withShake = true) {
+  const out = sampleCamera(shot, t, withShake);
+  const lt = lockTarget(shot, objects, t);
+  if (lt) {
+    if (withShake && shot.shake > 0) out.target = lt.add(out.target.sub(sampleCamera(shot, t, false).target));
+    else out.target = lt;
+  }
+  return out;
+}

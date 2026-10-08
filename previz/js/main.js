@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS } from './constants.js';
-import { sampleCamera, sampleObject, sortKeys, keyIndexAt } from './anim.js';
-import { generateShot, parseShotText, describeShot, defaultParams } from './generator.js';
+import { sampleCamera, resolveCamera, lockTarget, sampleObject, sortKeys, keyIndexAt } from './anim.js';
+import { generateShot, parseShotText, describeShot, defaultParams, objectHeight } from './generator.js';
 import { buildObject, signature, poseWalk, buildGround, buildLights, applyLighting, buildCameraRig } from './scene.js';
 import { exportPNG, recordWebM, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 
@@ -337,7 +337,7 @@ function poseScene(shot, t) {
     g.rotation.set(0, THREE.MathUtils.degToRad(s.rotY), 0);
     poseWalk(g, s.dist, s.speed);
   }
-  const cs = sampleCamera(shot, t);
+  const cs = resolveCamera(shot, t, project.objects);
   applyCamera(shotCam, cs, aspect());
   return cs;
 }
@@ -354,7 +354,7 @@ function updateDirectorAids(cs) {
   helperCam.updateMatrixWorld(true);
   camHelper.update();
   if (!(dragging && (selection?.kind === 'camera' || selection?.kind === 'target'))) {
-    const clean = sampleCamera(cur(), time, false);
+    const clean = resolveCamera(cur(), time, project.objects, false);
     camHandle.position.copy(clean.pos);
     tgtHandle.position.copy(clean.target);
   }
@@ -410,7 +410,7 @@ function renderOneThumb() {
   const a = aspect();
   const w = 240, h = Math.round(Math.min(240 / a, 200));
   thumbRenderer.setSize(Math.round(h * a), h, false);
-  const cs = sampleCamera(shot, 0, false);
+  const cs = resolveCamera(shot, 0, project.objects, false);
   for (const o of project.objects) {
     const g = meshes.get(o.id);
     const s = sampleObject(o, shot, 0);
@@ -511,7 +511,7 @@ function updateHud(cs) {
     focal.value = Math.round(cs.focal);
     $('cFocalN').value = Math.round(cs.focal);
   }
-  const clean = sampleCamera(shot, time, false);
+  const clean = resolveCamera(shot, time, project.objects, false);
   if (document.activeElement !== $('cRoll') && document.activeElement !== $('cRollN')) {
     $('cRoll').value = Math.round(clean.roll);
     $('cRollN').value = Math.round(clean.roll);
@@ -539,7 +539,10 @@ function select(sel) {
   const objBtn = $('btnAddObjKey');
   objBtn.disabled = sel?.kind !== 'object';
   objBtn.textContent = sel?.kind === 'object' ? `◆ ${objById(sel.id)?.name} 키` : '◆ 오브젝트 키';
-  if (sel?.kind === 'object') document.querySelector('.tab[data-tab="scene"]')?.click();
+  if (sel?.kind === 'object') {
+    document.querySelector('.tab[data-tab="scene"]')?.click();
+    setFocusArea('scene');
+  }
   const badge = $('selBadge');
   if (!sel) badge.hidden = true;
   else {
@@ -581,7 +584,14 @@ function upsertKey(keys, make, update) {
 
 function writeCamera(patch) {
   const shot = cur();
-  const base = sampleCamera(shot, time, false);
+  const lockObj = shot.lookAt && objById(shot.lookAt.id);
+  if (patch.target && lockObj) {
+    const s = sampleObject(lockObj, shot, time);
+    shot.lookAt.offset = [patch.target.x - s.pos[0], patch.target.y - s.pos[1], patch.target.z - s.pos[2]].map(r3);
+    patch = { ...patch, target: null };
+    if (!patch.pos && patch.focal == null && patch.roll == null) return true;
+  }
+  const base = resolveCamera(shot, time, project.objects, false);
   const ok = upsertKey(shot.keys,
     () => ({ pos: vArr(base.pos), target: vArr(base.target), focal: r3(base.focal), roll: r3(base.roll) }),
     (k) => {
@@ -754,7 +764,7 @@ function renderShotCards() {
     meta.innerHTML = `<b>${i + 1}</b><span class="nm"></span><span class="dur">${s.duration}s</span>`;
     meta.querySelector('.nm').textContent = s.name;
     card.append(img, meta);
-    card.addEventListener('click', () => { setPlaying(false); setShot(i); });
+    card.addEventListener('click', () => { setPlaying(false); setShot(i); setFocusArea('shots'); });
     card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(i)); card.classList.add('dragging'); });
     card.addEventListener('dragend', () => card.classList.remove('dragging'));
     card.addEventListener('dragover', (e) => { e.preventDefault(); card.classList.add('over'); });
@@ -784,6 +794,11 @@ function renderShotInspector() {
   if (document.activeElement !== $('sDesc')) $('sDesc').value = s.desc;
   $('cShake').value = s.shake;
   $('cShakeN').textContent = (+s.shake).toFixed(2);
+  const lock = $('cLock');
+  lock.innerHTML = '';
+  lock.append(new Option('없음 (키프레임 타깃)', ''));
+  for (const o of project.objects) lock.append(new Option(o.name, o.id));
+  lock.value = s.lookAt && objById(s.lookAt.id) ? s.lookAt.id : '';
   const src = s.meta?.source;
   $('sDesc').title = src ? `원문: ${src}` : '';
 }
@@ -1010,7 +1025,26 @@ function writeGenParams(p) {
   $('gDutch').checked = !!p.dutch;
 }
 
+// Bake the live lock into the keys so framing survives unlocking.
+function unlockShot(shot) {
+  if (!shot.lookAt) return;
+  for (const k of shot.keys) {
+    const lt = lockTarget(shot, project.objects, k.t);
+    if (lt) k.target = vArr(lt);
+  }
+  delete shot.lookAt;
+}
+
+function lockShot(shot, id) {
+  const o = objById(id);
+  if (!o) return;
+  const H = objectHeight(o);
+  const frac = o.type === 'actor' ? (SIZES[shot.meta?.size]?.aim ?? 0.85) : 0.5;
+  shot.lookAt = { id, offset: [0, r3(H * frac), 0] };
+}
+
 function applyGenToShot(shot, gen) {
+  delete shot.lookAt;
   for (const id of shot.genAnim || []) delete shot.anim[id];
   shot.keys = gen.keys;
   shot.anim = { ...shot.anim, ...gen.anim };
@@ -1265,14 +1299,11 @@ function bindUI() {
     project.shots.splice(shotIdx + 1, 0, c);
     shotIdx += 1;
   });
-  $('btnShotDel').onclick = () => {
-    if (project.shots.length <= 1) return toast('마지막 샷은 삭제할 수 없습니다');
-    mutate(() => { project.shots.splice(shotIdx, 1); shotIdx = Math.max(0, shotIdx - 1); });
-  };
+  $('btnShotDel').onclick = deleteShot;
   $('btnShotUp').onclick = () => { if (shotIdx > 0) mutate(() => { const [s] = project.shots.splice(shotIdx, 1); project.shots.splice(--shotIdx, 0, s); }); };
   $('btnShotDown').onclick = () => { if (shotIdx < project.shots.length - 1) mutate(() => { const [s] = project.shots.splice(shotIdx, 1); project.shots.splice(++shotIdx, 0, s); }); };
   $('btnShotAdd').onclick = () => mutate(() => {
-    const cs = sampleCamera(cur(), time, false);
+    const cs = resolveCamera(cur(), time, project.objects, false);
     project.shots.splice(shotIdx + 1, 0, {
       id: uid(), name: `샷 ${project.shots.length + 1}`, duration: 4, desc: '', ease: 'inout', shake: 0,
       keys: [{ t: 0, pos: vArr(cs.pos), target: vArr(cs.target), focal: r3(cs.focal), roll: r3(cs.roll) }],
@@ -1289,6 +1320,17 @@ function bindUI() {
   liveInput($('cRoll'), (el) => { writeCamera({ roll: +el.value }); $('cRollN').value = el.value; });
   liveInput($('cRollN'), (el) => writeCamera({ roll: clamp(+el.value || 0, -90, 90) }));
   liveInput($('cShake'), (el) => { cur().shake = +el.value; $('cShakeN').textContent = (+el.value).toFixed(2); });
+  $('cLock').addEventListener('change', (e) => {
+    const id = e.target.value;
+    mutate(() => {
+      const shot = cur();
+      unlockShot(shot);
+      if (id) lockShot(shot, id);
+    });
+    toast(id
+      ? `카메라가 ${objById(id).name}을(를) 계속 바라봅니다 — 노란 타깃을 드래그하면 겨누는 높이를 조정합니다`
+      : '타깃 고정을 해제했습니다 (현재 프레이밍은 키에 저장됨)', 4000);
+  });
   $('btnSelCam').onclick = () => select({ kind: 'camera' });
   $('btnSelTgt').onclick = () => select({ kind: 'target' });
   $('btnAddKey').onclick = addCamKey;
@@ -1336,7 +1378,7 @@ function addCamKey() {
   const shot = cur();
   if (keyIndexAt(shot.keys, time, frameTol()) >= 0) return toast('이미 이 시간에 키가 있습니다');
   mutate(() => {
-    const s = sampleCamera(shot, time, false);
+    const s = resolveCamera(shot, time, project.objects, false);
     shot.keys.push({ t: r3(time), pos: vArr(s.pos), target: vArr(s.target), focal: r3(s.focal), roll: r3(s.roll) });
     sortKeys(shot.keys);
   });
@@ -1362,15 +1404,32 @@ function addObjKey() {
     : `${o.name} 키 추가`, 4000);
 }
 
+function deleteShot() {
+  if (project.shots.length <= 1) return toast('마지막 샷은 삭제할 수 없습니다');
+  const n = shotIdx + 1;
+  setPlaying(false);
+  mutate(() => { project.shots.splice(shotIdx, 1); shotIdx = Math.max(0, shotIdx - 1); });
+  toast(`샷 #${n}을(를) 삭제했습니다 — Ctrl+Z로 복구`);
+}
+
+// Which area Delete acts on: the shot strip or the scene selection.
+let lastFocus = 'scene';
+function setFocusArea(area) {
+  lastFocus = area;
+  $('shotStrip').classList.toggle('focused', area === 'shots');
+}
+
 function deleteSelectedObject() {
   if (selection?.kind !== 'object') return;
   const id = selection.id;
   select(null);
   mutate(() => {
+    for (const s of project.shots) if (s.lookAt?.id === id) unlockShot(s);
     project.objects = project.objects.filter((o) => o.id !== id);
     for (const s of project.shots) {
       if (s.anim) delete s.anim[id];
       if (s.meta?.subject === id) s.meta.subject = null;
+      if (s.lookAt?.id === id) unlockShot(s);
     }
   });
 }
@@ -1392,7 +1451,10 @@ function onKey(e) {
     case 'c': case 'C': select({ kind: 'camera' }); break;
     case 't': case 'T': select({ kind: 'target' }); break;
     case 'Escape': select(null); break;
-    case 'Delete': case 'Backspace': deleteSelectedObject(); break;
+    case 'Delete': case 'Backspace':
+      if (lastFocus === 'shots' || selection?.kind !== 'object') deleteShot();
+      else deleteSelectedObject();
+      break;
     case 'ArrowLeft': setPlaying(false); setTime(time - 1 / project.fps); break;
     case 'ArrowRight': setPlaying(false); setTime(time + 1 / project.fps); break;
     case 'Home': setTime(0); break;

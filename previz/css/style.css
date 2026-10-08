@@ -277,3 +277,6 @@ kbd { font-family: var(--mono); font-size: 11px; background: var(--panel-2); bor
 button:disabled { opacity: .45; cursor: not-allowed; }
 button:disabled:active { transform: none; }
 .transport .objkey:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+
+.lock-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 6px; color: var(--muted); }
+#shotStrip.focused #shotCards .shot-card.active { box-shadow: 0 0 0 2px var(--accent); }

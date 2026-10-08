@@ -362,6 +362,7 @@ export function describeShot(shot, project, index) {
   const subj = project.objects.find((o) => o.id === m.subject);
   const lens = f0 === f1 ? `${Math.round(f0)}mm` : `${Math.round(f0)}→${Math.round(f1)}mm`;
   const aspect = (+project.aspect).toFixed(2).replace(/\.00$/, '');
+  const lockName = shot.lookAt ? project.objects.find((o) => o.id === shot.lookAt.id)?.name : null;
 
   const ko = [
     `#${index + 1} ${shot.name}`,
@@ -372,6 +373,7 @@ export function describeShot(shot, project, index) {
     move.ko,
     lens,
     shot.shake > 0 ? '핸드헬드' : null,
+    lockName ? `타깃 고정: ${lockName}` : null,
     shot.desc ? `— ${shot.desc}` : null,
   ].filter(Boolean).join(' | ');
 
@@ -379,11 +381,13 @@ export function describeShot(shot, project, index) {
   parts.push(`Cinematic ${size ? size.en : 'shot'}`);
   if (angle && m.angle !== 'eye') parts.push(angle.en);
   else parts.push('eye-level');
-  if (dir) parts.push(`${dir.en} angle${subj ? ` on ${subj.name}` : ''}`);
+  const onName = lockName || subj?.name;
+  if (dir) parts.push(`${dir.en} angle${onName ? ` on ${onName}` : ''}`);
   const moveTxt = m.move === 'static' || (!m.move && keys.length < 2) ? move.en : `${speed.en} ${move.en}`;
   parts.push(moveTxt);
   if ((keys[0]?.roll || 0) !== 0) parts.push('Dutch tilt');
   if (shot.shake > 0) parts.push('handheld camera with subtle natural shake');
+  if (lockName) parts.push('camera keeps the subject locked in frame');
   parts.push(`shot on ${lens} ${lensFeel(f1)}, ${sensor.en} sensor`);
   parts.push(`${aspect}:1 aspect ratio`);
   parts.push(`${shot.duration} seconds`);

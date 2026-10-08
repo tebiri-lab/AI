@@ -1,7 +1,7 @@
 // Export helpers: stills, real-time WebM capture, GLB with per-shot camera clips, shot lists.
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-import { sampleCamera, sampleObject } from './anim.js';
+import { resolveCamera, sampleObject } from './anim.js';
 
 const safe = (s) => (s || 'previz').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'previz';
 
@@ -78,7 +78,7 @@ export async function exportGLB(project, meshes, sensorW) {
     const tag = `Shot${String(i + 1).padStart(2, '0')}`;
     const cam = new THREE.PerspectiveCamera(40, project.aspect, 0.05, 1000);
     cam.name = `${tag}_Cam`;
-    const s0 = sampleCamera(shot, 0);
+    const s0 = resolveCamera(shot, 0, project.objects);
     cam.filmGauge = sensorW;
     cam.setFocalLength(s0.focal);
     root.add(cam);
@@ -88,7 +88,7 @@ export async function exportGLB(project, meshes, sensorW) {
     const tmp = new THREE.PerspectiveCamera();
     for (let f = 0; f < n; f++) {
       const t = Math.min(shot.duration, f / project.fps);
-      const s = sampleCamera(shot, t);
+      const s = resolveCamera(shot, t, project.objects);
       tmp.position.copy(s.pos);
       tmp.up.set(0, 1, 0);
       tmp.lookAt(s.target);

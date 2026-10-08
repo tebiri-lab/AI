@@ -169,7 +169,7 @@
             <li><kbd>W</kbd> / <kbd>E</kbd> 이동 / 회전 기즈모</li>
             <li><kbd>F</kbd> 선택 대상에 포커스</li>
             <li><kbd>C</kbd> 카메라 선택 · <kbd>T</kbd> 타깃 선택</li>
-            <li><kbd>Del</kbd> 선택 오브젝트 삭제</li>
+            <li><kbd>Del</kbd> 샷 삭제 (샷 카드 클릭 후) · 오브젝트 삭제 (오브젝트 선택 시)</li>
             <li><kbd>←</kbd>/<kbd>→</kbd> 1프레임 이동</li>
             <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> 실행 취소</li>
           </ul>
@@ -295,6 +295,7 @@
           <button id="btnSelCam">카메라 선택</button>
           <button id="btnSelTgt">타깃 선택</button>
         </div>
+        <label class="lock-row" for="cLock"><span>타깃 고정</span><select id="cLock"></select></label>
         <ul id="camKeys" class="key-list"></ul>
       </div>
 
