@@ -273,3 +273,7 @@ kbd { font-family: var(--mono); font-size: 11px; background: var(--panel-2); bor
   #shotStrip { padding-left: 16px; padding-right: 16px; }
   .menu-pop { right: auto; left: 0; min-width: 240px; }
 }
+
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:disabled:active { transform: none; }
+.transport .objkey:not(:disabled) { border-color: var(--blue); color: var(--blue); }

@@ -536,6 +536,10 @@ function select(sel) {
   renderObjList();
   renderObjInspector();
   renderTimeline();
+  const objBtn = $('btnAddObjKey');
+  objBtn.disabled = sel?.kind !== 'object';
+  objBtn.textContent = sel?.kind === 'object' ? `◆ ${objById(sel.id)?.name} 키` : '◆ 오브젝트 키';
+  if (sel?.kind === 'object') document.querySelector('.tab[data-tab="scene"]')?.click();
   const badge = $('selBadge');
   if (!sel) badge.hidden = true;
   else {
@@ -706,6 +710,7 @@ function setShot(i, { keepTime = false } = {}) {
 function setTime(t) {
   time = clamp(t, 0, cur().duration);
   updatePlayhead();
+  renderObjInspectorValues(true);
   hudCache = '';
 }
 
@@ -864,11 +869,11 @@ function renderObjInspector() {
   });
 }
 
-function renderObjInspectorValues() {
+function renderObjInspectorValues(force = false) {
   const o = selection?.kind === 'object' ? objById(selection.id) : null;
   if (!o) return;
   const s = sampleObject(o, cur(), time);
-  const set = (id, v) => { if (document.activeElement !== $(id)) $(id).value = Math.round(v * 100) / 100; };
+  const set = (id, v) => { if (force || document.activeElement !== $(id)) $(id).value = Math.round(v * 100) / 100; };
   set('oX', s.pos[0]); set('oY', s.pos[1]); set('oZ', s.pos[2]); set('oRot', s.rotY);
 }
 
@@ -1219,17 +1224,8 @@ function bindUI() {
     writeObject(o, [+$('oX').value || 0, Math.max(0, +$('oY').value || 0), +$('oZ').value || 0], +$('oRot').value || 0);
   });
   ['oX', 'oY', 'oZ', 'oRot'].forEach((id) => $(id).addEventListener('change', posEdit));
-  $('btnObjKey').onclick = () => objEdit((o) => {
-    const shot = cur();
-    shot.anim ||= {};
-    const keys = (shot.anim[o.id] ||= []);
-    const s = sampleObject(o, shot, time);
-    const i = keyIndexAt(keys, time, frameTol());
-    if (i >= 0) return;
-    keys.push({ t: r3(time), pos: s.pos, rotY: s.rotY });
-    sortKeys(keys);
-    shot.genAnim = (shot.genAnim || []).filter((id) => id !== o.id);
-  });
+  $('btnObjKey').onclick = addObjKey;
+  $('btnAddObjKey').onclick = addObjKey;
   $('btnObjClearKeys').onclick = () => objEdit((o) => { delete cur().anim[o.id]; });
   $('btnObjDel').onclick = deleteSelectedObject;
   $('btnObjDup').onclick = () => objEdit((o) => {
@@ -1346,6 +1342,26 @@ function addCamKey() {
   });
 }
 
+function addObjKey() {
+  const o = selection?.kind === 'object' ? objById(selection.id) : null;
+  if (!o) return toast('먼저 디렉터 뷰나 씬 목록에서 오브젝트를 선택하세요');
+  const shot = cur();
+  const keys = shot.anim?.[o.id] || [];
+  if (keyIndexAt(keys, time, frameTol()) >= 0) return toast('이미 이 시간에 키가 있습니다');
+  const first = !keys.length;
+  mutate(() => {
+    shot.anim ||= {};
+    const ks = (shot.anim[o.id] ||= []);
+    const s = sampleObject(o, shot, time);
+    ks.push({ t: r3(time), pos: s.pos, rotY: s.rotY });
+    sortKeys(ks);
+    shot.genAnim = (shot.genAnim || []).filter((id) => id !== o.id);
+  });
+  toast(first
+    ? `${o.name} 키 추가 — 이제 시간을 옮기고 ${o.name}을(를) 움직이면 다음 키가 자동으로 생깁니다`
+    : `${o.name} 키 추가`, 4000);
+}
+
 function deleteSelectedObject() {
   if (selection?.kind !== 'object') return;
   const id = selection.id;
@@ -1369,6 +1385,7 @@ function onKey(e) {
   switch (e.key) {
     case ' ': e.preventDefault(); setPlaying(!playing); break;
     case 'k': case 'K': addCamKey(); break;
+    case 'o': case 'O': addObjKey(); break;
     case 'w': case 'W': gizmoMode = 'translate'; applyGizmoMode(); break;
     case 'e': case 'E': gizmoMode = 'rotate'; applyGizmoMode(); break;
     case 'f': case 'F': focusSelection(); break;
