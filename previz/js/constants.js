@@ -84,17 +84,67 @@ export const LIGHTS = {
   overcast: { ko: '흐림' },
   night: { ko: '야간' },
   interior: { ko: '실내 스튜디오' },
+  amber: { ko: '회상 (호박색)' },
+  sunbreak: { ko: '구름 틈 햇빛' },
+  paper: { ko: '연필 종이 톤 (흐림)' },
 };
 
+// height: types whose "height" field is editable, with the label shown in the inspector.
 export const OBJ_TYPES = {
-  actor: { ko: '인물', color: '#d9a066' },
+  actor: { ko: '인물', color: '#d9a066', height: 1.75, hLabel: '키 (m)' },
   car: { ko: '자동차', color: '#3d6fa8' },
   box: { ko: '박스', color: '#8a8f99', size: [1, 1, 1] },
   cylinder: { ko: '기둥', color: '#9aa0a6', size: [0.5, 3, 0.5] },
   wall: { ko: '벽', color: '#b9b2a6', size: [4, 3, 0.2] },
-  tree: { ko: '나무', color: '#4f7d3a' },
+  tree: { ko: '나무', color: '#4f7d3a', height: 5, hLabel: '높이 (m)' },
   table: { ko: '테이블', color: '#7b5a3c', size: [1.4, 0.75, 0.8] },
   mark: { ko: '바닥 마크', color: '#ffcc33' },
+  drums: { ko: '드럼 세트', color: '#1d1f23' },
+  keyboard: { ko: '키보드', color: '#25272b', size: [1.25, 0.92, 0.38] },
+  micstand: { ko: '마이크', color: '#2a2c30', height: 1.5, hLabel: '스탠드 높이 (m)' },
+  balloon: { ko: '풍선', color: '#9cc3e6', size: [0.3, 0.36, 0.3], height: 1.6, hLabel: '끈 길이 (m)', tilt: true },
+  slab: { ko: '바위판', color: '#8f8a82', size: [3, 0.6, 2.4], tilt: true },
+  debris: { ko: '부유 파편', color: '#7d7973', size: [6, 3, 6] },
+  metronome: { ko: '메트로놈', color: '#6b4a2f' },
+  // A teardrop latex balloon whose glossy skin mirrors the live scene (cube-camera reflection).
+  mballoon: { ko: '반사 풍선', color: '#9cc3e6', size: [0.3, 0.38, 0.3], height: 0, hLabel: '끈 길이 (m)', tilt: true },
+  // A ring of cloud billboards around the origin; size = [radius, -, -].
+  clouds: { ko: '구름층', color: '#ffffff', size: [400, 0, 0] },
+  // Cracked-plate ground decal; size = [width, -, depth].
+  crackfloor: { ko: '균열 지면', color: '#6f6c68', size: [60, 0, 60] },
 };
+
+// Poses per object type. The first entry is the default.
+export const POSE_SETS = {
+  actor: {
+    stand: '서기 (걷기 포함)',
+    look_up: '서서 올려다보기',
+    sit: '앉기',
+    drum: '드럼 연주',
+    drum_fill: '드럼 필인 (탐을 내려다봄)',
+    drum_look: '드럼 필인 → 카메라 응시 (샷 중반에 고개를 듦)',
+    sticks_up: '스틱 치켜들기',
+    kneel: '한쪽 무릎',
+    kneel_up: '한쪽 무릎 · 올려다보기',
+    guitar: '기타 · 베이스 연주',
+    keys: '건반 연주',
+    hold: '두 손 모으기 (얼굴 앞)',
+    hug: '끌어안기 (가슴 앞)',
+    reach_up: '한 손 뻗어 올리기',
+    dissolve: '산화 (어깨부터 먼지로 흩어짐)',
+  },
+  metronome: { swing: '박자대로 흔들림', start: '시작 (가운데에서 천천히 커져 샷 끝에 최대 폭)', rest: '정지 (가운데)', slow: '점점 느려짐', stop: '정지 (한쪽 끝)' },
+  debris: { float: '천천히 떠다님', still: '공중 정지' },
+  balloon: { sway: '바람에 흔들림', circle: '원을 그리며 흔들림 (위에서 볼 때 시계 방향, 샷 동안 한 바퀴)', still: '정지' },
+  mballoon: {
+    circle: '원을 그리며 흔들림 (위에서 볼 때 시계 방향, 샷 동안 한 바퀴)',
+    circle_turn: '원을 그리며 흔들림 + 반사 속 세상이 시계 방향으로 60° 회전 (연출용)',
+    sway: '바람에 흔들림',
+    still: '정지',
+  },
+  clouds: { drift: '왼쪽 → 오른쪽으로 흐름', still: '정지' },
+};
+
+export const HOLDS = { none: '없음', guitar: '일렉 기타', bass: '베이스', sticks: '드럼 스틱' };
 
 export const ACTOR_COLORS = ['#d9a066', '#6fa8dc', '#e06666', '#93c47d', '#c27ba0', '#f6b26b'];

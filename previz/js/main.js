@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS } from './constants.js';
-import { sampleCamera, resolveCamera, lockTarget, sampleObject, sortKeys, keyIndexAt } from './anim.js';
-import { generateShot, parseShotText, describeShot, defaultParams, objectHeight } from './generator.js';
-import { buildObject, signature, poseWalk, buildGround, buildLights, applyLighting, buildCameraRig } from './scene.js';
+import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS, POSE_SETS, HOLDS } from './constants.js';
+import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
+import { generateShot, parseShotText, describeShot, defaultParams, objectHeight, aimOffset } from './generator.js';
+import { buildObject, signature, applyPose, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
 import { exportPNG, recordWebM, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
+import { SongPlayer } from './audio.js';
+import { idbGet, idbSet, idbDel } from './store.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -46,9 +48,10 @@ function fillSelect(sel, entries, label = (v) => v.ko) {
 function makeObject(type, overrides = {}) {
   const def = OBJ_TYPES[type];
   const o = { id: uid(), type, name: def.ko, color: def.color, pos: [0, 0, 0], rotY: 0 };
-  if (type === 'actor') o.height = 1.75;
-  if (type === 'tree') o.height = 5;
+  if (def.height) o.height = def.height;
   if (def.size) o.size = def.size.slice();
+  if (def.tilt) o.tilt = 0;
+  if (type === 'actor') o.hold = 'none';
   return Object.assign(o, overrides);
 }
 
@@ -63,6 +66,7 @@ function baseProject(name) {
   return {
     version: 1, name, fps: 24, aspect: 2.39, sensor: 's35', lighting: 'day',
     style: 'Photorealistic live-action footage, natural lighting, subtle film grain, realistic motion blur.',
+    audio: { name: '', offset: 0 }, bpm: 0, beat0: 0, sections: [], assets: {},
     objects: [], shots: [],
   };
 }
@@ -107,6 +111,14 @@ function normalizeProject(p) {
   const out = { ...base, ...p };
   out.aspect = +out.aspect || 2.39;
   out.fps = +out.fps || 24;
+  out.audio = { name: '', offset: 0, ...(p.audio || {}) };
+  out.audio.offset = +out.audio.offset || 0;
+  out.bpm = +out.bpm || 0;
+  out.beat0 = +out.beat0 || 0;
+  out.sections = Array.isArray(p.sections) ? p.sections.filter((x) => x && Number.isFinite(+x.t)).map((x) => ({ t: +x.t, name: String(x.name || '') })) : [];
+  out.assets = p.assets && typeof p.assets === 'object' ? p.assets : {};
+  const ids = new Set(out.objects.map((o) => o.id));
+  for (const o of out.objects) if (o.parent && !ids.has(o.parent)) delete o.parent;
   for (const s of out.shots) {
     s.id ||= uid();
     s.keys ||= [];
@@ -140,8 +152,9 @@ const frameTol = () => 0.5 / project.fps;
 const aspect = () => +project.aspect;
 const sensorW = () => (SENSORS[project.sensor] || SENSORS.s35).w;
 
+// Reference images live in project.assets and are kept out of undo snapshots.
 function snapshot() {
-  return JSON.stringify({ project, shotIdx });
+  return JSON.stringify({ project: { ...project, assets: undefined }, shotIdx });
 }
 function pushUndo() {
   undoStack.push(snapshot());
@@ -150,7 +163,9 @@ function pushUndo() {
 }
 function restore(snap) {
   const s = JSON.parse(snap);
+  const assets = project.assets || {};
   project = s.project;
+  project.assets = assets;
   shotIdx = clamp(s.shotIdx, 0, project.shots.length - 1);
   if (selection?.kind === 'object' && !objById(selection.id)) select(null);
   refresh();
@@ -187,11 +202,56 @@ function liveInput(el, apply, { full = false } = {}) {
 }
 
 let saveTimer;
+let assetsDirty = false;
 function autosave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { localStorage.setItem('previz.project.v1', JSON.stringify(project)); } catch { /* storage unavailable */ }
+    try { localStorage.setItem('previz.project.v1', JSON.stringify({ ...project, assets: undefined })); } catch { /* storage unavailable */ }
+    if (assetsDirty) {
+      assetsDirty = false;
+      idbSet('assets', project.assets || {});
+    }
   }, 400);
+}
+
+// Project copy for saving: only the reference images still in use.
+function exportable() {
+  const used = new Set(project.shots.map((s) => s.ref).filter(Boolean));
+  const assets = {};
+  for (const k of used) if (project.assets?.[k]) assets[k] = project.assets[k];
+  return { ...project, assets };
+}
+
+// ---------------------------------------------------------------------------
+// Song time
+
+const song = new SongPlayer();
+const shotStart = (i) => {
+  let a = 0;
+  for (let k = 0; k < i && k < project.shots.length; k++) a += project.shots[k].duration;
+  return a;
+};
+const totalDur = () => project.shots.reduce((a, s) => a + s.duration, 0);
+const offset = () => +project.audio?.offset || 0;
+const globalTime = () => shotStart(shotIdx) + time;
+const songTime = () => globalTime() + offset();
+const beatLen = () => (project.bpm > 0 ? 60 / project.bpm : 0.65);
+// Seconds since the first downbeat for (shot, t): drives metronomes and playing poses.
+const clockFor = (shot, t) => shotStart(Math.max(0, project.shots.indexOf(shot))) + t + offset() - (project.beat0 || 0);
+
+function fmtSong(t) {
+  const neg = t < 0;
+  t = Math.abs(t);
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${neg ? '-' : ''}${m}:${s.toFixed(1).padStart(4, '0')}`;
+}
+function sectionAt(t) {
+  let cur = null;
+  for (const s of [...(project.sections || [])].sort((a, b) => a.t - b.t)) if (s.t <= t + 1e-6) cur = s;
+  return cur;
+}
+function startAudio() {
+  if (song.loaded) song.play(songTime());
 }
 
 // ---------------------------------------------------------------------------
@@ -267,12 +327,25 @@ function setDirectorOnlyVisible(v) {
   objRoot.traverse((o) => { if (o.userData.directorOnly) o.visible = v; });
 }
 
+// Re-capture mirrored surfaces for one renderer (each renderer keeps its own GPU copy).
+// Director aids are hidden so the camera body and labels never show up in a reflection.
+function mirrorPass(renderer) {
+  const groups = [];
+  for (const g of meshes.values()) if (g.userData.mirror && g.visible) groups.push(g);
+  if (!groups.length) return;
+  const prev = dirOnly.visible;
+  setDirectorOnlyVisible(false);
+  updateMirrors(renderer, scene, groups);
+  setDirectorOnlyVisible(prev);
+}
+
 // ---------------------------------------------------------------------------
 // Scene sync
 
 const meshes = new Map();
 
 function syncScene() {
+  setObjects(project.objects);
   const ids = new Set(project.objects.map((o) => o.id));
   for (const [id, g] of meshes) {
     if (!ids.has(id)) {
@@ -291,10 +364,39 @@ function syncScene() {
     meshes.set(o.id, ng);
     if (selection?.kind === 'object' && selection.id === o.id) gizmo.attach(ng);
   }
-  applyLighting(scene, lights, ground, project.lighting);
+  litNow = '';
+  setLight(project.lighting);
+}
+
+let litNow = '';
+function setLight(name) {
+  if (name === litNow) return;
+  litNow = name;
+  applyLighting(scene, lights, ground, name);
+}
+
+const defaultPose = (type) => Object.keys(POSE_SETS[type] || {})[0] || '';
+const poseOf = (o, shot) => shot?.poses?.[o.id] || o.pose || defaultPose(o.type);
+
+// Pose every object for (shot, t): transform, visibility, pose and per-shot lighting.
+function poseObjects(shot, t) {
+  const clock = clockFor(shot, t);
+  const beat = beatLen();
+  for (const o of project.objects) {
+    const g = meshes.get(o.id);
+    if (!g) continue;
+    g.visible = !shot.hide?.[o.id];
+    if (dragging && gizmo.object === g) continue;
+    const s = sampleObject(o, shot, t);
+    g.position.set(...s.pos);
+    g.rotation.set(0, THREE.MathUtils.degToRad(s.rotY), 0);
+    applyPose(g, poseOf(o, shot), s.dist, s.speed, clock, beat, { t, dur: shot.duration, c0: clock - t });
+  }
+  setLight(shot.light || project.lighting);
 }
 
 function disposeTree(g) {
+  g.userData.mirror?.rt.dispose();
   g.traverse((m) => {
     m.geometry?.dispose();
     if (m.material) {
@@ -328,15 +430,7 @@ function applyCamera(cam, s, asp) {
 
 // Pose every object and the shot camera for (shot, t).
 function poseScene(shot, t) {
-  for (const o of project.objects) {
-    const g = meshes.get(o.id);
-    if (!g) continue;
-    if (dragging && gizmo.object === g) continue;
-    const s = sampleObject(o, shot, t);
-    g.position.set(...s.pos);
-    g.rotation.set(0, THREE.MathUtils.degToRad(s.rotY), 0);
-    poseWalk(g, s.dist, s.speed);
-  }
+  poseObjects(shot, t);
   const cs = resolveCamera(shot, t, project.objects);
   applyCamera(shotCam, cs, aspect());
   return cs;
@@ -367,6 +461,7 @@ function updateDirectorAids(cs) {
 
 let layout = 'split';
 function resize() {
+  if (!project) return; // still booting
   const dp = $('directorPane');
   const dw = dp.clientWidth, dh = dp.clientHeight;
   if (dw > 0 && dh > 0) {
@@ -411,17 +506,12 @@ function renderOneThumb() {
   const w = 240, h = Math.round(Math.min(240 / a, 200));
   thumbRenderer.setSize(Math.round(h * a), h, false);
   const cs = resolveCamera(shot, 0, project.objects, false);
-  for (const o of project.objects) {
-    const g = meshes.get(o.id);
-    const s = sampleObject(o, shot, 0);
-    g.position.set(...s.pos);
-    g.rotation.set(0, THREE.MathUtils.degToRad(s.rotY), 0);
-    poseWalk(g, 0, 0);
-  }
+  poseObjects(shot, 0);
   const cam = new THREE.PerspectiveCamera();
   cam.near = 0.03; cam.far = 2000;
   applyCamera(cam, cs, a);
   setDirectorOnlyVisible(false);
+  mirrorPass(thumbRenderer);
   thumbRenderer.render(scene, cam);
   setDirectorOnlyVisible(true);
   thumbs.set(id, thumbCanvas.toDataURL('image/jpeg', 0.8));
@@ -449,22 +539,56 @@ function frame(now) {
 
   if (layout !== 'camera') {
     setDirectorOnlyVisible(true);
+    mirrorPass(dirRenderer);
     dirRenderer.render(scene, dirCam);
   }
   if (layout !== 'director' || recording) {
     setDirectorOnlyVisible(false);
+    mirrorPass(shotRenderer);
     shotRenderer.render(scene, shotCam);
     setDirectorOnlyVisible(true);
   }
   updateHud(cs);
+  drawSongBar();
   requestAnimationFrame(frame);
 }
 
+// Offscreen render of any shot/time, used by automation and stills.
+function renderFrame(i, t, w = 960) {
+  const shot = project.shots[clamp(i, 0, project.shots.length - 1)];
+  const a = aspect();
+  thumbRenderer.setSize(w, Math.round(w / a), false);
+  poseObjects(shot, t);
+  const cs = resolveCamera(shot, t, project.objects);
+  const cam = new THREE.PerspectiveCamera();
+  cam.near = 0.03; cam.far = 2000;
+  applyCamera(cam, cs, a);
+  setDirectorOnlyVisible(false);
+  mirrorPass(thumbRenderer);
+  thumbRenderer.render(scene, cam);
+  setDirectorOnlyVisible(true);
+  return thumbCanvas.toDataURL('image/jpeg', 0.85);
+}
+
+let lastClock = -1;
+let clockStall = 0;
 function advance(dt) {
+  let resync = false;
+  if (song.playing && song.ctx?.state === 'running') {
+    // The song clock is the master. If it stalls (audio device asleep), frame time takes over.
+    const c = song.clock();
+    if (c === lastClock) clockStall += dt;
+    else { clockStall = 0; lastClock = c; }
+    if (clockStall < 0.3) {
+      const d = c - songTime();
+      if (d >= -0.25) dt = Math.max(0, d);
+      else resync = true;
+    }
+  }
   const shot = cur();
   time += dt;
   if (time >= shot.duration) {
-    const all = $('chkAll').checked || recording?.all;
+    const all = recording ? recording.all : $('chkAll').checked;
     if (all && shotIdx < project.shots.length - 1) {
       time -= shot.duration;
       setShot(shotIdx + 1, { keepTime: true });
@@ -474,11 +598,13 @@ function advance(dt) {
     } else if ($('chkLoop').checked) {
       if (all) setShot(0, { keepTime: true });
       time = 0;
+      resync = true;
     } else {
       time = shot.duration;
       setPlaying(false);
     }
   }
+  if (resync && playing) startAudio();
   updatePlayhead();
 }
 
@@ -487,6 +613,8 @@ function setPlaying(v) {
   $('btnPlay').textContent = v ? '❚❚' : '▶';
   $('btnPlay').classList.toggle('on', v);
   if (v && time >= cur().duration - 1e-3) time = 0;
+  if (v) startAudio();
+  else song.stop();
 }
 
 function timecode(t, fps) {
@@ -498,12 +626,15 @@ function timecode(t, fps) {
 function updateHud(cs) {
   const shot = cur();
   const sensor = SENSORS[project.sensor] || SENSORS.s35;
-  const key = `${shotIdx}|${shot.name}|${Math.round(cs.focal)}|${time.toFixed(3)}|${project.aspect}|${project.sensor}`;
+  const key = `${shotIdx}|${shot.name}|${Math.round(cs.focal)}|${time.toFixed(3)}|${project.aspect}|${project.sensor}|${offset()}|${(project.sections || []).length}`;
   if (key === hudCache) return;
   hudCache = key;
   $('hudTL').textContent = `#${shotIdx + 1}  ${shot.name}`;
   $('hudTR').textContent = `${Math.round(cs.focal)}mm · ${sensor.en}`;
-  $('hudBL').textContent = `${timecode(time, project.fps)} / ${timecode(shot.duration, project.fps)}`;
+  const st = songTime();
+  const sec = sectionAt(st);
+  $('hudBL').textContent = `${timecode(time, project.fps)} / ${timecode(shot.duration, project.fps)}  ♪ ${fmtSong(st)}${sec ? ` · ${sec.name}` : ''}`;
+  $('songTc').textContent = `♪ ${fmtSong(st)} / ${fmtSong(Math.max(totalDur() + offset(), song.duration))}${sec ? ` · ${sec.name}` : ''}`;
   $('hudBR').textContent = `${(+project.aspect).toFixed(2)}:1 · ${project.fps}fps`;
   $('timecode').textContent = timecode(time, project.fps);
   const focal = $('cFocal');
@@ -606,11 +737,12 @@ function writeCamera(patch) {
   return ok;
 }
 
+// pos / rotY are in the object's parent space (world space when it has no parent).
 function writeObject(o, pos, rotY) {
   const shot = cur();
   const keys = shot.anim?.[o.id];
   if (keys && keys.length) {
-    const s = sampleObject(o, shot, time);
+    const s = sampleLocal(o, shot, time);
     return upsertKey(keys, () => ({ pos: s.pos, rotY: s.rotY }), (k) => { k.pos = pos; k.rotY = rotY; });
   }
   o.pos = pos;
@@ -632,8 +764,9 @@ gizmo.addEventListener('objectChange', () => {
     const o = objById(selection.id);
     const g = meshes.get(selection.id);
     if (!o || !g) return;
-    const rot = Math.round(THREE.MathUtils.radToDeg(g.rotation.y) * 10) / 10;
-    writeObject(o, vArr(g.position).map((v, i) => (i === 1 ? Math.max(0, v) : v)), rot);
+    const l = worldToLocal(o, cur(), time, vArr(g.position), THREE.MathUtils.radToDeg(g.rotation.y));
+    if (!o.parent) l.pos[1] = Math.max(0, l.pos[1]);
+    writeObject(o, l.pos.map(r3), Math.round(l.rotY * 10) / 10);
     renderObjInspectorValues();
   }
   updatePath();
@@ -691,10 +824,13 @@ function refresh() {
   renderObjInspector();
   renderTimeline();
   renderPrompt();
+  renderAudioPanel();
+  updateRef();
   resize();
   queueThumbs();
   autosave();
   hudCache = '';
+  songDirty = true;
 }
 
 // Lighter refresh for continuous edits.
@@ -704,6 +840,7 @@ function softRefresh() {
   renderCamKeys();
   renderPrompt();
   hudCache = '';
+  songDirty = true;
 }
 
 function setShot(i, { keepTime = false } = {}) {
@@ -717,7 +854,9 @@ function setShot(i, { keepTime = false } = {}) {
   renderObjInspector();
   renderTimeline();
   renderPrompt();
+  updateRef();
   hudCache = '';
+  songDirty = true;
 }
 
 function setTime(t) {
@@ -735,6 +874,32 @@ function renderProjectPanel() {
   $('pFps').value = String(project.fps);
   $('pLight').value = project.lighting;
   if (document.activeElement !== $('pStyle')) $('pStyle').value = project.style || '';
+  if (document.activeElement !== $('pOffset')) $('pOffset').value = offset();
+  if (document.activeElement !== $('pBpm')) $('pBpm').value = project.bpm || '';
+  if (document.activeElement !== $('pBeat0')) $('pBeat0').value = project.beat0 || 0;
+  if (document.activeElement !== $('pSections')) $('pSections').value = formatSections(project.sections);
+}
+
+function formatSections(list) {
+  return [...(list || [])].sort((a, b) => a.t - b.t).map((x) => {
+    const m = Math.floor(x.t / 60), sec = x.t - m * 60;
+    const ss = Number.isInteger(sec) ? String(sec).padStart(2, '0') : sec.toFixed(1).padStart(4, '0');
+    return `${m}:${ss} ${x.name}`;
+  }).join('\n');
+}
+function parseSections(text) {
+  const out = [];
+  for (const line of text.split('\n')) {
+    const m = line.trim().match(/^(?:(\d+):)?(\d+(?:\.\d+)?)\s+(.+)$/);
+    if (m) out.push({ t: (m[1] ? +m[1] * 60 : 0) + +m[2], name: m[3].trim() });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+function renderAudioPanel() {
+  $('audioName').textContent = song.loaded ? `${song.name} · ${fmtSong(song.duration)}` : (project.audio?.name ? `"${project.audio.name}" 다시 불러오기 필요` : '불러온 음원 없음');
+  $('btnAudioDel').disabled = !song.loaded;
+  $('chkMute').checked = song.muted;
 }
 
 function renderGenSelects() {
@@ -755,6 +920,7 @@ function renderGenSelects() {
 function renderShotCards() {
   const wrap = $('shotCards');
   wrap.innerHTML = '';
+  wrap.style.setProperty('--ar', String(aspect()));
   project.shots.forEach((s, i) => {
     const card = document.createElement('div');
     card.className = 'shot-card' + (i === shotIdx ? ' active' : '');
@@ -763,11 +929,22 @@ function renderShotCards() {
     const img = document.createElement('img');
     img.alt = '';
     if (thumbs.has(s.id)) img.src = thumbs.get(s.id);
+    const st = document.createElement('span');
+    st.className = 'st';
+    st.textContent = fmtSong(shotStart(i) + offset());
+    card.append(st);
+    if (s.ref && project.assets?.[s.ref]) {
+      const b = document.createElement('span');
+      b.className = 'badge';
+      b.textContent = 'REF';
+      card.append(b);
+    }
     const meta = document.createElement('div');
     meta.className = 'meta';
     meta.innerHTML = `<b>${i + 1}</b><span class="nm"></span><span class="dur">${s.duration}s</span>`;
     meta.querySelector('.nm').textContent = s.name;
-    card.append(img, meta);
+    card.prepend(img);
+    card.append(meta);
     card.addEventListener('click', () => { setPlaying(false); setShot(i); setFocusArea('shots'); });
     card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(i)); card.classList.add('dragging'); });
     card.addEventListener('dragend', () => card.classList.remove('dragging'));
@@ -805,6 +982,7 @@ function renderShotInspector() {
   lock.value = s.lookAt && objById(s.lookAt.id) ? s.lookAt.id : '';
   const src = s.meta?.source;
   $('sDesc').title = src ? `원문: ${src}` : '';
+  $('sLight').value = s.light || '';
 }
 
 function renderCamKeys() {
@@ -843,10 +1021,12 @@ function renderObjList() {
     sw.style.background = o.color;
     const nm = document.createElement('span');
     nm.className = 'nm';
-    nm.textContent = o.name;
+    const depth = ancestors(o).length;
+    nm.textContent = (depth ? `${'  '.repeat(depth - 1)}↳ ` : '') + o.name;
+    if (cur().hide?.[o.id]) li.style.opacity = '0.45';
     const ty = document.createElement('span');
     ty.className = 'ty';
-    ty.textContent = OBJ_TYPES[o.type].ko + (cur().anim?.[o.id]?.length ? ' · ◆' : '');
+    ty.textContent = (OBJ_TYPES[o.type]?.ko || o.type) + (cur().anim?.[o.id]?.length ? ' · ◆' : '') + (cur().hide?.[o.id] ? ' · 숨김' : '');
     li.append(sw, nm, ty);
     li.onclick = () => select({ kind: 'object', id: o.id });
     ul.appendChild(li);
@@ -860,9 +1040,35 @@ function renderObjInspector() {
   if (!o) return;
   $('oName').value = o.name;
   $('oColor').value = o.color;
-  const hasH = o.type === 'actor' || o.type === 'tree';
+  const def = OBJ_TYPES[o.type] || {};
+  const hasH = !!def.hLabel;
   $('oHWrap').hidden = !hasH;
-  if (hasH) $('oH').value = o.height;
+  if (hasH) { $('oH').value = o.height ?? def.height; $('oHLabel').textContent = def.hLabel; }
+  $('oTiltWrap').hidden = !def.tilt;
+  if (def.tilt) $('oTilt').value = o.tilt || 0;
+  $('oHoldWrap').hidden = o.type !== 'actor';
+  if (o.type === 'actor') $('oHold').value = o.hold || 'none';
+  const poses = POSE_SETS[o.type];
+  $('oPoseWrap').hidden = !poses;
+  $('oPoseShotWrap').hidden = !poses;
+  if (poses) {
+    fillSelect($('oPose'), Object.entries(poses), (v) => v);
+    $('oPose').value = o.pose || defaultPose(o.type);
+    const ps = $('oPoseShot');
+    ps.innerHTML = '';
+    ps.append(new Option('기본 포즈 따름', ''));
+    for (const [k, v] of Object.entries(poses)) ps.append(new Option(v, k));
+    ps.value = cur().poses?.[o.id] || '';
+  }
+  const par = $('oParent');
+  par.innerHTML = '';
+  par.append(new Option('없음 (월드)', ''));
+  for (const c of project.objects) {
+    if (c.id === o.id || ancestors(c).includes(o)) continue;
+    par.append(new Option(`${c.name} (${OBJ_TYPES[c.type]?.ko || c.type})`, c.id));
+  }
+  par.value = o.parent || '';
+  $('oHide').checked = !!cur().hide?.[o.id];
   document.querySelectorAll('#objInspector .dims').forEach((el) => { el.hidden = !o.size; });
   if (o.size) [$('oSX').value, $('oSY').value, $('oSZ').value] = o.size;
   renderObjInspectorValues();
@@ -902,6 +1108,7 @@ function buildGauge(container, id, axis, label, min, max, step, unit) {
 // Show a value without fighting the user's own drag/typing; widen the slider if needed.
 function setGauge(id, v, force = false) {
   const num = $(id), rng = $(`${id}R`);
+  if (!num || !rng) return;
   if (!force && (document.activeElement === num || document.activeElement === rng)) return;
   const val = Math.round(v * 100) / 100;
   if (val < +rng.min) rng.min = Math.floor(val - 5);
@@ -930,7 +1137,7 @@ function bindGauge(id, apply) {
 function renderObjInspectorValues(force = false) {
   const o = selection?.kind === 'object' ? objById(selection.id) : null;
   if (!o) return;
-  const s = sampleObject(o, cur(), time);
+  const s = sampleLocal(o, cur(), time);
   setGauge('oX', s.pos[0], force); setGauge('oY', s.pos[1], force);
   setGauge('oZ', s.pos[2], force); setGauge('oRot', s.rotY, force);
 }
@@ -1087,9 +1294,7 @@ function unlockShot(shot) {
 function lockShot(shot, id) {
   const o = objById(id);
   if (!o) return;
-  const H = objectHeight(o);
-  const frac = o.type === 'actor' ? (SIZES[shot.meta?.size]?.aim ?? 0.85) : 0.5;
-  shot.lookAt = { id, offset: [0, r3(H * frac), 0] };
+  shot.lookAt = { id, offset: [0, r3(aimOffset(o, shot.meta?.size || 'ms')), 0] };
 }
 
 function applyGenToShot(shot, gen) {
@@ -1183,7 +1388,10 @@ async function startRecording(all) {
   shotRenderer.setSize(w, h, false);
   recording = { all, done: null };
   $('recBadge').hidden = false;
-  const finished = recordWebM(shotCanvas, project.fps, (stop) => { recording.done = stop; });
+  // warm up: let the full-size frame render once before the clock (and the song) starts
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const track = song.loaded ? song.recordTrack() : null;
+  const finished = recordWebM(shotCanvas, project.fps, (stop) => { recording.done = stop; }, track);
   setPlaying(true);
   toast(all ? '전체 애니매틱을 녹화하는 중… (실시간)' : '현재 샷을 녹화하는 중… (실시간)', 4000);
   const shotNo = shotIdx + 1;
@@ -1207,6 +1415,181 @@ function stopRecording() {
 }
 
 // ---------------------------------------------------------------------------
+// Parenting
+
+// Attach o to another object (or detach with ''), keeping its world placement.
+function reparent(o, pid) {
+  const baseW = sampleObject(o, null, 0);
+  const keyW = project.shots.map((s) => (s.anim?.[o.id] || []).map((k) => ({ k, w: sampleObject(o, s, k.t) })));
+  if (pid) o.parent = pid;
+  else delete o.parent;
+  const b = worldToLocal(o, null, 0, baseW.pos, baseW.rotY);
+  o.pos = b.pos.map(r3);
+  o.rotY = r3(b.rotY);
+  project.shots.forEach((s, i) => keyW[i].forEach(({ k, w }) => {
+    const l = worldToLocal(o, s, k.t, w.pos, w.rotY);
+    k.pos = l.pos.map(r3);
+    k.rotY = r3(l.rotY);
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Reference image overlay (e.g. the key cut a shot must match)
+
+let refOn = true;
+function updateRef() {
+  const url = cur().ref ? project.assets?.[cur().ref] : null;
+  const ov = $('ovRef');
+  if (url && ov.dataset.src !== cur().ref) { ov.src = url; ov.dataset.src = cur().ref; }
+  ov.hidden = !(url && refOn);
+  ov.style.opacity = $('refOpacity').value;
+  const th = $('refThumb');
+  th.hidden = !url;
+  if (url && th.dataset.src !== cur().ref) { th.src = url; th.dataset.src = cur().ref; }
+  $('refHint').textContent = url ? '샷 카메라에 겹쳐 보입니다 (R)' : '참조 이미지 없음';
+  $('btnRefDel').disabled = !url;
+}
+
+function readImage(file, maxW = 1280) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, maxW / img.naturalWidth);
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * k);
+      c.height = Math.round(img.naturalHeight * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('이미지를 읽을 수 없습니다')); };
+    img.src = url;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Song bar: whole-film timeline with waveform, sections, shots and beat grid
+
+let songDirty = true;
+let songPx = -1;
+function songSpan() {
+  return Math.max(totalDur(), song.loaded ? song.duration - offset() : 0, 1);
+}
+function drawSongBar() {
+  const cv = $('songCanvas');
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  const span = songSpan();
+  const px = Math.round((globalTime() / span) * w * 2);
+  if (!songDirty && px === songPx) return;
+  songDirty = false;
+  songPx = px;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const X = (g) => (g / span) * w;
+  const off = offset();
+  // sections
+  const secs = [...(project.sections || [])].sort((a, b) => a.t - b.t);
+  ctx.font = '10px ui-monospace, Menlo, monospace';
+  ctx.textBaseline = 'top';
+  secs.forEach((sc, i) => {
+    const x0 = X(sc.t - off), x1 = i + 1 < secs.length ? X(secs[i + 1].t - off) : w;
+    ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.025)' : 'rgba(95,168,255,0.06)';
+    ctx.fillRect(x0, 0, x1 - x0, h);
+    // label clipped to its own band so neighbours never overlap
+    let label = sc.name;
+    const room = x1 - x0 - 6;
+    while (label.length > 1 && ctx.measureText(label).width > room) label = label.slice(0, -1);
+    if (room > 8) {
+      ctx.fillStyle = 'rgba(159,208,255,0.85)';
+      ctx.fillText(label.length < sc.name.length ? `${label.slice(0, -1)}…` : label, x0 + 3, 2);
+    }
+  });
+  // waveform
+  if (song.loaded && song.peaks) {
+    const pk = song.peaks, n = pk.length, dur = song.duration;
+    ctx.fillStyle = 'rgba(200,206,214,0.32)';
+    const mid = h * 0.6, amp = h * 0.36;
+    for (let x = 0; x < w; x++) {
+      const st = (x / w) * span + off;
+      if (st < 0 || st > dur) continue;
+      const v = pk[Math.min(n - 1, Math.floor((st / dur) * n))];
+      const hh = Math.max(0.5, v * amp);
+      ctx.fillRect(x, mid - hh, 1, hh * 2);
+    }
+  }
+  // bar grid
+  if (project.bpm > 0) {
+    const bar = (60 / project.bpm) * 4;
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    for (let t = (project.beat0 || 0) - off; t < span; t += bar) if (t >= 0) ctx.fillRect(Math.round(X(t)), h - 5, 1, 5);
+  }
+  // shots
+  let acc = 0;
+  project.shots.forEach((s, i) => {
+    const x0 = X(acc), x1 = X(acc + s.duration);
+    if (i === shotIdx) {
+      ctx.fillStyle = 'rgba(255,90,78,0.16)';
+      ctx.fillRect(x0, 0, x1 - x0, h);
+    }
+    ctx.fillStyle = i === shotIdx ? 'rgba(255,90,78,0.9)' : 'rgba(255,255,255,0.22)';
+    ctx.fillRect(Math.round(x0), 12, 1, h - 12);
+    if (x1 - x0 > 13) {
+      ctx.fillStyle = i === shotIdx ? '#ffb3ad' : 'rgba(230,232,235,0.55)';
+      ctx.fillText(String(i + 1), x0 + 2, 14);
+    }
+    if (s.ref && project.assets?.[s.ref]) {
+      ctx.fillStyle = '#5fa8ff';
+      ctx.fillRect(x0 + 2, h - 9, Math.max(3, Math.min(10, x1 - x0 - 4)), 3);
+    }
+    acc += s.duration;
+  });
+  // playhead
+  ctx.fillStyle = '#ff5a4e';
+  ctx.fillRect(Math.round(X(globalTime())) - 1, 0, 2, h);
+}
+
+function seekGlobal(g) {
+  g = clamp(g, 0, totalDur() - 1e-4);
+  let acc = 0;
+  for (let i = 0; i < project.shots.length; i++) {
+    const d = project.shots[i].duration;
+    if (g < acc + d || i === project.shots.length - 1) {
+      if (i !== shotIdx) setShot(i);
+      setTime(g - acc);
+      return;
+    }
+    acc += d;
+  }
+}
+
+async function loadSong(blob, name, persist) {
+  try {
+    toast('음원을 읽는 중…');
+    await song.load(blob, name);
+  } catch (err) {
+    toast(`음원을 읽지 못했습니다: ${err.message}`);
+    return;
+  }
+  if (project.audio.name !== name) { project.audio.name = name; autosave(); }
+  renderAudioPanel();
+  songDirty = true;
+  hudCache = '';
+  toast(`음원 "${name}" · ${fmtSong(song.duration)}`);
+  if (persist) {
+    const ok = await idbSet('song', { blob, name });
+    if (!ok) toast('이 브라우저에 음원을 저장하지 못했습니다 — 새로고침하면 다시 불러와야 합니다', 4000);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // UI bindings
 
 function bindUI() {
@@ -1217,6 +1600,8 @@ function bindUI() {
   fillSelect($('pAspect'), Object.entries(ASPECTS));
   fillSelect($('pSensor'), Object.entries(SENSORS));
   fillSelect($('pLight'), Object.entries(LIGHTS));
+  fillSelect($('sLight'), [['', '프로젝트 기본'], ...Object.entries(LIGHTS).map(([k, v]) => [k, v.ko])]);
+  fillSelect($('oHold'), Object.entries(HOLDS), (v) => v);
   writeGenParams(defaultParams());
 
   // Tabs
@@ -1231,7 +1616,7 @@ function bindUI() {
   $('btnRedo').onclick = redo;
   $('btnNew').onclick = () => { loadProject(blankProject(), true); toast('새 프로젝트를 시작했습니다 — Ctrl+Z 로 이전 작업 복구'); };
   $('btnSample').onclick = () => loadProject(sampleProject(), true);
-  $('btnSave').onclick = () => exportJSON(project);
+  $('btnSave').onclick = () => exportJSON(exportable());
   $('btnOpen').onclick = () => $('fileInput').click();
   $('fileInput').addEventListener('change', async (e) => {
     const f = e.target.files[0];
@@ -1265,7 +1650,7 @@ function bindUI() {
       } else if (kind === 'prompts') {
         const text = exportPrompts(project, describeShot);
         try { await navigator.clipboard.writeText(text); toast('샷리스트를 저장하고 클립보드에 복사했습니다'); } catch { toast('샷리스트를 저장했습니다'); }
-      } else if (kind === 'json') exportJSON(project);
+      } else if (kind === 'json') exportJSON(exportable());
     } catch (err) {
       console.error(err);
       toast(`내보내기 실패: ${err.message}`);
@@ -1301,7 +1686,26 @@ function bindUI() {
   };
   $('oName').addEventListener('change', (e) => objEdit((o) => { o.name = e.target.value.trim() || o.name; }));
   $('oColor').addEventListener('change', (e) => objEdit((o) => { o.color = e.target.value; }));
-  $('oH').addEventListener('change', (e) => objEdit((o) => { o.height = clamp(+e.target.value || 1.75, 0.3, 30); }));
+  $('oH').addEventListener('change', (e) => objEdit((o) => {
+    const v = +e.target.value;
+    o.height = clamp(Number.isFinite(v) ? v : (OBJ_TYPES[o.type]?.height || 1.75), (o.type === 'balloon' || o.type === 'mballoon') ? 0 : 0.3, 80);
+  }));
+  $('oTilt').addEventListener('change', (e) => objEdit((o) => { o.tilt = clamp(+e.target.value || 0, -60, 60); }));
+  $('oHold').addEventListener('change', (e) => objEdit((o) => { o.hold = e.target.value; }));
+  $('oPose').addEventListener('change', (e) => objEdit((o) => { o.pose = e.target.value; }));
+  $('oPoseShot').addEventListener('change', (e) => objEdit((o) => {
+    const s = cur();
+    s.poses ||= {};
+    if (e.target.value) s.poses[o.id] = e.target.value;
+    else delete s.poses[o.id];
+  }));
+  $('oParent').addEventListener('change', (e) => objEdit((o) => reparent(o, e.target.value)));
+  $('oHide').addEventListener('change', (e) => objEdit((o) => {
+    const s = cur();
+    s.hide ||= {};
+    if (e.target.checked) s.hide[o.id] = true;
+    else delete s.hide[o.id];
+  }));
   ['oSX', 'oSY', 'oSZ'].forEach((id, i) => $(id).addEventListener('change', (e) => objEdit((o) => { o.size[i] = clamp(+e.target.value || 1, 0.05, 200); })));
   buildGauge($('oGauges'), 'oX', 'x', 'X', -30, 30, 0.05, 'm');
   buildGauge($('oGauges'), 'oY', 'y', 'Y', 0, 10, 0.05, 'm');
@@ -1310,11 +1714,11 @@ function bindUI() {
   const objAxis = (i) => (v) => {
     const o = selection?.kind === 'object' ? objById(selection.id) : null;
     if (!o) return;
-    const cs = sampleObject(o, cur(), time);
+    const cs = sampleLocal(o, cur(), time);
     const pos = cs.pos.slice();
     let rot = cs.rotY;
     if (i === 3) rot = v;
-    else pos[i] = i === 1 ? Math.max(0, v) : v;
+    else pos[i] = i === 1 && !o.parent ? Math.max(0, v) : v;
     writeObject(o, pos.map(r3), r3(rot));
   };
   ['oX', 'oY', 'oZ', 'oRot'].forEach((id, i) => bindGauge(id, objAxis(i)));
@@ -1349,6 +1753,26 @@ function bindUI() {
   $('pFps').addEventListener('change', (e) => mutate(() => { project.fps = +e.target.value; }));
   $('pLight').addEventListener('change', (e) => mutate(() => { project.lighting = e.target.value; queueThumbs(true); }));
   liveInput($('pStyle'), (el) => { project.style = el.value; });
+  $('btnAudio').onclick = () => $('audioInput').click();
+  $('audioInput').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (f) await loadSong(f, f.name, true);
+  });
+  $('btnAudioDel').onclick = () => {
+    setPlaying(false);
+    song.unload();
+    idbDel('song');
+    project.audio.name = '';
+    autosave();
+    renderAudioPanel();
+    songDirty = true;
+  };
+  $('chkMute').addEventListener('change', (e) => song.setMuted(e.target.checked));
+  $('pOffset').addEventListener('change', (e) => mutate(() => { project.audio.offset = r3(+e.target.value || 0); }));
+  $('pBpm').addEventListener('change', (e) => mutate(() => { project.bpm = clamp(+e.target.value || 0, 0, 400); }));
+  $('pBeat0').addEventListener('change', (e) => mutate(() => { project.beat0 = r3(+e.target.value || 0); }));
+  $('pSections').addEventListener('change', (e) => mutate(() => { project.sections = parseSections(e.target.value); }));
 
   // Shot inspector
   $('sName').addEventListener('change', (e) => mutate(() => { cur().name = e.target.value.trim() || cur().name; }));
@@ -1364,6 +1788,27 @@ function bindUI() {
   }));
   $('sEase').addEventListener('change', (e) => mutate(() => { cur().ease = e.target.value; }));
   liveInput($('sDesc'), (el) => { cur().desc = el.value; });
+  $('sLight').addEventListener('change', (e) => mutate(() => {
+    if (e.target.value) cur().light = e.target.value;
+    else delete cur().light;
+  }));
+  $('btnRefLoad').onclick = () => $('refInput').click();
+  $('refInput').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const url = await readImage(f);
+      const id = `ref_${uid()}`;
+      project.assets[id] = url;
+      assetsDirty = true;
+      mutate(() => { cur().ref = id; });
+      toast('참조 이미지를 샷 카메라에 겹쳤습니다 — 프레이밍을 맞춰 보세요');
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+  $('btnRefDel').onclick = () => mutate(() => { delete cur().ref; });
   $('btnShotDup').onclick = () => mutate(() => {
     const c = clone(cur());
     c.id = uid();
@@ -1430,6 +1875,35 @@ function bindUI() {
   toggle('tgThirds', 'ovThirds');
   toggle('tgSafe', 'ovSafe');
   toggle('tgHud', 'ovHud');
+  $('tgRef').addEventListener('click', () => {
+    refOn = !refOn;
+    $('tgRef').classList.toggle('active', refOn);
+    updateRef();
+  });
+  $('refOpacity').addEventListener('input', updateRef);
+  {
+    const bar = $('songBar');
+    let seeking = false;
+    const at = (e) => {
+      const r = bar.getBoundingClientRect();
+      return ((e.clientX - r.left) / r.width) * songSpan();
+    };
+    bar.addEventListener('pointerdown', (e) => {
+      seeking = true;
+      bar.setPointerCapture(e.pointerId);
+      setPlaying(false);
+      seekGlobal(at(e));
+    });
+    bar.addEventListener('pointermove', (e) => { if (seeking) seekGlobal(at(e)); });
+    bar.addEventListener('pointerup', () => {
+      if (!seeking) return;
+      seeking = false;
+      renderTimeline();
+      renderCamKeys();
+      renderObjInspector();
+    });
+    new ResizeObserver(() => { songDirty = true; }).observe(bar);
+  }
 
   // Transport
   $('btnPlay').onclick = () => setPlaying(!playing);
@@ -1466,7 +1940,7 @@ function addObjKey() {
   mutate(() => {
     shot.anim ||= {};
     const ks = (shot.anim[o.id] ||= []);
-    const s = sampleObject(o, shot, time);
+    const s = sampleLocal(o, shot, time);
     ks.push({ t: r3(time), pos: s.pos, rotY: s.rotY });
     sortKeys(ks);
     shot.genAnim = (shot.genAnim || []).filter((id) => id !== o.id);
@@ -1497,9 +1971,13 @@ function deleteSelectedObject() {
   select(null);
   mutate(() => {
     for (const s of project.shots) if (s.lookAt?.id === id) unlockShot(s);
+    const gone = objById(id);
+    for (const c of project.objects) if (c.parent === id) reparent(c, gone?.parent || '');
     project.objects = project.objects.filter((o) => o.id !== id);
     for (const s of project.shots) {
       if (s.anim) delete s.anim[id];
+      if (s.hide) delete s.hide[id];
+      if (s.poses) delete s.poses[id];
       if (s.meta?.subject === id) s.meta.subject = null;
       if (s.lookAt?.id === id) unlockShot(s);
     }
@@ -1511,7 +1989,7 @@ function onKey(e) {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
-  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); exportJSON(project); return; }
+  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); exportJSON(exportable()); return; }
   if (mod) return;
   switch (e.key) {
     case ' ': e.preventDefault(); setPlaying(!playing); break;
@@ -1522,6 +2000,7 @@ function onKey(e) {
     case 'f': case 'F': focusSelection(); break;
     case 'c': case 'C': select({ kind: 'camera' }); break;
     case 't': case 'T': select({ kind: 'target' }); break;
+    case 'r': case 'R': $('tgRef').click(); break;
     case 'Escape': select(null); break;
     case 'Delete': case 'Backspace':
       if (lastFocus === 'shots' || selection?.kind !== 'object') deleteShot();
@@ -1538,6 +2017,8 @@ function onKey(e) {
 function loadProject(p, undoable) {
   if (undoable && project) pushUndo();
   project = p;
+  project.assets ||= {};
+  assetsDirty = true;
   shotIdx = 0;
   time = 0;
   thumbs.clear();
@@ -1549,18 +2030,31 @@ function loadProject(p, undoable) {
 // ---------------------------------------------------------------------------
 // Boot
 
-bindUI();
-let initial = null;
-try {
-  const saved = localStorage.getItem('previz.project.v1');
-  if (saved) initial = normalizeProject(JSON.parse(saved));
-} catch { initial = null; }
-loadProject(initial || sampleProject(), false);
-setLayout(window.innerWidth < 900 ? 'camera' : 'split');
-requestAnimationFrame(frame);
+const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(undefined), ms))]);
+
+async function boot() {
+  bindUI();
+  let initial = null;
+  try {
+    const saved = localStorage.getItem('previz.project.v1');
+    if (saved) initial = normalizeProject(JSON.parse(saved));
+  } catch { initial = null; }
+  if (initial) {
+    const stored = await withTimeout(idbGet('assets'), 1500);
+    if (stored && typeof stored === 'object') initial.assets = { ...stored, ...initial.assets };
+  }
+  loadProject(initial || sampleProject(), false);
+  setLayout(window.innerWidth < 900 ? 'camera' : 'split');
+  requestAnimationFrame(frame);
+  const saved = await withTimeout(idbGet('song'), 3000);
+  if (saved?.blob && !song.loaded) await loadSong(saved.blob, saved.name, false);
+}
+boot();
 
 // Debug / automation hook.
 window.previz = {
   get project() { return project; },
   setShot, setTime, generateShot, parseShotText, describeShot, downloadText,
+  makeObject, makeShot, normalizeProject, loadProject, renderFrame, defaultParams, song,
+  loadSong, refresh, exportable,
 };

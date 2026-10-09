@@ -117,6 +117,16 @@
             <button data-add="tree">나무</button>
             <button data-add="table">테이블</button>
             <button data-add="mark">바닥 마크</button>
+            <button data-add="slab">바위판</button>
+            <button data-add="debris">부유 파편</button>
+            <button data-add="balloon">풍선</button>
+            <button data-add="mballoon">반사 풍선</button>
+            <button data-add="clouds">구름층</button>
+            <button data-add="crackfloor">균열 지면</button>
+            <button data-add="metronome">메트로놈</button>
+            <button data-add="drums">드럼</button>
+            <button data-add="keyboard">키보드</button>
+            <button data-add="micstand">마이크</button>
           </div>
         </div>
         <div class="group">
@@ -128,13 +138,21 @@
           <div class="grid2">
             <label class="span2">이름<input id="oName" /></label>
             <label>색상<input id="oColor" type="color" /></label>
-            <label id="oHWrap">키 (m)<input id="oH" type="number" step="0.05" min="0.3" /></label>
+            <label id="oHWrap"><span id="oHLabel">키 (m)</span><input id="oH" type="number" step="0.05" min="0" /></label>
+            <label id="oTiltWrap">기울기 (°)<input id="oTilt" type="number" step="1" min="-60" max="60" /></label>
             <label class="dims">폭<input id="oSX" type="number" step="0.1" min="0.05" /></label>
             <label class="dims">높이<input id="oSY" type="number" step="0.1" min="0.05" /></label>
             <label class="dims">깊이<input id="oSZ" type="number" step="0.1" min="0.05" /></label>
           </div>
           <div class="gauges" id="oGauges"></div>
-          <p class="hint block">이 샷에 키가 없으면 이동은 <b>모든 샷의 기본 위치</b>를 바꿉니다. 키를 추가하면 이 샷에서만 애니메이션됩니다.</p>
+          <div class="grid2">
+            <label id="oHoldWrap" class="span2">들고 있는 것<select id="oHold"></select></label>
+            <label id="oPoseWrap">기본 포즈<select id="oPose"></select></label>
+            <label id="oPoseShotWrap">이 샷 포즈<select id="oPoseShot"></select></label>
+            <label class="span2">붙이기 (부모)<select id="oParent"></select></label>
+          </div>
+          <label class="chk"><input type="checkbox" id="oHide" /> 이 샷에서 숨기기</label>
+          <p class="hint block">이 샷에 키가 없으면 이동은 <b>모든 샷의 기본 위치</b>를 바꿉니다. 키를 추가하면 이 샷에서만 애니메이션됩니다. 부모에 붙이면 위치는 부모 기준이 되고, 부모가 움직이면 함께 움직입니다.</p>
           <div class="row">
             <button id="btnObjKey" class="grow">이 샷에서 키 추가</button>
             <button id="btnObjClearKeys" class="grow">키 모두 삭제</button>
@@ -148,6 +166,22 @@
       </section>
 
       <section class="tab-body" data-body="project" hidden>
+        <div class="group">
+          <label class="lbl">노래 <span class="hint" id="audioName">불러온 음원 없음</span></label>
+          <div class="row">
+            <button id="btnAudio" class="grow">음원 불러오기</button>
+            <button id="btnAudioDel" class="danger" disabled>제거</button>
+            <input id="audioInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" hidden />
+          </div>
+          <div class="grid2">
+            <label>샷 1 시작 = 곡의 (초)<input id="pOffset" type="number" step="0.1" /></label>
+            <label class="chk" style="align-self:end;padding-bottom:6px;flex-direction:row;color:var(--muted);font-size:12px"><input type="checkbox" id="chkMute" /> 음소거</label>
+            <label>BPM<input id="pBpm" type="number" step="0.1" min="0" placeholder="없음" /></label>
+            <label>첫 다운비트 (초)<input id="pBeat0" type="number" step="0.01" /></label>
+            <label class="span2">구간 마커 <span class="hint">한 줄에 하나 · 예) 0:42 Drop</span><textarea id="pSections" rows="4" spellcheck="false"></textarea></label>
+          </div>
+          <p class="hint block">음원은 이 브라우저에만 저장되고 프로젝트 JSON에는 들어가지 않습니다. 재생하면 음악과 샷이 같은 시계로 맞물립니다.</p>
+        </div>
         <div class="group grid2">
           <label>화면비<select id="pAspect"></select></label>
           <label>센서<select id="pSensor"></select></label>
@@ -164,7 +198,7 @@
             <li><kbd>Space</kbd> 재생 / 정지</li>
             <li><kbd>K</kbd> 카메라 키 추가 · <kbd>O</kbd> 오브젝트 키 추가</li>
             <li><kbd>W</kbd> / <kbd>E</kbd> 이동 / 회전 기즈모</li>
-            <li><kbd>F</kbd> 선택 대상에 포커스</li>
+            <li><kbd>F</kbd> 선택 대상에 포커스 · <kbd>R</kbd> 참조 이미지 켜기/끄기</li>
             <li><kbd>C</kbd> 카메라 선택 · <kbd>T</kbd> 타깃 선택</li>
             <li><kbd>Del</kbd> 샷 삭제 (샷 카드 클릭 후) · 오브젝트 삭제 (오브젝트 선택 시)</li>
             <li><kbd>←</kbd>/<kbd>→</kbd> 1프레임 이동</li>
@@ -191,6 +225,10 @@
           <button id="tgSafe" class="toggle">세이프</button>
           <button id="tgHud" class="toggle active">HUD</button>
         </div>
+        <div class="seg ref-seg">
+          <button id="tgRef" class="toggle active" title="샷에 넣은 참조 이미지(키컷) 겹쳐 보기">참조</button>
+          <input id="refOpacity" type="range" min="0" max="1" step="0.05" value="0.5" title="참조 이미지 불투명도" />
+        </div>
         <span class="grow"></span>
         <button id="btnCamFromView" title="디렉터 뷰의 시점을 현재 시간의 카메라 키로">디렉터 뷰 → 카메라</button>
       </div>
@@ -203,6 +241,7 @@
         <div id="shotPane" class="pane">
           <div id="shotFrame">
             <canvas id="shotCanvas"></canvas>
+            <img id="ovRef" class="ov ref" alt="" hidden />
             <div id="ovThirds" class="ov thirds"><i></i><i></i><i></i><i></i></div>
             <div id="ovSafe" class="ov safe" hidden></div>
             <div id="ovHud" class="ov hud">
@@ -226,6 +265,7 @@
           <label class="chk"><input type="checkbox" id="chkLoop" checked /> 반복</label>
           <label class="chk"><input type="checkbox" id="chkAll" /> 전체 샷 재생</label>
           <span id="timecode" class="tc">00:00:00</span>
+          <span id="songTc" class="song-tc" title="곡 기준 시간"></span>
           <span class="grow"></span>
           <button id="btnAddObjKey" class="objkey" title="O — 선택한 오브젝트의 키" disabled>◆ 오브젝트 키</button>
           <button id="btnAddKey" title="K">◆ 카메라 키</button>
@@ -236,6 +276,7 @@
           <div class="lane" id="laneObj"><span class="lane-name" id="laneObjName">오브젝트</span></div>
           <div id="playhead"></div>
         </div>
+        <div id="songBar" title="곡 전체 타임라인 — 클릭하거나 드래그해서 이동"><canvas id="songCanvas"></canvas></div>
         <div id="shotStrip">
           <div id="shotCards"></div>
           <button id="btnShotAdd" class="shot-add" title="빈 샷 추가">＋</button>
@@ -257,6 +298,18 @@
             <option value="out">Ease Out</option>
           </select></label>
           <label class="span2">액션 / 설명<textarea id="sDesc" rows="3" placeholder="예) 비 내리는 골목, 그녀가 천천히 뒤돌아본다"></textarea></label>
+          <label class="span2">라이팅 (이 샷)<select id="sLight"></select></label>
+        </div>
+        <div class="ref-box">
+          <img id="refThumb" alt="" hidden />
+          <div class="ref-actions">
+            <span class="hint" id="refHint">참조 이미지 없음</span>
+            <div class="row">
+              <button id="btnRefLoad" class="grow">참조 이미지</button>
+              <button id="btnRefDel" class="danger" disabled>제거</button>
+            </div>
+          </div>
+          <input id="refInput" type="file" accept="image/*" hidden />
         </div>
         <div class="row">
           <button id="btnShotDup" class="grow">복제</button>

@@ -2,6 +2,7 @@
 // lens, move) into camera keyframes, and parses free text into those params.
 import * as THREE from 'three';
 import { SIZES, ANGLES, DIRS, MOVES, SPEED, SENSORS } from './constants.js';
+import { sampleObject } from './anim.js';
 
 const V = THREE.Vector3;
 const UP = new V(0, 1, 0);
@@ -20,21 +21,33 @@ export function objectHeight(o) {
     case 'car': return 1.45;
     case 'tree': return o.height || 5;
     case 'mark': return 0.05;
+    case 'drums': return 1.3;
+    case 'micstand': return o.height || 1.5;
+    case 'metronome': return 0.26;
+    case 'balloon': case 'mballoon': return (o.size && o.size[1]) || 0.36;
     default: return (o.size && o.size[1]) || 1;
   }
 }
 
+// Height above the origin where an object's framed part starts (a balloon floats on its string).
+export function objectBase(o) {
+  return o.type === 'balloon' ? (o.height ?? 1.6) : o.type === 'mballoon' ? (o.height ?? 0) : 0;
+}
+
+/** Look-at offset above the object's origin for a shot size. */
+export function aimOffset(o, sizeKey) {
+  const frac = o.type === 'actor' ? (SIZES[sizeKey]?.aim ?? 0.85) : 0.5;
+  return objectBase(o) + objectHeight(o) * frac;
+}
+
 function startTransform(obj, shot) {
-  const k = shot && shot.anim && shot.anim[obj.id];
-  if (k && k.length) return { pos: new V(...k[0].pos), rotY: k[0].rotY };
-  return { pos: new V(...obj.pos), rotY: obj.rotY };
+  const s = sampleObject(obj, shot, 0);
+  return { pos: new V(...s.pos), rotY: s.rotY };
 }
 
 function aimPoint(obj, sizeKey, shot) {
   const { pos } = startTransform(obj, shot);
-  const H = objectHeight(obj);
-  const frac = obj.type === 'actor' ? SIZES[sizeKey].aim : 0.5;
-  return new V(pos.x, pos.y + H * frac, pos.z);
+  return new V(pos.x, pos.y + aimOffset(obj, sizeKey), pos.z);
 }
 
 export const defaultParams = () => ({
@@ -142,7 +155,7 @@ export function generateShot(p, project, prevShot) {
       break;
     }
     case 'track': {
-      if (!subj || !['actor', 'car'].includes(subj.type)) {
+      if (!subj || !['actor', 'car'].includes(subj.type) || subj.parent) {
         keys.push(key(0, target.clone().addScaledVector(off, 1.3), target), key(dur, pos, target));
         break;
       }
@@ -392,7 +405,7 @@ export function describeShot(shot, project, index) {
   parts.push(`${aspect}:1 aspect ratio`);
   parts.push(`${shot.duration} seconds`);
   let en = parts.join(', ') + '.';
-  if (shot.desc) en += ` Action: ${shot.desc}.`;
+  if (shot.desc) en += ` Action: ${shot.desc.trim().replace(/[.。!?]+$/, '')}.`;
   if (project.style) en += ` ${project.style}`;
   return { ko, en };
 }

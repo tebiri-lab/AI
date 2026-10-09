@@ -91,8 +91,26 @@ function lerpAngle(a, b, s) {
   return a + d * s;
 }
 
-// Object transform at time t: base transform unless the shot animates it.
-export function sampleObject(obj, shot, t) {
+// Objects can be attached to a parent (e.g. a drummer on a floating slab). Transforms in
+// o.pos / object keys are then relative to the parent. The registry is set by the app.
+let REG = [];
+export function setObjects(list) { REG = list || []; }
+const byId = (id) => REG.find((o) => o.id === id);
+const D2R = Math.PI / 180;
+
+/** Ancestors of an object, nearest first (cycle-safe). */
+export function ancestors(obj) {
+  const out = [];
+  let cur = obj.parent ? byId(obj.parent) : null;
+  while (cur && out.length < 8 && !out.includes(cur) && cur !== obj) {
+    out.push(cur);
+    cur = cur.parent ? byId(cur.parent) : null;
+  }
+  return out;
+}
+
+// Object transform at time t in its parent's space: base transform unless the shot animates it.
+export function sampleLocal(obj, shot, t) {
   const keys = shot && shot.anim && shot.anim[obj.id];
   if (!keys || !keys.length) {
     return { pos: obj.pos.slice(), rotY: obj.rotY, dist: 0, speed: 0 };
@@ -102,14 +120,49 @@ export function sampleObject(obj, shot, t) {
   }
   const { i, s } = locate(keys, t);
   const a = keys[i], b = keys[i + 1];
-  const pos = [0, 1, 2].map((j) => a.pos[j] + (b.pos[j] - a.pos[j]) * s);
+  const u = (EASE[a.ease] || EASE.linear)(s);
+  const pos = [0, 1, 2].map((j) => a.pos[j] + (b.pos[j] - a.pos[j]) * u);
   let dist = 0;
   for (let j = 0; j < i; j++) dist += v3(keys[j].pos).distanceTo(v3(keys[j + 1].pos));
   const segLen = v3(a.pos).distanceTo(v3(b.pos));
-  dist += segLen * s;
+  dist += segLen * u;
   const span = b.t - a.t;
   const moving = t > keys[0].t && t < keys[keys.length - 1].t;
-  return { pos, rotY: lerpAngle(a.rotY, b.rotY, s), dist, speed: moving && span > 0 ? segLen / span : 0 };
+  return { pos, rotY: lerpAngle(a.rotY, b.rotY, u), dist, speed: moving && span > 0 ? segLen / span : 0 };
+}
+
+function compose(parentS, local) {
+  const a = parentS.rotY * D2R, c = Math.cos(a), sn = Math.sin(a);
+  const [x, y, z] = local.pos;
+  return {
+    pos: [parentS.pos[0] + x * c + z * sn, parentS.pos[1] + y, parentS.pos[2] - x * sn + z * c],
+    rotY: parentS.rotY + local.rotY,
+    dist: local.dist,
+    speed: local.speed,
+  };
+}
+
+// World transform of an object at time t (parents applied).
+export function sampleObject(obj, shot, t) {
+  let s = sampleLocal(obj, shot, t);
+  for (const p of ancestors(obj)) s = compose(sampleLocal(p, shot, t), s);
+  return s;
+}
+
+/** Convert a world position/rotation into obj's parent space at (shot, t). */
+export function worldToLocal(obj, shot, t, pos, rotY) {
+  const p = obj.parent ? byId(obj.parent) : null;
+  if (!p) return { pos: pos.slice(), rotY };
+  const ps = sampleObject(p, shot, t);
+  const a = ps.rotY * D2R, c = Math.cos(a), sn = Math.sin(a);
+  const dx = pos[0] - ps.pos[0], dy = pos[1] - ps.pos[1], dz = pos[2] - ps.pos[2];
+  return { pos: [dx * c - dz * sn, dy, dx * sn + dz * c], rotY: rotY - ps.rotY };
+}
+
+/** True when the object or any ancestor has keys in this shot. */
+export function isAnimated(obj, shot) {
+  if (shot?.anim?.[obj.id]?.length) return true;
+  return ancestors(obj).some((p) => shot?.anim?.[p.id]?.length);
 }
 
 export function keyIndexAt(keys, t, tol) {
