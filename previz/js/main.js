@@ -516,6 +516,8 @@ function updateHud(cs) {
     $('cRoll').value = Math.round(clean.roll);
     $('cRollN').value = Math.round(clean.roll);
   }
+  renderCamGauges();
+  if (playing) renderObjInspectorValues();
 }
 
 // ---------------------------------------------------------------------------
@@ -635,6 +637,7 @@ gizmo.addEventListener('objectChange', () => {
     renderObjInspectorValues();
   }
   updatePath();
+  hudCache = '';
 });
 
 // Click-to-select in the director view.
@@ -721,6 +724,7 @@ function setTime(t) {
   time = clamp(t, 0, cur().duration);
   updatePlayhead();
   renderObjInspectorValues(true);
+  renderCamGauges(true);
   hudCache = '';
 }
 
@@ -884,12 +888,57 @@ function renderObjInspector() {
   });
 }
 
+// A gauge = range slider + number field sharing one value. Ids: `${id}` (number), `${id}R` (range).
+function buildGauge(container, id, axis, label, min, max, step, unit) {
+  const row = document.createElement('div');
+  row.className = `slider-row gauge ${axis}`;
+  row.innerHTML = `<span class="ax">${label}</span>`
+    + `<input id="${id}R" type="range" min="${min}" max="${max}" step="${step}" aria-label="${label}" />`
+    + `<input id="${id}" type="number" step="${step}" class="num" aria-label="${label}" />`
+    + `<span class="unit">${unit}</span>`;
+  container.appendChild(row);
+}
+
+// Show a value without fighting the user's own drag/typing; widen the slider if needed.
+function setGauge(id, v, force = false) {
+  const num = $(id), rng = $(`${id}R`);
+  if (!force && (document.activeElement === num || document.activeElement === rng)) return;
+  const val = Math.round(v * 100) / 100;
+  if (val < +rng.min) rng.min = Math.floor(val - 5);
+  if (val > +rng.max) rng.max = Math.ceil(val + 5);
+  rng.value = val;
+  num.value = val;
+}
+
+// Live editing from either control: one undo step per drag, mirrored into the twin control.
+function bindGauge(id, apply) {
+  const num = $(id), rng = $(`${id}R`);
+  let open = false;
+  const onInput = (src, twin) => {
+    const v = +src.value;
+    if (!Number.isFinite(v)) return;
+    if (!open) { pushUndo(); open = true; }
+    twin.value = v;
+    apply(v);
+    softRefresh();
+  };
+  rng.addEventListener('input', () => onInput(rng, num));
+  num.addEventListener('input', () => onInput(num, rng));
+  for (const el of [rng, num]) el.addEventListener('change', () => { open = false; refresh(); });
+}
+
 function renderObjInspectorValues(force = false) {
   const o = selection?.kind === 'object' ? objById(selection.id) : null;
   if (!o) return;
   const s = sampleObject(o, cur(), time);
-  const set = (id, v) => { if (force || document.activeElement !== $(id)) $(id).value = Math.round(v * 100) / 100; };
-  set('oX', s.pos[0]); set('oY', s.pos[1]); set('oZ', s.pos[2]); set('oRot', s.rotY);
+  setGauge('oX', s.pos[0], force); setGauge('oY', s.pos[1], force);
+  setGauge('oZ', s.pos[2], force); setGauge('oRot', s.rotY, force);
+}
+
+function renderCamGauges(force = false) {
+  const c = resolveCamera(cur(), time, project.objects, false);
+  setGauge('cPX', c.pos.x, force); setGauge('cPY', c.pos.y, force); setGauge('cPZ', c.pos.z, force);
+  setGauge('cTX', c.target.x, force); setGauge('cTY', c.target.y, force); setGauge('cTZ', c.target.z, force);
 }
 
 function renderPrompt() {
@@ -1254,10 +1303,33 @@ function bindUI() {
   $('oColor').addEventListener('change', (e) => objEdit((o) => { o.color = e.target.value; }));
   $('oH').addEventListener('change', (e) => objEdit((o) => { o.height = clamp(+e.target.value || 1.75, 0.3, 30); }));
   ['oSX', 'oSY', 'oSZ'].forEach((id, i) => $(id).addEventListener('change', (e) => objEdit((o) => { o.size[i] = clamp(+e.target.value || 1, 0.05, 200); })));
-  const posEdit = () => objEdit((o) => {
-    writeObject(o, [+$('oX').value || 0, Math.max(0, +$('oY').value || 0), +$('oZ').value || 0], +$('oRot').value || 0);
-  });
-  ['oX', 'oY', 'oZ', 'oRot'].forEach((id) => $(id).addEventListener('change', posEdit));
+  buildGauge($('oGauges'), 'oX', 'x', 'X', -30, 30, 0.05, 'm');
+  buildGauge($('oGauges'), 'oY', 'y', 'Y', 0, 10, 0.05, 'm');
+  buildGauge($('oGauges'), 'oZ', 'z', 'Z', -30, 30, 0.05, 'm');
+  buildGauge($('oGauges'), 'oRot', 'r', '회전', -180, 180, 1, '°');
+  const objAxis = (i) => (v) => {
+    const o = selection?.kind === 'object' ? objById(selection.id) : null;
+    if (!o) return;
+    const cs = sampleObject(o, cur(), time);
+    const pos = cs.pos.slice();
+    let rot = cs.rotY;
+    if (i === 3) rot = v;
+    else pos[i] = i === 1 ? Math.max(0, v) : v;
+    writeObject(o, pos.map(r3), r3(rot));
+  };
+  ['oX', 'oY', 'oZ', 'oRot'].forEach((id, i) => bindGauge(id, objAxis(i)));
+
+  for (const [box, ids, kind] of [[$('cPosGauges'), ['cPX', 'cPY', 'cPZ'], 'pos'], [$('cTgtGauges'), ['cTX', 'cTY', 'cTZ'], 'target']]) {
+    buildGauge(box, ids[0], 'x', 'X', -40, 40, 0.05, 'm');
+    buildGauge(box, ids[1], 'y', 'Y', 0, 20, 0.05, 'm');
+    buildGauge(box, ids[2], 'z', 'Z', -40, 40, 0.05, 'm');
+    ids.forEach((id, i) => bindGauge(id, (v) => {
+      const c = resolveCamera(cur(), time, project.objects, false);
+      const vec = c[kind].clone();
+      vec.setComponent(i, i === 1 && kind === 'pos' ? Math.max(0.05, v) : v);
+      writeCamera({ [kind]: vec });
+    }));
+  }
   $('btnObjKey').onclick = addObjKey;
   $('btnAddObjKey').onclick = addObjKey;
   $('btnObjClearKeys').onclick = () => objEdit((o) => { delete cur().anim[o.id]; });

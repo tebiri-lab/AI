@@ -128,15 +128,12 @@
           <div class="grid2">
             <label class="span2">이름<input id="oName" /></label>
             <label>색상<input id="oColor" type="color" /></label>
-            <label>회전 Y (°)<input id="oRot" type="number" step="5" /></label>
-            <label>X (m)<input id="oX" type="number" step="0.1" /></label>
-            <label>Z (m)<input id="oZ" type="number" step="0.1" /></label>
-            <label>Y (m)<input id="oY" type="number" step="0.1" /></label>
             <label id="oHWrap">키 (m)<input id="oH" type="number" step="0.05" min="0.3" /></label>
             <label class="dims">폭<input id="oSX" type="number" step="0.1" min="0.05" /></label>
             <label class="dims">높이<input id="oSY" type="number" step="0.1" min="0.05" /></label>
             <label class="dims">깊이<input id="oSZ" type="number" step="0.1" min="0.05" /></label>
           </div>
+          <div class="gauges" id="oGauges"></div>
           <p class="hint block">이 샷에 키가 없으면 이동은 <b>모든 샷의 기본 위치</b>를 바꿉니다. 키를 추가하면 이 샷에서만 애니메이션됩니다.</p>
           <div class="row">
             <button id="btnObjKey" class="grow">이 샷에서 키 추가</button>
@@ -295,6 +292,10 @@
           <button id="btnSelCam">카메라 선택</button>
           <button id="btnSelTgt">타깃 선택</button>
         </div>
+        <div class="gauge-head">위치</div>
+        <div class="gauges" id="cPosGauges"></div>
+        <div class="gauge-head">타깃 (바라보는 지점)</div>
+        <div class="gauges" id="cTgtGauges"></div>
         <label class="lock-row" for="cLock"><span>타깃 고정</span><select id="cLock"></select></label>
         <ul id="camKeys" class="key-list"></ul>
       </div>

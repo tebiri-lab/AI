@@ -280,3 +280,17 @@ button:disabled:active { transform: none; }
 
 .lock-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 6px; color: var(--muted); }
 #shotStrip.focused #shotCards .shot-card.active { box-shadow: 0 0 0 2px var(--accent); }
+
+/* XYZ gauges */
+.gauges { display: flex; flex-direction: column; gap: 4px; }
+.gauge-head { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 6px; align-items: baseline; }
+.gauge { grid-template-columns: 40px 1fr 64px 22px; }
+.gauge .ax { font: 700 11px var(--mono); }
+.gauge.x .ax { color: #ff6b6b; }
+.gauge.y .ax { color: #7fd18b; }
+.gauge.z .ax { color: #5fa8ff; }
+.gauge.r .ax { color: var(--accent-2); }
+.gauge.x input[type=range] { accent-color: #ff6b6b; }
+.gauge.y input[type=range] { accent-color: #7fd18b; }
+.gauge.z input[type=range] { accent-color: #5fa8ff; }
+.gauge.r input[type=range] { accent-color: var(--accent-2); }
