@@ -1598,7 +1598,7 @@ function buildBallpark(o) {
   g.userData.anim = {
     kind: 'crowd', body, head, live: false,
     base: [body.instanceMatrix.array.slice(), head.instanceMatrix.array.slice()],
-    bob: seats.map(() => [0.5 + rand() * 0.45, rand() * Math.PI * 2, 0.04 + rand() * 0.06]),
+    bob: seats.map(() => [1.0 + rand() * 0.8, rand() * Math.PI * 2, 0.04 + rand() * 0.06]),
   };
 
   // --- light towers and scoreboard on the back rim
