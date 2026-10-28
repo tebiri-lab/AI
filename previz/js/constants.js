@@ -166,6 +166,7 @@ export const POSE_SETS = {
     still: '정지',
   },
   clouds: { drift: '왼쪽 → 오른쪽으로 흐름', still: '정지' },
+  ballpark: { still: '관중 정지', bob: '관중이 위아래로 조금씩 들썩임', wake: '관중 정지 → 프리즈가 깨지는 시점(샷의 프리즈 해제 초)부터 들썩임' },
 };
 
 export const HOLDS = { none: '없음', guitar: '일렉 기타', bass: '베이스', sticks: '드럼 스틱' };
