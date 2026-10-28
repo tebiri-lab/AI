@@ -172,7 +172,128 @@ function stadiumProject() {
   return p;
 }
 
-const SAMPLES = { alley: sampleProject, stadium: stadiumProject };
+// Same ballpark, side view: the runner sprints from 2nd toward 3rd in slow motion while time is frozen.
+// Shot 1 tracks him side-on (FS), shot 2 is a feet insert, and in shot 3 the freeze breaks.
+function stealSideProject() {
+  const p = baseProject('3루 도루 — 측면 트래킹');
+  p.lighting = 'stadium';
+  p.style = 'Photorealistic live-action night baseball broadcast look under stadium floodlights, long telephoto lens, '
+    + 'compressed background, strong horizontal motion blur on the background. The runner moves in high-speed slow motion '
+    + '(about 1/8 speed), cleats digging into the infield dirt and kicking up dust. Subtle film grain.';
+  const B = 27.43 / Math.SQRT2;
+  const B2 = [0, 0, -2 * B];
+  const dir = [-Math.SQRT1_2, Math.SQRT1_2]; // 2nd -> 3rd base on the ground plane
+  const side = [-Math.SQRT1_2, -Math.SQRT1_2]; // outfield side of the base path: the camera looks in toward home
+  const yawTo = (from, to) => r3(THREE.MathUtils.radToDeg(Math.atan2(to[0] - from[0], to[2] - from[2])));
+  const home = [0, 0, 0];
+  const offense = '#e9e5dc', defense = '#2c3e66';
+  const along = (d, h = 0) => [r3(B2[0] + dir[0] * d), h, r3(B2[2] + dir[1] * d)];
+  const runner = makeObject('actor', { name: '주자', color: offense, height: 1.83, pose: 'run', rotY: -45, pos: along(1) });
+  const fielder = (name, pos, pose = 'field_ready', face = home) => makeObject('actor', { name, color: defense, pose, pos, rotY: yawTo(pos, face) });
+  const catcherPos = [0, 0, 1.0];
+  const third = fielder('3루수', [-B + 3, 0, -B + 3]);
+  const short = fielder('유격수', [-6, 0, -30]);
+  const pitcher = fielder('투수', [0, 0.25, -18.2], 'throw');
+  // The pitch hangs in the air between the mound and home plate until time starts again.
+  const ballAt = 0.6, ball = makeObject('baseball', { name: '야구공 (투구, 공중 정지)', pos: [0, 1.3, r3(-18.2 * (1 - ballAt))] });
+  p.objects.push(
+    makeObject('ballpark', { name: '야구장' }),
+    runner, third, short, pitcher,
+    fielder('2루수', [9.5, 0, -33]),
+    fielder('1루수', [B - 1.5, 0, -B - 2]),
+    fielder('포수', catcherPos, 'catcher', [0, 0, -18.2]),
+    fielder('좌익수', [-30, 0, -72]),
+    fielder('중견수', [0, 0, -88]),
+    fielder('우익수', [30, 0, -72]),
+    makeObject('actor', { name: '주심', color: '#1d1f24', pose: 'field_ready', pos: [0, 0, 2.3], rotY: 180 }),
+    makeObject('actor', { name: '3루심', color: '#1d1f24', pose: 'field_ready', pos: [-B - 4, 0, -B + 5], rotY: yawTo([-B - 4, 0, -B + 5], [-B, 0, -B]) }),
+    makeObject('actor', { name: '3루 코치', color: offense, pose: 'reach_up', pos: [-B - 6, 0, -B + 9], rotY: yawTo([-B - 6, 0, -B + 9], runner.pos) }),
+    ball,
+  );
+
+  // One continuous run cut into three shots: ~1.06 m/s on screen, about 1/8 of a real 8.5 m/s sprint.
+  const v = 1.06;
+  const shots = [
+    { name: '질주 · 측면 트래킹 (프리즈)', dur: 4.0 },
+    { name: '인서트 · 발 클로즈업', dur: 2.5 },
+    { name: '질주 · 프리즈가 깨짐', dur: 5.0 },
+  ];
+  let d0 = 1; // runner's distance from 2nd base at the start of each shot
+  const runAnim = (dur) => [
+    { t: 0, pos: along(d0), rotY: -45 },
+    { t: dur, pos: along(d0 + v * dur), rotY: -45 },
+  ];
+  // Side tracking: the camera slides parallel to the base path at the runner's speed,
+  // aimed a little ahead of him so he sits left of centre with lead room in the direction he runs.
+  const trackKeys = (dur, dist, h, aimH, lead, focal) => {
+    const keys = [];
+    for (let t = 0; t <= dur + 1e-6; t += 0.5) {
+      const d = d0 + v * t + lead;
+      const c = along(d);
+      keys.push({
+        t: r3(t),
+        pos: [r3(c[0] + side[0] * dist), h, r3(c[2] + side[1] * dist)],
+        target: [c[0], aimH, c[2]],
+        focal, roll: 0,
+      });
+    }
+    return keys;
+  };
+  const meta = (size, angle, dur, lens) => ({ subject: runner.id, size, angle, dir: 'side', move: 'track', speed: 'normal', lens, duration: dur });
+
+  // Shot 1 — FS, 85 mm from about 20 m: the whole body fills the frame height. Everything but the runner is frozen.
+  let s = shots[0];
+  p.shots.push({
+    id: uid(), name: s.name, duration: s.dur, ease: 'linear', shake: 0,
+    desc: '2루를 막 떠난 주자가 흙을 힘껏 박차며 3루를 향해 질주한다. 측면 풀샷, 카메라가 주자와 같은 속도로 나란히 이동한다. 초고속 슬로모션. 배경(투수, 수비수, 심판, 관중, 공중의 공)은 프리즈 프레임처럼 완전히 정지해 있다.',
+    keys: trackKeys(s.dur, 20, 2.2, 0.95, 1.2, 85), anim: { [runner.id]: runAnim(s.dur) }, genAnim: [],
+    meta: meta('fs', 'eye', s.dur, 85),
+  });
+  d0 += v * s.dur;
+
+  // Shot 2 — insert: feet only. Long lens close to the ground, 7 m away, framing about 0.85 m of height (both feet and shins).
+  s = shots[1];
+  p.shots.push({
+    id: uid(), name: s.name, duration: s.dur, ease: 'linear', shake: 0,
+    desc: '발만 보이는 인서트. 스파이크가 흙을 깊게 파고들며 박차고, 흙먼지가 슬로모션으로 튀어 오른다. 카메라는 지면 가까이에서 측면으로 발과 나란히 트래킹한다. 배경은 여전히 정지.',
+    keys: trackKeys(s.dur, 7, 0.3, 0.35, 0.3, 85), anim: { [runner.id]: runAnim(s.dur) }, genAnim: [],
+    meta: { ...meta('ecu', 'low', s.dur, 85), subjectPart: 'feet' },
+  });
+  d0 += v * s.dur;
+
+  // Shot 3 — back to the FS side track; at 1.5 s the freeze breaks and the rest of the field starts moving
+  // (at the same slow-motion rate as the runner): the pitch flies on into the catcher's mitt,
+  // the third baseman breaks for the bag and the shortstop drifts toward 2nd.
+  s = shots[2];
+  const tb = 1.5;
+  const mitt = [0, 0.9, 0.6];
+  const pitchFlight = r3((Math.abs(mitt[2] - ball.pos[2]) / 40) * 8); // 40 m/s pitch at 1/8 speed
+  const bag3 = [r3(-B + 0.9), 0, r3(-B - 0.9)];
+  const shortTo = [-2, 0, -36];
+  p.shots.push({
+    id: uid(), name: s.name, duration: s.dur, ease: 'linear', shake: 0,
+    desc: '다시 측면 풀샷 트래킹. 질주 도중(1.5초) 배경의 프리즈 프레임이 깨지며 시간이 다시 흐르기 시작한다: 멈춰 있던 공이 포수 미트로 날아가고, 3루수가 베이스로 달려들고, 유격수가 움직인다. 주자는 계속 슬로모션으로 3루를 향해 달린다.',
+    keys: trackKeys(s.dur, 20, 2.2, 0.95, 1.2, 85),
+    anim: {
+      [runner.id]: runAnim(s.dur),
+      [ball.id]: [{ t: 0, pos: ball.pos, rotY: 0 }, { t: tb, pos: ball.pos, rotY: 0 }, { t: r3(tb + pitchFlight), pos: mitt, rotY: 0 }],
+      [third.id]: [
+        { t: 0, pos: third.pos, rotY: third.rotY }, { t: tb, pos: third.pos, rotY: yawTo(third.pos, bag3) },
+        { t: s.dur, pos: bag3, rotY: yawTo(third.pos, bag3) },
+      ],
+      [short.id]: [
+        { t: 0, pos: short.pos, rotY: short.rotY }, { t: tb, pos: short.pos, rotY: yawTo(short.pos, shortTo) },
+        { t: s.dur, pos: shortTo, rotY: yawTo(short.pos, shortTo) },
+      ],
+    },
+    genAnim: [],
+    poses: { [third.id]: 'stand', [short.id]: 'stand' },
+    meta: meta('fs', 'eye', s.dur, 85),
+  });
+  return p;
+}
+
+const SAMPLES = { alley: sampleProject, stadium: stadiumProject, steal: stealSideProject };
 
 function blankProject() {
   const p = baseProject('새 프리비즈');
