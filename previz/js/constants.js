@@ -153,6 +153,7 @@ export const POSE_SETS = {
     run: '전력 질주 (도루 · 이동 거리에 맞춘 보폭)',
     field_ready: '수비 준비 자세',
     throw: '송구 동작 (정지)',
+    pitch: '투구 → 팔로스루 → 서기 (샷의 프리즈 해제 시점부터, 이동 키가 있으면 걷기)',
     catcher: '포수 자세',
   },
   metronome: { swing: '박자대로 흔들림', start: '시작 (가운데에서 천천히 커져 샷 끝에 최대 폭)', rest: '정지 (가운데)', slow: '점점 느려짐', stop: '정지 (한쪽 끝)' },
