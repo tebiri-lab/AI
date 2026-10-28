@@ -196,7 +196,7 @@ function stealSideProject() {
   const pitcher = fielder('투수', [0, 0.25, -18.2], 'throw');
   // The pitch hangs in the air between the mound and home plate until time starts again.
   const ballAt = 0.6, ball = makeObject('baseball', { name: '야구공 (투구, 공중 정지)', pos: [0, 1.3, r3(-18.2 * (1 - ballAt))] });
-  const park = makeObject('ballpark', { name: '야구장', pose: 'still' });
+  const park = makeObject('ballpark', { name: '야구장' });
   p.objects.push(
     park,
     runner, third, short, pitcher,
@@ -264,7 +264,8 @@ function stealSideProject() {
 
   // Shot 3 — back to the FS side track; at 1.5 s the freeze breaks and the rest of the field starts moving
   // (at the same slow-motion rate as the runner): the pitch flies on into the catcher's mitt,
-  // the third baseman breaks for the bag, the shortstop drifts toward 2nd and the crowd starts to bob.
+  // the third baseman breaks for the bag, and the shortstop drifts toward 2nd.
+  // The crowd stays still: in slow motion its movement would be imperceptible.
   s = shots[2];
   const tb = 1.5;
   const mitt = [0, 0.9, 0.6];
@@ -273,7 +274,7 @@ function stealSideProject() {
   const shortTo = [-2, 0, -36];
   p.shots.push({
     id: uid(), name: s.name, duration: s.dur, ease: 'linear', shake: 0,
-    desc: '다시 측면 풀샷 트래킹. 질주 도중(1.5초) 배경의 프리즈 프레임이 깨지며 시간이 다시 흐르기 시작한다: 멈춰 있던 공이 포수 미트로 날아가고, 3루수가 베이스로 달려들고, 유격수가 움직이고, 관중이 위아래로 조금씩 들썩이기 시작한다. 주자는 계속 슬로모션으로 3루를 향해 달린다.',
+    desc: '다시 측면 풀샷 트래킹. 질주 도중(1.5초) 배경의 프리즈 프레임이 깨지며 시간이 다시 흐르기 시작한다: 멈춰 있던 공이 포수 미트로 날아가고, 3루수가 베이스로 달려들고, 유격수가 움직인다. 관중은 슬로모션 속에서 정지한 그대로다. 주자는 계속 슬로모션으로 3루를 향해 달린다.',
     keys: trackKeys(s.dur, 20, 2.2, 0.95, 1.2, 85),
     anim: {
       [runner.id]: runAnim(s.dur),
@@ -288,7 +289,7 @@ function stealSideProject() {
       ],
     },
     genAnim: [],
-    poses: { [park.id]: 'wake', [third.id]: 'stand', [short.id]: 'stand' },
+    poses: { [third.id]: 'stand', [short.id]: 'stand' },
     freezeAt: tb,
     meta: meta('fs', 'eye', s.dur, 85),
   });
