@@ -197,7 +197,7 @@ function stealSideProject() {
   const third = fielder('3루수', [-B + 3, 0, -B + 3], 'stand');
   const short = fielder('유격수', [-6, 0, -30], 'stand');
   const mound = [0, 0.25, -18.2];
-  const pitcher = fielder('투수', mound, 'throw');
+  const pitcher = fielder('투수', mound, 'pitch');
   // The pitch hangs in the air between the mound and home plate until time starts again.
   const ball = makeObject('baseball', { name: '야구공 (투구)', pos: [0, 1.3, r3(-18.2 * 0.4)] });
   const park = makeObject('ballpark', { name: '야구장' });
@@ -274,7 +274,7 @@ function stealSideProject() {
   const dur = (s) => r3(s.T1 - s.T0);
 
   // Shot 1 — FS, 85 mm from about 20 m. Frozen until 1 s, then the freeze breaks and everything ramps to real speed;
-  // the crowd starts to bounce. The pitcher stays in his delivery pose here and slides through the follow-through.
+  // the crowd starts to bounce and the pitcher follows through out of his frozen delivery.
   let s = shots[0];
   p.shots.push({
     id: uid(), name: s.name, duration: dur(s), ease: 'linear', shake: 0,

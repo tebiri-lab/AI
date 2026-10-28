@@ -186,6 +186,10 @@ const POSE_DEF = {
   run: { run: true, lean: 0.32, head: -0.2, stride: 4, phase: 1.2 },
   field_ready: { drop: -0.14, hip: [-0.5, -0.5], knee: [0.75, 0.75], lean: 0.5, head: -0.45, sh: [-0.55, 0.3, -0.55, -0.3], el: [-0.55, -0.55] },
   throw: { drop: -0.06, hip: [-0.85, 0.45], knee: [0.45, 0.35], lean: 0.18, head: -0.1, sh: [-1.25, 0.25, -2.7, -0.45], el: [-0.5, -1.45] },
+  // Delivery frozen mid-throw; from the shot's freeze-break time it follows through, then settles to standing
+  // (and walks if keyed to move). Times are seconds after local.freezeAt.
+  pitch: { follow: { from: 'throw', to: 'follow_end', dur: 0.45, settle: [0.6, 0.9] } },
+  follow_end: { drop: -0.08, hip: [-0.6, 0.35], knee: [0.5, 0.25], lean: 0.45, head: -0.25, sh: [-0.35, 0.3, -0.9, 0.35], el: [-0.9, -0.6] },
   catcher: { drop: -0.5, hip: [-1.6, -1.6], knee: [1.95, 1.95], lean: 0.22, head: -0.15, sh: [-1.15, 0.35, -0.45, -0.2], el: [-0.85, -0.3] },
   look_up: { walk: true, head: -0.6 },
   sit: { drop: -0.4, hip: [-1.57, -1.57], knee: [1.57, 1.57], sh: [-0.55, 0.12, -0.55, -0.12], el: [-0.2, -0.2] },
@@ -411,10 +415,32 @@ function setStickAngle(fa, deg) {
 }
 
 /** Pose an actor (or animate a prop) for this frame. clock = song seconds, beat = seconds per beat. */
+const SH0 = [0, 0.08, 0, -0.08];
+const smooth = (x) => { const u = Math.max(0, Math.min(1, x)); return u * u * (3 - 2 * u); };
+
+// Joint angles part-way (u = 0..1) from pose a to pose b.
+function blendPose(a, b, u) {
+  const mix = (x, y) => x + (y - x) * u;
+  const pair = (k) => [0, 1].map((i) => mix((a[k] || [0, 0])[i], (b[k] || [0, 0])[i]));
+  return {
+    drop: mix(a.drop || 0, b.drop || 0), lean: mix(a.lean || 0, b.lean || 0), head: mix(a.head || 0, b.head || 0),
+    hip: pair('hip'), knee: pair('knee'), el: pair('el'), sh: [0, 1, 2, 3].map((i) => mix((a.sh || SH0)[i], (b.sh || SH0)[i])),
+  };
+}
+
+// A follow-through pose at local time: from -> to over dur, then to -> standing over the settle window.
+function followPose(f, local) {
+  const t = local ? local.t - (local.freezeAt ?? 0) : 0;
+  if (t < f.settle[0]) return blendPose(POSE_DEF[f.from], POSE_DEF[f.to], smooth(t / f.dur));
+  const u = smooth((t - f.settle[0]) / (f.settle[1] - f.settle[0]));
+  return { ...blendPose(POSE_DEF[f.to], POSE_DEF.stand, u), walk: u >= 1 };
+}
+
 export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
   const r = group.userData.rig;
   if (r) {
-    const d = POSE_DEF[pose] || POSE_DEF.stand;
+    let d = POSE_DEF[pose] || POSE_DEF.stand;
+    if (d.follow) d = followPose(d.follow, local);
     if (r.handL) { r.handL.scale.set(0.8, 1.1, 0.6); r.handR.scale.set(0.8, 1.1, 0.6); }
     const hip = d.hip || [0, 0], knee = d.knee || [0, 0], sh = d.sh || [0, 0.08, 0, -0.08], el = d.el || [0, 0];
     r.root.position.y = d.drop || 0;
