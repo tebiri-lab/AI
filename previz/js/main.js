@@ -203,11 +203,15 @@ function tripleSideProject() {
   const short = fielder('유격수', [2.5, 0, -41.5], 'reach_up', cfPos);
   const center = fielder('중견수', cfPos, 'pitch', short.pos);
   const mound = [0, 0.25, -18.2];
-  // The pitcher is already off the mound, sprinting out to back up 3rd base from foul territory (frozen mid-stride).
-  const cover = [-26, 0, -24];
+  // The pitcher has nearly reached 3rd base (frozen mid-stride). His backup spot is in foul territory 6 m beyond the
+  // bag, in line with the relay throw from the shortstop; once the freeze breaks he covers the last 4 m and sets there.
+  const bag = [-B, 0, -B];
+  const relayDir = [bag[0] - short.pos[0], bag[2] - short.pos[2]].map((v, _, a) => v / Math.hypot(a[0], a[1]));
+  const cover = [r3(bag[0] + relayDir[0] * 6), 0, r3(bag[2] + relayDir[1] * 6)];
   const pDir = [cover[0] - mound[0], cover[2] - mound[2]].map((v, _, a) => v / Math.hypot(a[0], a[1]));
-  const pStart = [r3(mound[0] + pDir[0] * 2), 0.2, r3(mound[2] + pDir[1] * 2)];
-  const pitcher = fielder('투수', pStart, 'run', cover);
+  const pLen = 4;
+  const pStart = [r3(cover[0] - pDir[0] * pLen), 0, r3(cover[2] - pDir[1] * pLen)];
+  const pitcher = fielder('투수', pStart, 'run_set', cover);
   // The throw hangs in the air, 30% of the way from the center fielder to the shortstop's glove, until time starts again.
   const relayGlove = [2.5, 2.05, -41.8], release = [4, 2.0, -113];
   const throwArc = (u) => [0, 1, 2].map((i) => r3(release[i] + (relayGlove[i] - release[i]) * u + (i === 1 ? 5 * Math.sin(Math.PI * u) : 0)));
@@ -246,18 +250,20 @@ function tripleSideProject() {
   ];
 
   // The rest of the field after the freeze breaks, in real time: the throw carries on into the shortstop's glove
-  // (35 m/s), the center fielder follows through, the pitcher keeps sprinting toward his backup spot behind 3rd
-  // (ramping to 7 m/s like the runner) and the third baseman breaks for the bag.
+  // (35 m/s), the center fielder follows through, the pitcher runs the last 4 m to his backup spot (peaking near
+  // 7 m/s, 0.85 s) and sets facing the relay, and the third baseman breaks for the bag.
   const throwLen = Math.hypot(relayGlove[0] - release[0], relayGlove[2] - release[2]);
   const ballAt = (T) => throwArc(Math.min(1, 0.3 + (Math.max(0, T - TB) * 35) / throwLen));
   const bag3 = [r3(-B + 1.3), 0, r3(-B + 0.5)]; // infield side of the bag, clear of the runner
   const mover = (from, to, t0, t1) => (T) => lerp3(from, to, Math.max(0, Math.min(1, (T - t0) / (t1 - t0))));
   const thirdAt = mover(third.pos, bag3, TB + 0.15, TB + 1.2);
-  const pRun = 7;
-  const pD = (T) => (T <= TB ? 0 : T <= TB + RAMP ? (pRun / (2 * RAMP)) * (T - TB) ** 2 : (pRun * RAMP) / 2 + pRun * (T - TB - RAMP));
-  const pitcherAt = (T) => {
-    const d = pD(T);
-    return [r3(pStart[0] + pDir[0] * d), r3(Math.max(0, 0.2 - d * 0.1)), r3(pStart[2] + pDir[1] * d)];
+  const pArrive = 0.85;
+  const ease = (x) => { const u = Math.max(0, Math.min(1, x)); return u * u * (3 - 2 * u); };
+  const pitcherAt = (T) => lerp3(pStart, cover, ease((T - TB) / pArrive));
+  const pitcherYaw = (T) => {
+    const a = pitcher.rotY, b = yawTo(cover, short.pos);
+    const d = ((b - a + 540) % 360) - 180;
+    return r3(a + d * ease((T - TB - 0.6) / 0.35));
   };
 
   const STEP = 0.1;
@@ -281,7 +287,7 @@ function tripleSideProject() {
     [runner.id]: objKeys(T0, T1, (T) => along(runD(T)), -45),
     [ball.id]: objKeys(T0, T1, ballAt, 0),
     [third.id]: objKeys(T0, T1, thirdAt, (T) => (T < TB ? third.rotY : yawTo(third.pos, bag3))),
-    [pitcher.id]: objKeys(T0, T1, pitcherAt, pitcher.rotY),
+    [pitcher.id]: objKeys(T0, T1, pitcherAt, pitcherYaw),
   });
   const dur = (s) => r3(s.T1 - s.T0);
 
@@ -290,7 +296,7 @@ function tripleSideProject() {
   let s = shots[0];
   p.shots.push({
     id: uid(), name: s.name, duration: dur(s), ease: 'linear', shake: 0,
-    desc: '3루타를 친 타자가 2루를 돌아 흙을 힘껏 박차며 3루를 향해 질주한다. 측면 풀샷, 카메라가 주자와 나란히 이동한다. 유격수는 2루 바깥쪽에서 중계 송구를 받으려고 글러브를 들고 대기하고, 투수는 3루 바깥쪽 백업을 위해 마운드를 벗어나 뛰어나가는 중이다. 처음 1초는 프리즈 프레임: 배경(투수, 수비수, 심판, 관중, 공중의 송구)이 완전히 정지하고 주자만 초고속 슬로모션. 1초에 프리즈가 깨지며 0.3초 동안 정속으로 스피드 램프: 중견수의 송구가 유격수 글러브로 날아가고, 투수가 3루 뒤 파울 지역으로 계속 달려가고, 3루수가 베이스로 달려들고, 관중이 들썩이기 시작한다.',
+    desc: '3루타를 친 타자가 2루를 돌아 흙을 힘껏 박차며 3루를 향해 질주한다. 측면 풀샷, 카메라가 주자와 나란히 이동한다. 유격수는 2루 바깥쪽에서 중계 송구를 받으려고 글러브를 들고 대기하고, 투수는 3루 근처까지 달려와 있다. 처음 1초는 프리즈 프레임: 배경(투수, 수비수, 심판, 관중, 공중의 송구)이 완전히 정지하고 주자만 초고속 슬로모션. 1초에 프리즈가 깨지며 0.3초 동안 정속으로 스피드 램프: 중견수의 송구가 유격수 글러브로 날아가고, 투수가 3루 바깥쪽 파울 지역의 백업 위치로 들어가 수비 자세를 잡고, 3루수가 베이스로 달려들고, 관중이 들썩이기 시작한다.',
     keys: trackKeys(s.T0, s.T1, 20, 2.2, 0.95, 1.2, 85), anim: animFor(s), genAnim: [],
     poses: { [park.id]: 'wake' }, freezeAt: TB,
     meta: meta('fs', 'eye', dur(s), 85),
@@ -303,7 +309,7 @@ function tripleSideProject() {
     id: uid(), name: s.name, duration: dur(s), ease: 'linear', shake: 0,
     desc: '발만 보이는 인서트(정속). 스파이크가 흙을 깊게 파고들며 박차고 흙먼지가 튄다. 카메라는 지면 가까이에서 측면으로 발과 나란히 트래킹한다.',
     keys: trackKeys(s.T0, s.T1, 7, 0.3, 0.35, 0.3, 85), anim: animFor(s), genAnim: [],
-    poses: { [park.id]: 'bob', [center.id]: 'stand' },
+    poses: { [park.id]: 'bob', [center.id]: 'stand', [pitcher.id]: 'field_ready' },
     meta: { ...meta('ecu', 'low', dur(s), 85), subjectPart: 'feet' },
   });
 
