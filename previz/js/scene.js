@@ -186,6 +186,8 @@ const POSE_DEF = {
   run: { run: true, lean: 0.32, head: -0.2, stride: 4, phase: 1.2 },
   field_ready: { drop: -0.14, hip: [-0.5, -0.5], knee: [0.75, 0.75], lean: 0.5, head: -0.45, sh: [-0.55, 0.3, -0.55, -0.3], el: [-0.55, -0.55] },
   throw: { drop: -0.06, hip: [-0.85, 0.45], knee: [0.45, 0.35], lean: 0.18, head: -0.1, sh: [-1.25, 0.25, -2.7, -0.45], el: [-0.5, -1.45] },
+  // Sprint, then (settle.at, seconds after local.freezeAt) ease out of the stride into a set stance.
+  run_set: { run: true, lean: 0.32, head: -0.2, stride: 4, phase: 1.2, settle: { pose: 'field_ready', at: [0.6, 0.9] } },
   // Delivery frozen mid-throw; from the shot's freeze-break time it follows through, then settles to standing
   // (and walks if keyed to move). Times are seconds after local.freezeAt.
   pitch: { follow: { from: 'throw', to: 'follow_end', dur: 0.45, settle: [0.6, 0.9] } },
@@ -487,6 +489,25 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
       r.shR.rotation.set(-0.95 * sw, 0, -0.12);
       r.elL.rotation.x = -1.5;
       r.elR.rotation.x = -1.5;
+    }
+    if (d.settle && local) {
+      const e = smooth((local.t - (local.freezeAt ?? 0) - d.settle.at[0]) / (d.settle.at[1] - d.settle.at[0]));
+      if (e > 0) {
+        const cur = {
+          drop: r.root.position.y, lean: r.spine.rotation.x, head: r.headG.rotation.x,
+          hip: [r.hipL.rotation.x, r.hipR.rotation.x], knee: [r.kneeL.rotation.x, r.kneeR.rotation.x], el: [r.elL.rotation.x, r.elR.rotation.x],
+          sh: [r.shL.rotation.x, r.shL.rotation.z, r.shR.rotation.x, r.shR.rotation.z],
+        };
+        const p = blendPose(cur, POSE_DEF[d.settle.pose], e);
+        r.root.position.y = p.drop;
+        r.spine.rotation.x = p.lean;
+        r.headG.rotation.x = p.head;
+        r.hipL.rotation.x = p.hip[0]; r.hipR.rotation.x = p.hip[1];
+        r.kneeL.rotation.x = p.knee[0]; r.kneeR.rotation.x = p.knee[1];
+        r.elL.rotation.x = p.el[0]; r.elR.rotation.x = p.el[1];
+        r.shL.rotation.set(p.sh[0], 0, p.sh[1]);
+        r.shR.rotation.set(p.sh[2], 0, p.sh[3]);
+      }
     }
     if (d.twist) { r.elL.rotation.y = d.twist[0]; r.elR.rotation.y = d.twist[1]; }
     if (d.click && beat > 0) {
