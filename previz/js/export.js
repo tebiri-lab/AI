@@ -32,26 +32,52 @@ export function exportPNG(renderer, scene, camera, w, h, setDirectorOnlyVisible,
   renderer.domElement.toBlob((blob) => download(blob, safe(name)), 'image/png');
 }
 
-/** Starts capturing `canvas` (plus an optional audio track); calls register(stop) so the caller can end it. Resolves with the WebM blob. */
-export function recordWebM(canvas, fps, register, audioTrack = null) {
-  const stream = canvas.captureStream(fps);
-  if (audioTrack) stream.addTrack(audioTrack);
-  const types = audioTrack
-    ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
-    : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-  const mimeType = types.find((t) => MediaRecorder.isTypeSupported(t)) || '';
-  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
-  const chunks = [];
-  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  const done = new Promise((resolve) => {
-    rec.onstop = () => {
-      stream.getVideoTracks().forEach((t) => t.stop());
-      resolve(new Blob(chunks, { type: 'video/webm' }));
-    };
+/**
+ * Offline H.264 render: draws every frame with renderFrameAt(f) into `canvas` and encodes it with WebCodecs,
+ * muxed into MP4 or MOV (QuickTime). Frame-exact and independent of playback speed.
+ * audio: an AudioBuffer already cut to the video's length, or null. Resolves with { blob, audio }.
+ */
+export async function encodeVideo({ format, canvas, fps, frameCount, renderFrameAt, audio, onProgress, isCancelled, codec = 'avc', audioCodec = 'aac' }) {
+  const mb = await import('../vendor/mediabunny/mediabunny.min.mjs');
+  const { width, height } = canvas;
+  if (typeof VideoEncoder === 'undefined' || !(await mb.canEncodeVideo(codec, { width, height }))) {
+    throw new Error('이 브라우저는 H.264 인코딩을 지원하지 않습니다. 최신 Chrome·Edge·Safari에서 시도해 주세요');
+  }
+  const output = new mb.Output({
+    format: format === 'mov' ? new mb.MovOutputFormat({ fastStart: 'in-memory' }) : new mb.Mp4OutputFormat({ fastStart: 'in-memory' }),
+    target: new mb.BufferTarget(),
   });
-  rec.start(250);
-  register(() => { if (rec.state !== 'inactive') rec.stop(); });
-  return done;
+  const video = new mb.CanvasSource(canvas, {
+    codec,
+    bitrate: Math.round(width * height * fps * 0.35), // ~14 Mbps at 1080p24
+    keyFrameInterval: 1,
+  });
+  output.addVideoTrack(video, { frameRate: fps });
+  let audioSrc = null;
+  let audioState = audio ? 'unsupported' : 'none';
+  if (audio && typeof AudioEncoder !== 'undefined'
+    && (await mb.canEncodeAudio(audioCodec, { numberOfChannels: audio.numberOfChannels, sampleRate: audio.sampleRate }))) {
+    audioSrc = new mb.AudioBufferSource({ codec: audioCodec, bitrate: 192000 });
+    output.addAudioTrack(audioSrc);
+    audioState = audioCodec;
+  }
+  await output.start();
+  for (let f = 0; f < frameCount; f++) {
+    if (isCancelled?.()) {
+      await output.cancel();
+      return null;
+    }
+    renderFrameAt(f);
+    await video.add(f / fps, 1 / fps);
+    onProgress?.(f + 1, frameCount);
+  }
+  if (audioSrc) await audioSrc.add(audio);
+  await output.finalize();
+  return { blob: new Blob([output.target.buffer], { type: format === 'mov' ? 'video/quicktime' : 'video/mp4' }), audio: audioState };
+}
+
+export function saveBlob(blob, name) {
+  download(blob, safe(name));
 }
 
 const nodeName = (s) => s.replace(/[^\w\-가-힣]+/g, '_');

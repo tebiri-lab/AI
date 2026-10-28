@@ -5,7 +5,7 @@ import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_
 import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
 import { generateShot, parseShotText, describeShot, defaultParams, objectHeight, aimOffset } from './generator.js';
 import { buildObject, signature, applyPose, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
-import { exportPNG, recordWebM, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
+import { exportPNG, encodeVideo, saveBlob, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 import { SongPlayer } from './audio.js';
 import { CymbalPhysics } from './physics.js';
 import { idbGet, idbSet, idbDel } from './store.js';
@@ -220,7 +220,7 @@ let time = 0;
 let playing = false;
 let selection = null; // {kind:'object', id} | {kind:'camera'} | {kind:'target'}
 let dragging = false;
-let recording = null;
+let exportJob = null; // { cancelled } while a video export is rendering
 const undoStack = [];
 const redoStack = [];
 const cur = () => project.shots[shotIdx];
@@ -557,7 +557,7 @@ function resize() {
   }
   const sp = $('shotPane');
   const pw = sp.clientWidth - 24, ph = sp.clientHeight - 24;
-  if (pw > 0 && ph > 0 && !recording) {
+  if (pw > 0 && ph > 0) {
     const a = aspect();
     let w = pw, h = pw / a;
     if (h > ph) { h = ph; w = ph * a; }
@@ -614,6 +614,11 @@ let hudCache = '';
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  if (exportJob) {
+    // the export loop owns the scene while it renders; keep the UI still
+    requestAnimationFrame(frame);
+    return;
+  }
   if (playing) advance(dt);
 
   if (thumbQueue.size) renderOneThumb();
@@ -628,7 +633,7 @@ function frame(now) {
     mirrorPass(dirRenderer);
     dirRenderer.render(scene, dirCam);
   }
-  if (layout !== 'director' || recording) {
+  if (layout !== 'director') {
     setDirectorOnlyVisible(false);
     mirrorPass(shotRenderer);
     shotRenderer.render(scene, shotCam);
@@ -674,13 +679,10 @@ function advance(dt) {
   const shot = cur();
   time += dt;
   if (time >= shot.duration) {
-    const all = recording ? recording.all : $('chkAll').checked;
+    const all = $('chkAll').checked;
     if (all && shotIdx < project.shots.length - 1) {
       time -= shot.duration;
       setShot(shotIdx + 1, { keepTime: true });
-    } else if (recording) {
-      time = shot.duration;
-      stopRecording();
     } else if ($('chkLoop').checked) {
       if (all) setShot(0, { keepTime: true });
       time = 0;
@@ -1528,42 +1530,100 @@ function generateFromText() {
 // ---------------------------------------------------------------------------
 // Recording
 
-async function startRecording(all) {
-  if (recording) return;
-  if (typeof MediaRecorder === 'undefined' || !shotCanvas.captureStream) return toast('이 브라우저는 영상 녹화를 지원하지 않습니다');
+let exportRenderer = null;
+function getExportRenderer(w, h) {
+  if (!exportRenderer) {
+    exportRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    exportRenderer.shadowMap.enabled = true;
+    exportRenderer.shadowMap.type = shotRenderer.shadowMap.type;
+    exportRenderer.toneMapping = shotRenderer.toneMapping;
+    exportRenderer.toneMappingExposure = shotRenderer.toneMappingExposure;
+    exportRenderer.outputColorSpace = shotRenderer.outputColorSpace;
+  }
+  exportRenderer.setPixelRatio(1);
+  exportRenderer.setSize(w, h, false);
+  return exportRenderer;
+}
+
+// The song cut to [start, start + dur) on the song clock (silence where it runs past either end).
+function songSlice(start, dur) {
+  const src = song.buffer;
+  const sr = src.sampleRate;
+  const len = Math.max(1, Math.round(dur * sr));
+  const out = new AudioBuffer({ length: len, numberOfChannels: src.numberOfChannels, sampleRate: sr });
+  const from = Math.round(start * sr);
+  for (let c = 0; c < src.numberOfChannels; c++) {
+    const data = src.getChannelData(c);
+    const a = Math.max(0, from), b = Math.min(data.length, from + len);
+    if (b > a) out.copyToChannel(data.subarray(a, b), c, a - from);
+  }
+  return out;
+}
+
+/** Render the current shot (or every shot) frame by frame and save it as H.264 MP4 or MOV. */
+async function exportVideo(format, all) {
+  if (exportJob) return;
   setPlaying(false);
-  if (all) setShot(0);
-  time = 0;
+  const fps = project.fps;
   const a = aspect();
   const w = a >= 1 ? 1920 : 1080;
   const h = Math.round(w / a / 2) * 2;
-  shotRenderer.setSize(w, h, false);
-  recording = { all, done: null };
-  $('recBadge').hidden = false;
-  // warm up: let the full-size frame render once before the clock (and the song) starts
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  const track = song.loaded ? song.recordTrack() : null;
-  const finished = recordWebM(shotCanvas, project.fps, (stop) => { recording.done = stop; }, track);
-  setPlaying(true);
-  toast(all ? '전체 애니매틱을 녹화하는 중… (실시간)' : '현재 샷을 녹화하는 중… (실시간)', 4000);
-  const shotNo = shotIdx + 1;
-  const blob = await finished;
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${project.name || 'previz'}${all ? '' : `_shot${shotNo}`}.webm`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-  toast('WebM 저장 완료');
-}
-
-function stopRecording() {
-  setPlaying(false);
-  const r = recording;
-  recording = null;
-  $('recBadge').hidden = true;
-  r?.done?.();
-  resize();
+  const shots = all ? project.shots.map((s, i) => i) : [shotIdx];
+  const frames = [];
+  for (const i of shots) {
+    const n = Math.max(1, Math.round(project.shots[i].duration * fps));
+    for (let f = 0; f < n; f++) frames.push([i, f / fps]);
+  }
+  const renderer = getExportRenderer(w, h);
+  const cam = new THREE.PerspectiveCamera();
+  cam.near = 0.03; cam.far = 2000;
+  const renderAt = (f) => {
+    const [i, t] = frames[f];
+    const shot = project.shots[i];
+    poseObjects(shot, t);
+    applyCamera(cam, resolveCamera(shot, t, project.objects), a);
+    setDirectorOnlyVisible(false);
+    mirrorPass(renderer);
+    renderer.render(scene, cam);
+    setDirectorOnlyVisible(true);
+  };
+  const audio = song.loaded && !song.muted ? songSlice(shotStart(shots[0]) + offset(), frames.length / fps) : null;
+  const job = { cancelled: false };
+  exportJob = job;
+  const badge = $('recBadge');
+  badge.hidden = false;
+  badge.classList.add('export');
+  badge.onclick = () => { job.cancelled = true; };
+  const label = format.toUpperCase();
+  const name = `${project.name || 'previz'}${all ? '' : `_shot${shotIdx + 1}`}.${format}`;
+  try {
+    renderAt(0); // warm-up so the first encoded frame has shadows and materials ready
+    const res = await encodeVideo({
+      format,
+      codec: window.__previzVideoCodec || 'avc', // test hooks: browsers without H.264/AAC encoders
+      audioCodec: window.__previzAudioCodec || 'aac',
+      canvas: renderer.domElement,
+      fps,
+      frameCount: frames.length,
+      renderFrameAt: renderAt,
+      audio,
+      isCancelled: () => job.cancelled,
+      onProgress: (n, total) => { badge.textContent = `● ${label} 내보내는 중 ${Math.floor((n / total) * 100)}% · 클릭하면 취소`; },
+    });
+    if (!res) return toast('영상 내보내기를 취소했습니다');
+    saveBlob(res.blob, name);
+    window.__previzLastExport = res;
+    const note = res.audio === 'aac' ? ' · 음악 포함 (AAC)'
+      : res.audio === 'unsupported' ? ' · 이 브라우저는 AAC 인코딩을 지원하지 않아 음악 없이 저장했습니다' : '';
+    toast(`${label} (${window.__previzVideoCodec ? window.__previzVideoCodec.toUpperCase() : 'H.264'}, ${w}×${h}, ${fps}fps) 저장 완료${note}`, 5000);
+  } finally {
+    exportJob = null;
+    badge.hidden = true;
+    badge.classList.remove('export');
+    badge.onclick = null;
+    badge.textContent = '● REC';
+    hudCache = '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1801,8 +1861,10 @@ function bindUI() {
         exportPNG(shotRenderer, scene, shotCam, w, Math.round(w / a), setDirectorOnlyVisible, `${project.name}_shot${shotIdx + 1}_${timecode(time, project.fps).replace(/:/g, '-')}.png`);
         resize();
         toast('PNG 저장 완료');
-      } else if (kind === 'webm-shot') await startRecording(false);
-      else if (kind === 'webm-all') await startRecording(true);
+      } else if (/^(mp4|mov)-(shot|all)$/.test(kind)) {
+        const [format, scope] = kind.split('-');
+        await exportVideo(format, scope === 'all');
+      }
       else if (kind === 'gltf') {
         await exportGLB(project, meshes, sensorW());
         toast('GLB 저장 완료 — 샷마다 카메라와 애니메이션 클립이 포함됩니다', 4000);
