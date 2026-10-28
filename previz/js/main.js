@@ -195,9 +195,14 @@ function stealSideProject() {
   const fielder = (name, pos, pose = 'field_ready', face = home) => makeObject('actor', { name, color: defense, pose, pos, rotY: yawTo(pos, face) });
   const catcherPos = [0, 0, 1.0];
   const third = fielder('3루수', [-B + 3, 0, -B + 3], 'stand');
-  const short = fielder('유격수', [-6, 0, -30], 'stand');
+  // The shortstop already waits just behind 2nd base (outfield side, off the left edge of frame) and stays put.
+  const short = fielder('유격수', [2.5, 0, -41.5], 'field_ready', [-B, 0, -B]);
   const mound = [0, 0.25, -18.2];
-  const pitcher = fielder('투수', mound, 'pitch');
+  // The pitcher is already off the mound, sprinting out to back up 3rd base from foul territory (frozen mid-stride).
+  const cover = [-26, 0, -24];
+  const pDir = [cover[0] - mound[0], cover[2] - mound[2]].map((v, _, a) => v / Math.hypot(a[0], a[1]));
+  const pStart = [r3(mound[0] + pDir[0] * 2), 0.2, r3(mound[2] + pDir[1] * 2)];
+  const pitcher = fielder('투수', pStart, 'run', cover);
   // The pitch hangs in the air between the mound and home plate until time starts again.
   const ball = makeObject('baseball', { name: '야구공 (투구)', pos: [0, 1.3, r3(-18.2 * 0.4)] });
   const park = makeObject('ballpark', { name: '야구장' });
@@ -234,18 +239,20 @@ function stealSideProject() {
   ];
 
   // The rest of the field after the freeze breaks, in real time: the pitch reaches the catcher's mitt
-  // (40 m/s), the pitcher follows through and turns to watch third, the third baseman breaks for the bag
-  // and the shortstop drifts toward 2nd.
+  // (40 m/s), the pitcher keeps sprinting toward his backup spot behind 3rd (ramping to 7 m/s like the runner)
+  // and the third baseman breaks for the bag.
   const mitt = [0, 0.9, 0.6];
   const pitchEnd = TB + Math.abs(mitt[2] - ball.pos[2]) / 40;
   const ballAt = (T) => (T <= TB ? ball.pos : lerp3(ball.pos, mitt, Math.min(1, (T - TB) / (pitchEnd - TB))));
   const bag3 = [r3(-B + 1.3), 0, r3(-B + 0.5)]; // infield side of the bag, clear of the runner
   const mover = (from, to, t0, t1) => (T) => lerp3(from, to, Math.max(0, Math.min(1, (T - t0) / (t1 - t0))));
   const thirdAt = mover(third.pos, bag3, TB + 0.15, TB + 1.2);
-  const shortAt = mover(short.pos, [-2, 0, -36], TB + 0.2, TB + 2.4);
-  const followAt = mover(mound, [-0.5, 0.2, -16.9], TB, TB + 0.5);
-  const walkAt = mover([-0.5, 0.2, -16.9], [-3.5, 0, -16.2], TB + 0.9, shots[shots.length - 1].T1);
-  const pitcherAt = (T) => (T < TB + 0.9 ? followAt(T) : walkAt(T));
+  const pRun = 7;
+  const pD = (T) => (T <= TB ? 0 : T <= TB + RAMP ? (pRun / (2 * RAMP)) * (T - TB) ** 2 : (pRun * RAMP) / 2 + pRun * (T - TB - RAMP));
+  const pitcherAt = (T) => {
+    const d = pD(T);
+    return [r3(pStart[0] + pDir[0] * d), r3(Math.max(0, 0.2 - d * 0.1)), r3(pStart[2] + pDir[1] * d)];
+  };
 
   const STEP = 0.1;
   const sampleKeys = (T0, T1, fn) => {
@@ -268,17 +275,16 @@ function stealSideProject() {
     [runner.id]: objKeys(T0, T1, (T) => along(runD(T)), -45),
     [ball.id]: objKeys(T0, T1, ballAt, 0),
     [third.id]: objKeys(T0, T1, thirdAt, (T) => (T < TB ? third.rotY : yawTo(third.pos, bag3))),
-    [short.id]: objKeys(T0, T1, shortAt, (T) => (T < TB ? short.rotY : yawTo(short.pos, [-2, 0, -36]))),
-    [pitcher.id]: objKeys(T0, T1, pitcherAt, (T) => (T < TB + 0.3 ? pitcher.rotY : yawTo(mound, bag3))),
+    [pitcher.id]: objKeys(T0, T1, pitcherAt, pitcher.rotY),
   });
   const dur = (s) => r3(s.T1 - s.T0);
 
   // Shot 1 — FS, 85 mm from about 20 m. Frozen until 1 s, then the freeze breaks and everything ramps to real speed;
-  // the crowd starts to bounce and the pitcher follows through out of his frozen delivery.
+  // the crowd starts to bounce.
   let s = shots[0];
   p.shots.push({
     id: uid(), name: s.name, duration: dur(s), ease: 'linear', shake: 0,
-    desc: '2루를 막 떠난 주자가 흙을 힘껏 박차며 3루를 향해 질주한다. 측면 풀샷, 카메라가 주자와 나란히 이동한다. 처음 1초는 프리즈 프레임: 배경(투수, 수비수, 심판, 관중, 공중의 공)이 완전히 정지하고 주자만 초고속 슬로모션. 1초에 프리즈가 깨지며 0.3초 동안 정속으로 스피드 램프: 공이 포수 미트로 들어가고, 투수가 팔로스루하며 3루 쪽으로 몸을 돌리고, 3루수가 베이스로 달려들고, 관중이 들썩이기 시작한다.',
+    desc: '2루를 막 떠난 주자가 흙을 힘껏 박차며 3루를 향해 질주한다. 측면 풀샷, 카메라가 주자와 나란히 이동한다. 유격수는 2루 바깥쪽에서 대기하고, 투수는 3루 바깥쪽 백업을 위해 마운드를 벗어나 뛰어나가는 중이다. 처음 1초는 프리즈 프레임: 배경(투수, 수비수, 심판, 관중, 공중의 공)이 완전히 정지하고 주자만 초고속 슬로모션. 1초에 프리즈가 깨지며 0.3초 동안 정속으로 스피드 램프: 공이 포수 미트로 들어가고, 투수가 3루 뒤 파울 지역으로 계속 달려가고, 3루수가 베이스로 달려들고, 관중이 들썩이기 시작한다.',
     keys: trackKeys(s.T0, s.T1, 20, 2.2, 0.95, 1.2, 85), anim: animFor(s), genAnim: [],
     poses: { [park.id]: 'wake' }, freezeAt: TB,
     meta: meta('fs', 'eye', dur(s), 85),
@@ -291,7 +297,7 @@ function stealSideProject() {
     id: uid(), name: s.name, duration: dur(s), ease: 'linear', shake: 0,
     desc: '발만 보이는 인서트(정속). 스파이크가 흙을 깊게 파고들며 박차고 흙먼지가 튄다. 카메라는 지면 가까이에서 측면으로 발과 나란히 트래킹한다.',
     keys: trackKeys(s.T0, s.T1, 7, 0.3, 0.35, 0.3, 85), anim: animFor(s), genAnim: [],
-    poses: { [park.id]: 'bob', [pitcher.id]: 'stand' },
+    poses: { [park.id]: 'bob' },
     meta: { ...meta('ecu', 'low', dur(s), 85), subjectPart: 'feet' },
   });
 
