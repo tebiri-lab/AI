@@ -174,7 +174,7 @@ function stadiumProject() {
 
 // Same ballpark, side view: the runner sprints from 2nd toward 3rd. Time is frozen and he runs in slow motion;
 // 1 s into shot 1 the freeze breaks and everything, the runner included, ramps up to real speed.
-// Shot 1 tracks him side-on (FS), shot 2 is a feet insert, shot 3 tracks him into the bag.
+// Shot 1 tracks him side-on (FS); shot 2 is a feet insert that ends as he nears the bag.
 function stealSideProject() {
   const p = baseProject('3루 도루 — 측면 트래킹');
   p.lighting = 'stadium';
@@ -228,12 +228,9 @@ function stealSideProject() {
     }
     return dRamp + vReal * (T - TB - RAMP);
   };
-  const bagD = 27.43 - 0.5; // front edge of 3rd base
-  const T_END = r3(TB + RAMP + (bagD - dRamp) / vReal);
   const shots = [
-    { name: '질주 · 측면 트래킹 (프리즈가 깨짐)', T0: 0, T1: 2.3 },
-    { name: '인서트 · 발 클로즈업', T0: 2.3, T1: 2.9 },
-    { name: '질주 · 3루 도착', T0: 2.9, T1: T_END },
+    { name: '질주 · 측면 트래킹 (프리즈가 깨짐)', T0: 0, T1: 3 },
+    { name: '인서트 · 발 클로즈업', T0: 3, T1: 4 },
   ];
 
   // The rest of the field after the freeze breaks, in real time: the pitch reaches the catcher's mitt
@@ -247,7 +244,7 @@ function stealSideProject() {
   const thirdAt = mover(third.pos, bag3, TB + 0.15, TB + 1.2);
   const shortAt = mover(short.pos, [-2, 0, -36], TB + 0.2, TB + 2.4);
   const followAt = mover(mound, [-0.5, 0.2, -16.9], TB, TB + 0.5);
-  const walkAt = mover([-0.5, 0.2, -16.9], [-3.5, 0, -16.2], TB + 0.9, T_END);
+  const walkAt = mover([-0.5, 0.2, -16.9], [-3.5, 0, -16.2], TB + 0.9, shots[shots.length - 1].T1);
   const pitcherAt = (T) => (T < TB + 0.9 ? followAt(T) : walkAt(T));
 
   const STEP = 0.1;
@@ -287,7 +284,8 @@ function stealSideProject() {
     meta: meta('fs', 'eye', dur(s), 85),
   });
 
-  // Shot 2 — insert: feet only, at real speed. Long lens close to the ground, 7 m away, framing about 0.85 m of height.
+  // Shot 2 — insert: feet only, at real speed, until the runner is about half a metre short of the bag.
+  // Long lens close to the ground, 7 m away, framing about 0.85 m of height.
   s = shots[1];
   p.shots.push({
     id: uid(), name: s.name, duration: dur(s), ease: 'linear', shake: 0,
@@ -297,15 +295,6 @@ function stealSideProject() {
     meta: { ...meta('ecu', 'low', dur(s), 85), subjectPart: 'feet' },
   });
 
-  // Shot 3 — back to the FS side track at real speed until the runner reaches 3rd base.
-  s = shots[2];
-  p.shots.push({
-    id: uid(), name: s.name, duration: dur(s), ease: 'linear', shake: 0,
-    desc: '다시 측면 풀샷 트래킹(정속). 주자가 전력으로 3루 베이스에 다다른다. 배경에서는 관중이 들썩이고, 투수가 3루 쪽으로 걸어 나오며 지켜보고, 3루수는 베이스에 붙어 있다.',
-    keys: trackKeys(s.T0, s.T1, 20, 2.2, 0.95, 1.2, 85), anim: animFor(s), genAnim: [],
-    poses: { [park.id]: 'bob', [pitcher.id]: 'stand' },
-    meta: meta('fs', 'eye', dur(s), 85),
-  });
   return p;
 }
 
