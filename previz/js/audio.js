@@ -31,7 +31,6 @@ export class SongPlayer {
     this.playing = false;
     this.startCtx = 0;
     this.startSong = 0;
-    this.recDest = null;
     this.muted = false;
   }
 
@@ -99,15 +98,5 @@ export class SongPlayer {
   /** Current song time while playing. */
   clock() {
     return this.startSong + Math.max(0, this.ctx.currentTime - this.startCtx);
-  }
-
-  /** An audio track carrying the song, for MediaRecorder. */
-  recordTrack() {
-    const ctx = this.ensure();
-    if (!this.recDest) {
-      this.recDest = ctx.createMediaStreamDestination();
-      this.gain.connect(this.recDest);
-    }
-    return this.recDest.stream.getAudioTracks()[0];
   }
 }

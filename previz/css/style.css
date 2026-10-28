@@ -318,3 +318,5 @@ button:disabled:active { transform: none; }
 
 .apply-all { width: 100%; white-space: normal; text-align: left; line-height: 1.35; }
 .apply-all:not(:disabled) { border-color: var(--accent-2); color: var(--accent-2); }
+
+.rec.export { animation: none; background: #1d4ed8; pointer-events: auto; cursor: pointer; }
