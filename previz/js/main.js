@@ -146,7 +146,7 @@ function stadiumProject() {
     { t: dur, pos: at(dur).map(r3), rotY: -45 },
   ] };
   // One-direction orbit: from just ahead of him (az 25°) round his left side to behind (az 215°).
-  const R = 6, H = 1.15, aim = 1.0, keys = [];
+  const R = 6, H = 2.45, aim = 1.0, keys = [];
   for (let t = 0; t <= dur + 1e-6; t += 0.5) {
     const c = at(t);
     const az = THREE.MathUtils.degToRad(-45 + 25 + (190 * t) / dur);
@@ -158,6 +158,9 @@ function stadiumProject() {
       roll: 0,
     });
   }
+  // Orbit path shifted along Z so the first key sits at z = -22.3 (framing tuned in the app).
+  const zShift = -22.3 - keys[0].pos[2];
+  for (const k of keys) k.pos[2] = r3(k.pos[2] + zShift);
   p.shots.push({
     id: uid(), name: '도루 · 불릿타임 오빗', duration: dur, ease: 'linear', shake: 0,
     desc: '만원 관중의 야구장, 시간이 멈춘 순간 2루 주자만 3루를 향해 초고속 슬로모션으로 질주한다. 관중·수비수·심판·공중의 공은 완전히 정지해 있고, 카메라는 주자를 중심으로 한 방향으로 원을 그리며 돈다.',
@@ -796,6 +799,9 @@ function upsertKey(keys, make, update) {
   return false;
 }
 
+// The camera key last edited and its values before the edit (for "apply to all keys").
+let camEdit = null;
+
 function writeCamera(patch) {
   const shot = cur();
   const lockObj = shot.lookAt && objById(shot.lookAt.id);
@@ -809,6 +815,9 @@ function writeCamera(patch) {
   const ok = upsertKey(shot.keys,
     () => ({ pos: vArr(base.pos), target: vArr(base.target), focal: r3(base.focal), roll: r3(base.roll) }),
     (k) => {
+      if (!camEdit || camEdit.shotId !== shot.id || Math.abs(camEdit.t - k.t) > frameTol()) {
+        camEdit = { shotId: shot.id, t: k.t, before: { pos: k.pos.slice(), target: k.target.slice(), focal: k.focal, roll: k.roll || 0 } };
+      }
       if (patch.pos) k.pos = vArr(patch.pos);
       if (patch.target) k.target = vArr(patch.target);
       if (patch.focal != null) k.focal = r3(patch.focal);
@@ -915,6 +924,62 @@ function refresh() {
 }
 
 // Lighter refresh for continuous edits.
+// Difference between the last edited key and its values before the edit.
+function camEditDelta() {
+  const shot = cur();
+  if (!camEdit || camEdit.shotId !== shot.id || shot.keys.length < 2) return null;
+  const k = shot.keys.find((x) => Math.abs(x.t - camEdit.t) <= frameTol());
+  if (!k) return null;
+  const b = camEdit.before;
+  const d = {
+    pos: k.pos.map((v, i) => r3(v - b.pos[i])),
+    target: k.target.map((v, i) => r3(v - b.target[i])),
+    focal: r3(k.focal - b.focal),
+    roll: r3((k.roll || 0) - b.roll),
+  };
+  const moved = [...d.pos, ...d.target, d.focal, d.roll].some((v) => Math.abs(v) > 1e-3);
+  return moved ? { k, d } : null;
+}
+
+function describeDelta(d) {
+  const f = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}`;
+  const parts = [];
+  ['X', 'Y', 'Z'].forEach((a, i) => { if (Math.abs(d.pos[i]) > 1e-3) parts.push(`${a} ${f(d.pos[i])}`); });
+  ['X', 'Y', 'Z'].forEach((a, i) => { if (Math.abs(d.target[i]) > 1e-3) parts.push(`타깃${a} ${f(d.target[i])}`); });
+  if (Math.abs(d.focal) > 1e-3) parts.push(`렌즈 ${f(d.focal)}mm`);
+  if (Math.abs(d.roll) > 1e-3) parts.push(`롤 ${f(d.roll)}°`);
+  return parts.join(' · ');
+}
+
+function renderApplyAll() {
+  const btn = $('btnApplyAll');
+  const r = camEditDelta();
+  btn.disabled = !r;
+  btn.textContent = r
+    ? `${r.k.t.toFixed(2)}s 키의 변화를 모든 키에 적용 (${describeDelta(r.d)})`
+    : '키 하나를 수정하면 그 변화를 모든 키에 적용할 수 있습니다';
+}
+
+// Shift every other camera key by the same amount the last edited key moved.
+function applyEditToAllKeys() {
+  const r = camEditDelta();
+  if (!r) return toast('먼저 카메라 키 하나를 수정하세요 (위치·타깃 게이지, 기즈모, 렌즈, 롤)');
+  const { k: edited, d } = r;
+  const n = cur().keys.length - 1;
+  mutate(() => {
+    for (const k of cur().keys) {
+      if (k === edited) continue;
+      k.pos = k.pos.map((v, i) => r3(v + d.pos[i]));
+      k.target = k.target.map((v, i) => r3(v + d.target[i]));
+      k.focal = r3(clamp(k.focal + d.focal, 8, 400));
+      k.roll = r3((k.roll || 0) + d.roll);
+    }
+    camEdit.before = { pos: edited.pos.slice(), target: edited.target.slice(), focal: edited.focal, roll: edited.roll || 0 };
+    cur().meta = { ...cur().meta, edited: true };
+  });
+  toast(`나머지 키 ${n}개에 적용했습니다: ${describeDelta(d)} — Ctrl+Z로 되돌리기`, 4500);
+}
+
 function softRefresh() {
   updatePath();
   renderTimeline();
@@ -1067,6 +1132,7 @@ function renderShotInspector() {
 }
 
 function renderCamKeys() {
+  renderApplyAll();
   const ul = $('camKeys');
   ul.innerHTML = '';
   const shot = cur();
@@ -1945,6 +2011,7 @@ function bindUI() {
   $('btnSelCam').onclick = () => select({ kind: 'camera' });
   $('btnSelTgt').onclick = () => select({ kind: 'target' });
   $('btnAddKey').onclick = addCamKey;
+  $('btnApplyAll').onclick = applyEditToAllKeys;
   $('btnCamFromView').onclick = () => {
     pushUndo();
     const forced = $('chkAutoKey').checked;

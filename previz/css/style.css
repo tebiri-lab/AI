@@ -315,3 +315,6 @@ button:disabled:active { transform: none; }
 .gauge.y input[type=range] { accent-color: #7fd18b; }
 .gauge.z input[type=range] { accent-color: #5fa8ff; }
 .gauge.r input[type=range] { accent-color: var(--accent-2); }
+
+.apply-all { width: 100%; white-space: normal; text-align: left; line-height: 1.35; }
+.apply-all:not(:disabled) { border-color: var(--accent-2); color: var(--accent-2); }
