@@ -1385,12 +1385,50 @@ const BASE = 27.43 / Math.SQRT2;
 const WALL_C = [0, -25]; // centre of the outfield wall arc (x, z)
 const WALL_R = 97;
 
-function flatMesh(geo, color, y, x = 0, z = 0, rotZ = 0) {
-  const m = new THREE.Mesh(geo, std(color, { roughness: 0.95 }));
-  m.rotation.set(-Math.PI / 2, 0, rotZ);
-  m.position.set(x, y, z);
-  m.receiveShadow = true;
-  return m;
+// The whole playing surface (grass, mowing stripes, dirt, base paths, lines) is painted into one
+// texture on a single plane: no stacked coplanar layers, so nothing can z-fight at any distance.
+const FIELD = { x0: -125, z0: -140, w: 250, d: 250, px: 4096 };
+
+function paintField(grassColor) {
+  const c = document.createElement('canvas');
+  c.width = c.height = FIELD.px;
+  const ctx = c.getContext('2d');
+  const k = FIELD.px / FIELD.w;
+  ctx.setTransform(k, 0, 0, k, -FIELD.x0 * k, -FIELD.z0 * k); // draw in metres (x, z)
+  const disc = (x, z, r, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, z, r, 0, Math.PI * 2); ctx.fill(); };
+  ctx.fillStyle = '#2f6a2b';
+  ctx.fillRect(FIELD.x0, FIELD.z0, FIELD.w, FIELD.d);
+  disc(WALL_C[0], WALL_C[1], WALL_R, grassColor);
+  // mowing stripes, clipped to the fair/foul grass inside the wall
+  ctx.save();
+  ctx.beginPath(); ctx.arc(WALL_C[0], WALL_C[1], WALL_R - 4.5, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  for (let x = -130; x < 130; x += 9) ctx.fillRect(x, -140, 4.5, 260);
+  ctx.restore();
+  ctx.strokeStyle = '#8a6a4a'; ctx.lineWidth = 4.5;
+  ctx.beginPath(); ctx.arc(WALL_C[0], WALL_C[1], WALL_R - 2.25, 0, Math.PI * 2); ctx.stroke();
+  disc(0, -18.44, 29, '#9a7454');
+  ctx.save();
+  ctx.translate(0, -BASE); ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = '#468f3d'; ctx.fillRect(-12.6, -12.6, 25.2, 25.2);
+  ctx.restore();
+  const bases = [[0, 0], [BASE, -BASE], [0, -2 * BASE], [-BASE, -BASE]];
+  ctx.strokeStyle = '#9a7454'; ctx.lineWidth = 1.8; ctx.lineCap = 'square';
+  ctx.beginPath();
+  bases.forEach(([x, z], i) => (i ? ctx.lineTo(x, z) : ctx.moveTo(x, z)));
+  ctx.closePath(); ctx.stroke();
+  disc(0, 0, 4, '#9a7454');
+  disc(0, -18.44, 2.9, '#9a7454');
+  ctx.strokeStyle = '#ecebe5'; ctx.lineWidth = 0.1;
+  ctx.beginPath();
+  ctx.moveTo(-113 * Math.SQRT1_2, -113 * Math.SQRT1_2); ctx.lineTo(0, 0); ctx.lineTo(113 * Math.SQRT1_2, -113 * Math.SQRT1_2);
+  ctx.stroke();
+  ctx.lineWidth = 0.08; // batter's boxes
+  for (const sx of [-1, 1]) ctx.strokeRect(sx * 0.9 - (sx < 0 ? 1.22 : 0), -0.9, 1.22, 1.83);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
 }
 
 // Closed outline of the stands' front edge (x, z), wound around the field.
@@ -1432,25 +1470,18 @@ function outwardNormals(pts) {
 function buildBallpark(o) {
   const g = new THREE.Group();
   const rand = rng(o.id + 'park');
-  // --- playing field
-  g.add(flatMesh(new THREE.CircleGeometry(150, 96), '#2f6a2b', 0.01, 0, -25));
-  g.add(flatMesh(new THREE.CircleGeometry(WALL_R, 128), o.color || '#3d7a35', 0.014, WALL_C[0], WALL_C[1]));
-  g.add(flatMesh(new THREE.RingGeometry(WALL_R - 4.5, WALL_R, 128), '#8a6a4a', 0.018, WALL_C[0], WALL_C[1]));
-  g.add(flatMesh(new THREE.CircleGeometry(29, 64), '#9a7454', 0.022, 0, -18.44));
-  g.add(flatMesh(new THREE.PlaneGeometry(25.2, 25.2), '#468f3d', 0.026, 0, -BASE, Math.PI / 4));
+  // --- playing field: one painted plane, lifted with a polygon offset over the app's ground
+  const field = new THREE.Mesh(
+    new THREE.PlaneGeometry(FIELD.w, FIELD.d),
+    new THREE.MeshStandardMaterial({ map: paintField(o.color || '#3d7a35'), roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 }),
+  );
+  field.rotation.x = -Math.PI / 2;
+  field.position.set(FIELD.x0 + FIELD.w / 2, 0.012, FIELD.z0 + FIELD.d / 2);
+  field.receiveShadow = true;
+  g.add(field);
   const bases = [[0, 0], [BASE, -BASE], [0, -2 * BASE], [-BASE, -BASE]];
-  for (let i = 0; i < 4; i++) {
-    const a = bases[i], b = bases[(i + 1) % 4];
-    const dx = b[0] - a[0], dz = b[1] - a[1];
-    const len = Math.hypot(dx, dz);
-    g.add(flatMesh(new THREE.PlaneGeometry(len + 1.6, 1.8), '#9a7454', 0.03, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, Math.atan2(-dz, dx)));
-  }
-  g.add(flatMesh(new THREE.CircleGeometry(4, 40), '#9a7454', 0.032, 0, 0));
   const white = std('#f2f0ea', { roughness: 0.6 });
   for (const s of [-1, 1]) {
-    const line = flatMesh(new THREE.PlaneGeometry(113, 0.1), '#f2f0ea', 0.036, s * 113 / 2 * Math.SQRT1_2, -113 / 2 * Math.SQRT1_2, s > 0 ? Math.PI / 4 : -Math.PI / 4);
-    line.material = new THREE.MeshBasicMaterial({ color: '#e9e7e0' });
-    g.add(line);
     const pole = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 22, 10), std('#f4c430')));
     pole.position.set(s * 113 * Math.SQRT1_2, 11, -113 * Math.SQRT1_2);
     g.add(pole);
@@ -1462,7 +1493,7 @@ function buildBallpark(o) {
     g.add(bag);
   }
   const plateShape = new THREE.Shape([[0.216, 0], [0.216, -0.216], [0, -0.43], [-0.216, -0.216], [-0.216, 0]].map(([x, y]) => new THREE.Vector2(x, y)));
-  const plate = new THREE.Mesh(new THREE.ShapeGeometry(plateShape), new THREE.MeshBasicMaterial({ color: '#f2f0ea' }));
+  const plate = new THREE.Mesh(new THREE.ShapeGeometry(plateShape), new THREE.MeshBasicMaterial({ color: '#f2f0ea', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16 }));
   plate.rotation.x = -Math.PI / 2;
   plate.position.set(0, 0.04, 0.2);
   g.add(plate);

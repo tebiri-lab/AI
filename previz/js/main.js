@@ -145,11 +145,16 @@ function stadiumProject() {
     { t: 0, pos: runner.pos.map(r3), rotY: -45 },
     { t: dur, pos: at(dur).map(r3), rotY: -45 },
   ] };
-  // One-direction orbit: from just ahead of him (az 25°) round his left side to behind (az 215°).
-  const R = 6, H = 2.45, aim = 1.0, keys = [];
-  for (let t = 0; t <= dur + 1e-6; t += 0.5) {
+  // Two full turns in one direction (720° in 10 s) at a constant distance, centred on the runner.
+  // Start point, height and distance come from the framing tuned in the app: the first key sits at
+  // (x -7.709, y 2.45, z -22.3), about 11 m from the runner.
+  const H = 2.45, aim = 1.0, turns = 2, keys = [];
+  const c0 = at(0), start = [-7.709, -22.3];
+  const R = Math.hypot(start[0] - c0[0], start[1] - c0[2]);
+  const az0 = Math.atan2(start[0] - c0[0], start[1] - c0[2]);
+  for (let t = 0; t <= dur + 1e-6; t += 0.25) {
     const c = at(t);
-    const az = THREE.MathUtils.degToRad(-45 + 25 + (190 * t) / dur);
+    const az = az0 + (Math.PI * 2 * turns * t) / dur;
     keys.push({
       t: r3(t),
       pos: [r3(c[0] + Math.sin(az) * R), H, r3(c[2] + Math.cos(az) * R)],
@@ -158,14 +163,11 @@ function stadiumProject() {
       roll: 0,
     });
   }
-  // Orbit path shifted along Z so the first key sits at z = -22.3 (framing tuned in the app).
-  const zShift = -22.3 - keys[0].pos[2];
-  for (const k of keys) k.pos[2] = r3(k.pos[2] + zShift);
   p.shots.push({
-    id: uid(), name: '도루 · 불릿타임 오빗', duration: dur, ease: 'linear', shake: 0,
-    desc: '만원 관중의 야구장, 시간이 멈춘 순간 2루 주자만 3루를 향해 초고속 슬로모션으로 질주한다. 관중·수비수·심판·공중의 공은 완전히 정지해 있고, 카메라는 주자를 중심으로 한 방향으로 원을 그리며 돈다.',
+    id: uid(), name: '도루 · 불릿타임 2회전 오빗', duration: dur, ease: 'linear', shake: 0,
+    desc: '만원 관중의 야구장, 시간이 멈춘 순간 2루 주자만 3루를 향해 초고속 슬로모션으로 질주한다. 관중·수비수·심판·공중의 공은 완전히 정지해 있고, 카메라는 주자와 같은 거리를 유지하며 주자를 중심으로 한 방향으로 10초 동안 두 바퀴 돈다.',
     keys, anim, genAnim: [], lookAt: { id: runner.id, offset: [0, aim, 0] },
-    meta: { subject: runner.id, size: 'fs', angle: 'eye', dir: 'side', move: 'orbit_l', speed: 'slow', lens: 24, duration: dur },
+    meta: { subject: runner.id, size: 'fs', angle: 'eye', dir: 'side', move: 'orbit_360', speed: 'fast', lens: 24, duration: dur },
   });
   return p;
 }
