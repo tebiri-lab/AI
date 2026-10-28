@@ -71,6 +71,11 @@ input[type=range] { padding: 0; border: 0; background: none; accent-color: var(-
 .brand { font-weight: 800; letter-spacing: .12em; display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
 .brand-sub { color: var(--muted); font-weight: 500; letter-spacing: .2em; font-size: 11px; }
+.site-nav { display: inline-flex; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; flex: none; }
+.site-nav a { padding: 4px 10px; color: var(--muted); text-decoration: none; font-size: 12px; }
+.site-nav a + a { border-left: 1px solid var(--line-2); }
+.site-nav a:hover { color: var(--text); background: #262b33; }
+.site-nav a[aria-current="page"] { color: var(--text); background: #2b313a; }
 .project-name { max-width: 320px; background: transparent; border-color: transparent; font-weight: 600; }
 .project-name:hover { border-color: var(--line-2); }
 .top-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }

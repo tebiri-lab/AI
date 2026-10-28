@@ -6,6 +6,16 @@ export const EASE = {
   in: (u) => u * u * u,
   out: (u) => 1 - Math.pow(1 - u, 3),
   inout: (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2),
+  back: (u) => 1 + 2.70158 * Math.pow(u - 1, 3) + 1.70158 * Math.pow(u - 1, 2),
+  elastic: (u) => (u <= 0 ? 0 : u >= 1 ? 1 : Math.pow(2, -10 * u) * Math.sin((u * 10 - 0.75) * (2 * Math.PI / 3)) + 1),
+  bounce: (u) => {
+    const n = 7.5625, d = 2.75;
+    if (u < 1 / d) return n * u * u;
+    if (u < 2 / d) return n * (u -= 1.5 / d) * u + 0.75;
+    if (u < 2.5 / d) return n * (u -= 2.25 / d) * u + 0.9375;
+    return n * (u -= 2.625 / d) * u + 0.984375;
+  },
+  steps: (u) => (u >= 1 ? 1 : Math.floor(u * 6) / 6),
 };
 
 const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
@@ -71,6 +81,14 @@ export function sampleCamera(shot, t, withShake = true) {
       focal: k1.focal + (k2.focal - k1.focal) * s,
       roll: (k1.roll || 0) + ((k2.roll || 0) - (k1.roll || 0)) * s,
     };
+    // Overshooting eases (Overshoot, Elastic) run past the last key: extend along the last segment.
+    if (tt > t1) {
+      const a = keys[keys.length - 2], b = keys[keys.length - 1];
+      const over = (tt - t1) / Math.max(1e-6, b.t - a.t);
+      out.pos.add(v3(b.pos).sub(v3(a.pos)).multiplyScalar(over));
+      out.target.add(v3(b.target).sub(v3(a.target)).multiplyScalar(over));
+      out.focal += (b.focal - a.focal) * over;
+    }
   }
   const shake = shot.shake || 0;
   if (withShake && shake > 0) {

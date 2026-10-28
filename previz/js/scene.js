@@ -95,6 +95,7 @@ function buildHold(kind, spine, forearms) {
       st.position.set(0, -0.3, 0).addScaledVector(d, 0.17);
       st.rotation.x = 2.094;
       fa.add(st);
+      fa.userData.stick = st;
     }
   }
 }
@@ -158,17 +159,19 @@ function buildActor(o) {
   const shR = segment(spine, -0.225, 0.47, 0.05, 0.2, body);
   const elL = segment(shL, 0, -0.29, 0.045, 0.19, body);
   const elR = segment(shR, 0, -0.29, 0.045, 0.19, body);
+  const hands = [];
   for (const el of [elL, elR]) {
     const hand = shadowed(new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 10), skin));
     hand.position.y = -0.3;
     hand.scale.set(0.8, 1.1, 0.6);
     el.add(hand);
+    hands.push(hand);
   }
   if (o.hold && o.hold !== 'none') buildHold(o.hold, spine, [elL, elR]);
 
   const s = (o.height || 1.75) / 1.75;
   rig.scale.setScalar(s);
-  g.userData.rig = { root, spine, headG, hipL, hipR, kneeL, kneeR, shL, shR, elL, elR, torso, pelvis, scale: s };
+  g.userData.rig = { root, spine, headG, hipL, hipR, kneeL, kneeR, shL, shR, elL, elR, handL: hands[0], handR: hands[1], torso, pelvis, scale: s };
   const label = makeLabel(o.name);
   label.position.y = (o.height || 1.75) + 0.3;
   g.add(label);
@@ -179,20 +182,131 @@ function buildActor(o) {
 // positive knee bends the shin back, negative head looks up, positive lean bends forward.
 const POSE_DEF = {
   stand: { walk: true },
+  // Sprint: stride pair of 4 m of travel, so a slow-motion runner (small keyed distance) cycles slowly.
+  run: { run: true, lean: 0.32, head: -0.2, stride: 4, phase: 1.2 },
+  field_ready: { drop: -0.14, hip: [-0.5, -0.5], knee: [0.75, 0.75], lean: 0.5, head: -0.45, sh: [-0.55, 0.3, -0.55, -0.3], el: [-0.55, -0.55] },
+  throw: { drop: -0.06, hip: [-0.85, 0.45], knee: [0.45, 0.35], lean: 0.18, head: -0.1, sh: [-1.25, 0.25, -2.7, -0.45], el: [-0.5, -1.45] },
+  catcher: { drop: -0.5, hip: [-1.6, -1.6], knee: [1.95, 1.95], lean: 0.22, head: -0.15, sh: [-1.15, 0.35, -0.45, -0.2], el: [-0.85, -0.3] },
   look_up: { walk: true, head: -0.6 },
   sit: { drop: -0.4, hip: [-1.57, -1.57], knee: [1.57, 1.57], sh: [-0.55, 0.12, -0.55, -0.12], el: [-0.2, -0.2] },
   drum: { drop: -0.4, hip: [-1.45, -1.45], knee: [1.6, 1.6], lean: 0.12, head: 0.12, sh: [-0.5, 0.18, -0.5, -0.18], el: [-1.0, -1.0], beat: 'drum' },
   drum_fill: { drop: -0.4, hip: [-1.45, -1.45], knee: [1.6, 1.6], lean: 0.2, head: 0.42, turn: -0.4, sh: [-0.55, 0.1, -0.6, -0.3], el: [-0.95, -0.9], beat: 'drum' },
   // eyes on the toms, then (45%→70% of the shot) the head comes up to face straight ahead
   drum_look: { drop: -0.4, hip: [-1.45, -1.45], knee: [1.6, 1.6], lean: 0.2, head: 0.42, turn: -0.4, sh: [-0.55, 0.1, -0.6, -0.3], el: [-0.95, -0.9], beat: 'drum', look: [0.45, 0.7] },
+  // Count-in: sticks raised in front of the face and crossed; twist = forearm roll [L, R] so the sticks
+  // point inward; click = how far the arms swing in on each beat (beat-locked, so it lands on the count).
+  count: { drop: -0.4, hip: [-1.45, -1.45], knee: [1.6, 1.6], lean: 0.02, head: -0.04, sh: [-1.7, 0.22, -1.7, -0.22], el: [-1.2, -1.2], twist: [-1.2, 1.2], click: 0.3, clickLR: [0, 1.3], hitBeat: 63, lift: [-2.35, 0.45], hit: [-0.68, 0.3, -0.9] },
   sticks_up: { drop: -0.4, hip: [-1.45, -1.45], knee: [1.6, 1.6], lean: -0.08, head: -0.25, sh: [-2.45, 0.32, -2.45, -0.32], el: [-0.95, -0.95] },
   kneel: { drop: -0.45, hip: [-1.45, 0.05], knee: [1.45, 1.52], lean: 0.12, sh: [-0.75, 0.12, -0.15, -0.42], el: [-0.55, -0.1] },
   kneel_up: { drop: -0.45, hip: [-1.45, 0.05], knee: [1.45, 1.52], lean: 0.05, head: -0.6, sh: [-1.1, 0.15, -0.15, -0.42], el: [-0.3, -0.1] },
   guitar: { walk: false, sh: [-0.65, 0.45, -0.3, 0.12], el: [-1.0, -1.25], beat: 'strum' },
   keys: { lean: 0.1, head: 0.18, sh: [-0.6, -0.06, -0.6, 0.06], el: [-0.85, -0.85], beat: 'keys' },
+  // Full-energy playing for the drop: big strokes plus a groove (head nod, body bounce) on every beat.
+  drum_rock: { drop: -0.4, hip: [-1.45, -1.45], knee: [1.6, 1.6], lean: 0.12, head: 0.12, sh: [-0.5, 0.18, -0.5, -0.18], el: [-1.0, -1.0], beat: 'drum_hard', groove: 1 },
+  guitar_rock: { walk: false, sh: [-0.65, 0.45, -0.3, 0.12], el: [-1.0, -1.25], beat: 'strum_hard', groove: 1 },
+  keys_rock: { lean: 0.1, head: 0.18, sh: [-0.6, -0.06, -0.6, 0.06], el: [-0.85, -0.85], beat: 'keys_hard', groove: 1 },
+  // K4: the left stick crashes the big left crash cymbal on crashBeats (beat index from the first downbeat),
+  // springs back up high between hits; the right stick hits the snare on the other beats.
+  drum_crash: { drop: -0.4, hip: [-1.45, -1.45], knee: [1.6, 1.6], lean: 0.12, head: 0.05, sh: [-0.5, 0.18, -0.5, -0.18], el: [-1.0, -1.0],
+    beat: 'crash_play', groove: 0.7, crashBeats: [67, 69, 71], crashUp: [-2.6, 0.4, -0.5], crashHit: [-1.45, 0.55, -0.35],
+    rolls: [[68.15, 68.55], [69.05, 69.85], [71.35, 71.9]] },
+  // K4 played exactly as the drum score (bars from beat 67): crashes L(K crash, his left) / R(EFX, his right),
+  // the tom fill on beat 3-4 (hi tom 32nds-16ths, mid, floor, floor), then bar 2 crashes and the snare sextuplets.
+  drum_score67: {
+    // K4 re-timed to Gunil's live performance of this bar (v22, 1016_12 fancam synced to the song), beats from 67:
+    // L crashes the K at 67 and 71 (and again at 71.55 from the rebound), each time springing up high off the rim;
+    // R winds up high (hand over his head) and comes down on the EFX at 68.25, 70.8 and 72.25; in between both
+    // sticks play groove strokes on the rack toms, a tom fill at 69.5-70.15 runs into the floor tom, and the head
+    // lifts after each crash, nods on the beats and bows into the fill (headKeys). The big right crash is never hit.
+    // Each entry: [beat, shX, shZ, elX, elY (forearm roll), wrist deg, flag?] (flag 1 = hover, 3 = shaped stroke,
+    // 4 = hit: accelerating downstroke, lift scale in [7]). Poses: previz/live22_solve*.py, keys: live22_build.py,
+    // checked with live22_check.py (no plate crossings, big crash 12+ cm clear, face clear from the #12 camera).
+    // Cymbals swing on hits and are pushed aside by any stick that touches them: js/physics.js.
+    drop: -0.4, hip: [-1.45, -1.45], knee: [1.6, 1.6], lean: 0.12, head: 0.05, sh: [-0.5, 0.18, -0.5, -0.18], el: [-1.0, -1.0],
+    beat: 'strokes', groove: 0,
+    strokes: {
+      L: [
+          [66.4, -0, 0.5764, -2.2272, -2.4794, 41.9916],
+          [66.75, -0.657, 0.1769, -1.9633, -4.1715, 53.2629, 1],
+          [67, -0.6604, 0.1783, -1.9004, -4.1556, 85.1514, 4, 0],
+          [67.1, -0.4047, 0.185, -2.4318, -4.1382, 88.5042, 1],
+          [67.35, -1.0707, 1.1591, -1.9704, -4.6025, 53.0967],
+          [67.5, -0.657, 0.1769, -1.9633, -4.1715, 53.2629, 1],
+          [67.62, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 0],
+          [68, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 1.6],
+          [68.5, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 1.6],
+          [69, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 1.6],
+          [69.25, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 1],
+          [69.5, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 0.9],
+          [69.75, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 0.9],
+          [70.27, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 1.2],
+          [70.6, 0.1565, 0.6128, -2.4404, -3.1609, 52.3309, 1],
+          [70.8, -0.657, 0.1769, -1.9633, -4.1715, 53.2629, 1],
+          [71, -0.6604, 0.1783, -1.9004, -4.1556, 85.1514, 4, 0],
+          [71.1, -0.4047, 0.185, -2.4318, -4.1382, 88.5042, 1],
+          [71.32, -1.0707, 1.1591, -1.9704, -4.6025, 53.0967],
+          [71.55, -0.6604, 0.1783, -1.9004, -4.1556, 85.1514, 4, 0],
+          [71.65, -0.4047, 0.185, -2.4318, -4.1382, 88.5042, 1],
+          [71.95, 0.1565, 0.6128, -2.4404, -3.1609, 52.3309, 1],
+          [72.15, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 0.8],
+          [72.5, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 1.6],
+          [73, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 1.6],
+          [73.5, -0, 0.5764, -2.2272, -2.4794, 41.9916, 4, 1.6],
+          [73.9, 0.1565, 0.6128, -2.4404, -3.1609, 52.3309, 1]],
+      R: [
+          [66.4, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049],
+          [67, 0.4445, -0.8772, -2.2563, 3.4265, 67.3872, 4, 0.8],
+          [67.3, -0.004, -0.6396, -2.5894, 2.4482, 41.0998],
+          [67.55, -0.004, -0.6396, -2.5894, 2.4482, 41.0998, 1],
+          [67.78, -0.9412, -0.1775, -2.4661, 3.3487, 13.1097],
+          [68.05, -1.7216, -1.3065, -1.8248, 4.3495, 44.8798],
+          [68.25, -0.269, -0.898, -1.032, 4.603, 44.873, 4, 0],
+          [68.35, 0.1286, -1.4, -1.5112, 4.2573, 62.6028, 1],
+          [68.62, -0.004, -0.6396, -2.5894, 2.4482, 41.0998],
+          [68.75, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049, 4, 0.8],
+          [69.25, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049, 4, 1.6],
+          [69.625, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049, 4, 0.9],
+          [69.875, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049, 4, 0.9],
+          [70, 0.4445, -0.8772, -2.2563, 3.4265, 67.3872, 4, 0.7],
+          [70.15, 0.4445, -0.8772, -2.2563, 3.4265, 67.3872, 4, 0.8],
+          [70.24, -0.004, -0.6396, -2.5894, 2.4482, 41.0998, 1],
+          [70.36, -0.9412, -0.1775, -2.4661, 3.3487, 13.1097],
+          [70.6, -1.7216, -1.3065, -1.8248, 4.3495, 44.8798],
+          [70.8, -0.269, -0.898, -1.032, 4.603, 44.873, 4, 0],
+          [70.9, 0.1286, -1.4, -1.5112, 4.2573, 62.6028, 1],
+          [71.2, -0.004, -0.6396, -2.5894, 2.4482, 41.0998],
+          [71.5, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049, 4, 0.8],
+          [71.62, -0.004, -0.6396, -2.5894, 2.4482, 41.0998, 1],
+          [71.78, -0.9412, -0.1775, -2.4661, 3.3487, 13.1097],
+          [72.05, -1.7216, -1.3065, -1.8248, 4.3495, 44.8798],
+          [72.25, -0.269, -0.898, -1.032, 4.603, 44.873, 4, 0],
+          [72.35, 0.1286, -1.4, -1.5112, 4.2573, 62.6028, 1],
+          [72.62, -0.004, -0.6396, -2.5894, 2.4482, 41.0998],
+          [72.75, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049, 4, 0.8],
+          [73.25, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049, 4, 1.6],
+          [73.75, -0.0115, -0.6055, -2.2399, 2.4762, 42.1049, 4, 1.6]],
+    },
+    headKeys: [[66.4, 0, 0, 0], [67, 0.03, 0, 0], [67.25, -0.25, 0.05, -0.06], [67.6, 0.05, 0, 0], [68, 0.14, 0, 0], [68.25, 0, -0.14, 0.03], [68.5, 0.12, 0, 0], [68.75, 0.02, 0, 0], [69, 0.14, 0, 0], [69.25, 0.06, 0, 0], [69.5, 0.32, -0.04, 0], [70.1, 0.42, -0.1, 0], [70.4, 0.18, -0.16, 0.04], [70.8, 0.08, -0.16, 0], [71, 0.03, 0.04, 0], [71.25, -0.18, 0.06, -0.05], [71.6, 0.05, 0, 0], [72, 0.14, 0, 0], [72.25, 0, -0.14, 0.03], [72.5, 0.12, 0, 0], [73, 0.14, 0, 0], [73.5, 0.12, 0, 0], [74, 0.08, 0, 0]],
+    kicks: [67, 67.32, 67.8, 68.32, 68.57, 69.09, 69.68, 70.07, 70.32, 70.57, 70.8, 71.07, 71.34, 71.57, 72, 72.32, 72.8, 73.32],
+  },
   hold: { head: 0.1, sh: [-1.05, -0.3, -1.05, 0.3], el: [-1.65, -1.65] },
   hug: { head: 0.25, lean: 0.12, sh: [-0.85, -0.45, -0.85, 0.45], el: [-1.35, -1.35] },
   reach_up: { head: -0.45, sh: [-2.6, 0.2, 0, -0.08], el: [-0.2, 0] },
+  // One arm pulled up by the balloon string over the shot: armL / armR = [[shX, shZ, el] from, to],
+  // in that arm's own convention (positive shZ swings the left arm outward, negative the right).
+  pull_walk: { walk: true, lin: true, armL: [[-0.9, 0, -0.7], [-1.45, -0.1, -0.6]] },
+  // Continues from pull_walk's end pose; wrap = [start, end, elbow flex] as fractions of the shot.
+  pull_wrap: { walk: true, head: -0.15, armL: [[-1.45, -0.1, -0.6], [-1.75, -0.1, -0.5]], wrap: [0.2, 0.55, 0.6] },
+  // Keyed left arm [u, shX, shZ, el] (u = fraction of the shot): reach up the string, grip, tug down.
+  // grip = [from, to] the hand closes into a fist; gaze = [from, to, head angle] he looks up at the balloon.
+  pull_grip: {
+    walk: true,
+    armLKeys: [[0, -1.45, -0.1, -0.6], [0.15, -1.45, -0.1, -0.6], [0.32, -1.95, -0.12, -0.2], [0.44, -1.2, -0.1, -0.75], [1, -1.2, -0.1, -0.75]],
+    grip: [0.3, 0.37],
+    gaze: [0.4, 0.6, -0.75],
+  },
+  // #9: the arm keeps rising at the same angular speed as pull_walk (0.11 rad/s on a 4 s shot); he stops and looks up (1.1-1.7 s).
+  pull_rise: { walk: true, lin: true, armLKeys: [[0, -1.45, -0.1, -0.6], [1, -1.89, -0.1, -0.52]], gaze: [0.275, 0.425, -0.75] },
   dissolve: { head: -0.12, dissolve: { start: 0.22, end: 0.92 } },
 };
 
@@ -287,11 +401,21 @@ export function poseNames(type) {
   return Object.keys(POSE_SETS[type] || {});
 }
 
+// Drumstick angle off the forearm axis (deg); 60 is the default grip, strokes poses solve their own wrist angle.
+function setStickAngle(fa, deg) {
+  const st = fa.userData.stick;
+  if (!st) return;
+  const a = (deg * Math.PI) / 180;
+  st.rotation.x = Math.PI - a;
+  st.position.set(0, -0.3 - 0.17 * Math.cos(a), 0.17 * Math.sin(a));
+}
+
 /** Pose an actor (or animate a prop) for this frame. clock = song seconds, beat = seconds per beat. */
 export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
   const r = group.userData.rig;
   if (r) {
     const d = POSE_DEF[pose] || POSE_DEF.stand;
+    if (r.handL) { r.handL.scale.set(0.8, 1.1, 0.6); r.handR.scale.set(0.8, 1.1, 0.6); }
     const hip = d.hip || [0, 0], knee = d.knee || [0, 0], sh = d.sh || [0, 0.08, 0, -0.08], el = d.el || [0, 0];
     r.root.position.y = d.drop || 0;
     r.spine.rotation.x = d.lean || 0;
@@ -310,6 +434,7 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
     r.shR.rotation.set(sh[2], 0, sh[3]);
     r.elL.rotation.set(el[0], 0, 0);
     r.elR.rotation.set(el[1], 0, 0);
+    setStickAngle(r.elL, 60); setStickAngle(r.elR, 60);
     if (d.walk && speed > 0) {
       const amp = Math.min(1, speed / 1.3) * 0.55;
       const phase = (dist / 1.5) * Math.PI * 2; // one full cycle per 1.5 m stride pair
@@ -323,6 +448,52 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
       r.elL.rotation.x = -0.25;
       r.elR.rotation.x = -0.25;
     }
+    if (d.run) {
+      // Full-effort sprint cycle driven by distance travelled, not by speed, so slow motion keeps full form.
+      const ph = (dist / (d.stride || 4)) * Math.PI * 2 + (d.phase || 0);
+      const sw = Math.sin(ph);
+      r.root.position.y = (d.drop || 0) - 0.06 + Math.abs(Math.cos(ph)) * 0.07;
+      r.hipL.rotation.x = -0.3 - 0.85 * sw;
+      r.hipR.rotation.x = -0.3 + 0.85 * sw;
+      r.kneeL.rotation.x = 0.3 + 1.35 * Math.max(0, sw);
+      r.kneeR.rotation.x = 0.3 + 1.35 * Math.max(0, -sw);
+      r.shL.rotation.set(0.95 * sw, 0, 0.12);
+      r.shR.rotation.set(-0.95 * sw, 0, -0.12);
+      r.elL.rotation.x = -1.5;
+      r.elR.rotation.x = -1.5;
+    }
+    if (d.twist) { r.elL.rotation.y = d.twist[0]; r.elR.rotation.y = d.twist[1]; }
+    if (d.click && beat > 0) {
+      // Count-in clicks land on every beat. With hitBeat (beat index from the first downbeat): no click after
+      // hitBeat-1, the sticks lift high and apart, then come down hard to strike the drums exactly on hitBeat
+      // (the drop), with a small rebound after the hit.
+      const ph = clock / beat;
+      const f = ph - Math.round(ph);
+      const sm = (v) => { const c = Math.max(0, Math.min(1, v)); return c * c * (3 - 2 * c); };
+      let k = Math.exp(-((f / 0.11) ** 2));
+      let x = sh[0], zl = sh[1], zr = sh[3], ex = el[0];
+      if (d.hitBeat != null) {
+        const H = d.hitBeat;
+        k *= 1 - sm((ph - (H - 0.9)) / 0.1);
+        const up = sm((ph - (H - 0.85)) / 0.5);
+        x += (d.lift[0] - x) * up; zl += (d.lift[1] - zl) * up; zr += (-d.lift[1] - zr) * up;
+        const dn = Math.max(0, Math.min(1, (ph - (H - 0.3)) / 0.3)) ** 2;
+        x += (d.hit[0] - x) * dn; zl += (d.hit[1] - zl) * dn; zr += (-d.hit[1] - zr) * dn; ex += (d.hit[2] - ex) * dn;
+        // hitTwist: on the downstroke the forearms roll back so the sticks point forward onto the drum heads
+        if (d.hitTwist && d.twist) {
+          const tw = Math.max(dn, ph > H ? 1 : 0);
+          r.elL.rotation.y = d.twist[0] + (d.hitTwist[0] - d.twist[0]) * tw;
+          r.elR.rotation.y = d.twist[1] + (d.hitTwist[1] - d.twist[1]) * tw;
+        }
+        if (ph > H) x -= 0.35 * Math.sin(Math.min(1, (ph - H) / 0.7) * Math.PI);
+        r.shL.rotation.x = x; r.shR.rotation.x = x;
+        r.elL.rotation.x = ex; r.elR.rotation.x = ex;
+      }
+      // clickLR scales each arm's swing: the left stick is held still and only the right one taps across it
+      const cl = d.clickLR ? d.clickLR[0] : 1, cr = d.clickLR ? d.clickLR[1] : 1;
+      r.shL.rotation.z = zl - d.click * k * cl;
+      r.shR.rotation.z = zr + d.click * k * cr;
+    }
     if (d.beat && beat > 0) {
       const ph = (clock / beat) * Math.PI; // one stroke per eighth note
       if (d.beat === 'drum') {
@@ -333,7 +504,160 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
       } else if (d.beat === 'keys') {
         r.elL.rotation.x = el[0] + Math.sin(ph) * 0.05;
         r.elR.rotation.x = el[1] - Math.sin(ph * 1.5) * 0.05;
+      } else if (d.beat === 'drum_hard') {
+        const s2 = Math.sin(ph * 2);
+        r.elL.rotation.x = el[0] + s2 * 0.75;
+        r.elR.rotation.x = el[1] - s2 * 0.75;
+        r.shL.rotation.x = sh[0] + s2 * 0.4;
+        r.shR.rotation.x = sh[2] - s2 * 0.4;
+      } else if (d.beat === 'strum_hard') {
+        r.elR.rotation.x = el[1] + Math.sin(ph * 4) * 0.6; // eighth-note strums, big down/up strokes
+        r.shR.rotation.x = sh[2] + Math.sin(ph * 4) * 0.2;
+      } else if (d.beat === 'crash_play') {
+        const pb = clock / beat;
+        let prev = -Infinity, next = Infinity;
+        for (const hb of d.crashBeats) { if (hb <= pb + 1e-6) prev = Math.max(prev, hb); else next = Math.min(next, hb); }
+        const U = d.crashUp, Hh = d.crashHit;
+        const lerp3 = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
+        const smo = (v) => { const c = Math.max(0, Math.min(1, v)); return c * c * (3 - 2 * c); };
+        let ps;
+        if (next < Infinity && pb > next - 0.35) ps = lerp3(U, Hh, ((pb - (next - 0.35)) / 0.35) ** 2); // accelerating down-swing
+        else if (prev > -Infinity) ps = lerp3(Hh, U, smo((pb - prev) / 0.5)); // rebound up after the hit
+        else ps = U;
+        r.shL.rotation.x = ps[0]; r.shL.rotation.z = ps[1]; r.elL.rotation.x = ps[2];
+        const fr = pb - Math.round(pb);
+        const pr = d.crashBeats.includes(Math.round(pb)) ? 0 : Math.exp(-((fr / 0.1) ** 2));
+        r.elR.rotation.x = el[1] - 0.25 + 0.6 * pr;
+        // drum rolls / fills: both sticks alternate fast strokes and sweep across the toms (his left -> right)
+        let rw = 0, ru = 0;
+        for (const [ra, rb] of d.rolls || []) {
+          const w = smo((pb - ra) / 0.12) * (1 - smo((pb - rb) / 0.12));
+          if (w > rw) { rw = w; ru = Math.max(0, Math.min(1, (pb - ra) / (rb - ra))); }
+        }
+        if (rw > 0) {
+          const tt = clock * 5 * Math.PI * 2;
+          const sweep = 0.2 - 0.45 * ru;
+          const tgt = [[r.shL, sh[0] - 0.1, sh[1] + sweep], [r.shR, sh[2] - 0.1, sh[3] + sweep]];
+          for (const [jt, tx, tz] of tgt) { jt.rotation.x += (tx - jt.rotation.x) * rw; jt.rotation.z += (tz - jt.rotation.z) * rw; }
+          r.elL.rotation.x += (el[0] + 0.35 * Math.sin(tt) - r.elL.rotation.x) * rw;
+          r.elR.rotation.x += (el[1] + 0.35 * Math.sin(tt + Math.PI) - r.elR.rotation.x) * rw;
+        }
+      } else if (d.beat === 'strokes') {
+        // Score-accurate drumming: each hand moves between scored hit targets [beat, shX, shZ, elX]
+        // (beats from the first downbeat), lifting the stick between hits and landing exactly on the beat.
+        const pb = clock / beat;
+        const armAt = (list) => {
+          if (pb <= list[0][0]) return list[0].slice(1, 6);
+          for (let i = 0; i < list.length - 1; i++) {
+            const a0 = list[i], a1 = list[i + 1];
+            if (pb >= a0[0] && pb <= a1[0]) {
+              const u = (pb - a0[0]) / (a1[0] - a0[0]);
+              let e = u * u * (3 - 2 * u);
+              // flag 4 = a hit: the stick accelerates into it (a real downstroke lands at speed instead of easing
+              // to a stop) and springs off it after; a1[7] = lift scale on the way in (0 when it comes down from a
+              // raised pose, ~1-2 for a groove stroke straight from the previous hit)
+              const hitIn = a1[6] === 4, hitOut = a0[6] === 4;
+              if (hitIn && hitOut) e = u;
+              else if (hitIn) e = u * u;
+              else if (hitOut) e = 1 - (1 - u) * (1 - u);
+              // the stick comes up after each hit and drops back fast onto the next one
+              const hov = hitIn ? (a1[7] || 0) : a0[6] === 1 || a1[6] === 1 ? 0.3 : hitOut ? 0.5 : 1;
+              const lift = hov * Math.sin(Math.PI * Math.pow(u, 0.7)) * Math.min(0.8, 0.2 + (a1[0] - a0[0]) * 0.5);
+              const v = a0.slice(1, 6).map((x, j) => x + (a1[j + 1] - x) * e);
+              v[0] -= lift * 0.35; v[2] -= lift * 0.3;
+              // flag 3 = a shaped stroke (e.g. one cymbal straight to another): the wrist offset a1[7] keeps the stick
+              // level on the way so it does not droop into an extra stroke mid-air, a1[8] scales the arm's lift, a1[9] shapes
+              // when the wrist offset peaks
+              if (a1[6] === 3) {
+                v[4] += (a1[7] || 0) * Math.sin(Math.PI * Math.pow(u, a1[9] ?? 1)); // a1[9] < 1 peaks the offset earlier
+                if (a1[8] !== undefined) { const x = (a1[8] - 1) * Math.sin(Math.PI * Math.pow(u, 0.7)) * Math.min(0.8, 0.2 + (a1[0] - a0[0]) * 0.5); v[0] -= x * 0.35; v[2] -= x * 0.3; }
+              }
+              return v;
+            }
+          }
+          return list[list.length - 1].slice(1, 6);
+        };
+        const L = armAt(d.strokes.L), R = armAt(d.strokes.R);
+        r.shL.rotation.set(L[0], 0, L[1]); r.elL.rotation.set(L[2], L[3], 0);
+        r.shR.rotation.set(R[0], 0, R[1]); r.elR.rotation.set(R[2], R[3], 0);
+        setStickAngle(r.elL, L[4]); setStickAngle(r.elR, R[4]);
+        if (d.headKeys) {
+          // head keyframes [beat, nod (+ looks down), turn, tilt], eased, added to the pose's head angle
+          const hk = d.headKeys;
+          let hv = hk[hk.length - 1].slice(1);
+          if (pb <= hk[0][0]) hv = hk[0].slice(1);
+          else for (let i = 0; i < hk.length - 1; i++) {
+            if (pb >= hk[i][0] && pb <= hk[i + 1][0]) {
+              const u = (pb - hk[i][0]) / (hk[i + 1][0] - hk[i][0]), e = u * u * (3 - 2 * u);
+              hv = hk[i].slice(1).map((x, j) => x + (hk[i + 1][j + 1] - x) * e);
+              break;
+            }
+          }
+          r.headG.rotation.set((d.head || 0) + hv[0], (d.turn || 0) + hv[1], hv[2] || 0);
+        }
+        if (d.kicks) {
+          let kp = 0;
+          for (const kb of d.kicks) kp = Math.max(kp, Math.exp(-(((pb - kb) / 0.12) ** 2)));
+          r.kneeR.rotation.x += 0.18 * kp;
+        }
+      } else if (d.beat === 'keys_hard') {
+        const fk = clock / beat - Math.round(clock / beat);
+        const pk = Math.exp(-((fk / 0.12) ** 2));
+        r.elL.rotation.x = el[0] + 0.3 * pk;
+        r.elR.rotation.x = el[1] + 0.3 * pk;
+        r.shL.rotation.z = sh[1] + Math.sin(ph) * 0.15;
+        r.shR.rotation.z = sh[3] + Math.sin(ph) * 0.15;
       }
+      if (d.groove) {
+        // head nod + body bounce landing on every beat
+        const fg = clock / beat - Math.round(clock / beat);
+        const pg = Math.exp(-((fg / 0.14) ** 2)) * d.groove;
+        r.headG.rotation.x += 0.5 * pg;
+        r.spine.rotation.x += 0.15 * pg;
+        if (!d.drop) {
+          r.root.position.y -= 0.07 * pg;
+          r.kneeL.rotation.x += 0.4 * pg; r.kneeR.rotation.x += 0.4 * pg;
+          r.hipL.rotation.x -= 0.2 * pg; r.hipR.rotation.x -= 0.2 * pg;
+        }
+      }
+    }
+    const pull = d.armL || d.armR;
+    if (pull && local) {
+      const left = !!d.armL;
+      const sh = left ? r.shL : r.shR, elb = left ? r.elL : r.elR;
+      const u = Math.max(0, Math.min(1, local.t / Math.max(0.01, local.dur)));
+      const e = d.lin ? u : u * u * (3 - 2 * u);
+      const [a0, a1] = pull;
+      sh.rotation.set(a0[0] + (a1[0] - a0[0]) * e, 0, a0[1] + (a1[1] - a0[1]) * e);
+      elb.rotation.x = a0[2] + (a1[2] - a0[2]) * e;
+      if (d.wrap) {
+        const k = (u - d.wrap[0]) / (d.wrap[1] - d.wrap[0]);
+        if (k > 0 && k < 1) {
+          elb.rotation.x -= d.wrap[2] * Math.sin(k * Math.PI);
+          sh.rotation.y = (left ? -0.6 : 0.6) * Math.sin(k * Math.PI * 2);
+        }
+      }
+    }
+    if (d.armLKeys && local) {
+      const u = Math.max(0, Math.min(1, local.t / Math.max(0.01, local.dur)));
+      const K = d.armLKeys;
+      let i = 0;
+      while (i < K.length - 2 && u > K[i + 1][0]) i++;
+      const [u0, x0, z0, e0] = K[i], [u1, x1, z1, e1] = K[i + 1];
+      const f = Math.max(0, Math.min(1, (u - u0) / Math.max(1e-4, u1 - u0)));
+      const s = d.lin ? f : f * f * (3 - 2 * f);
+      r.shL.rotation.set(x0 + (x1 - x0) * s, 0, z0 + (z1 - z0) * s);
+      r.elL.rotation.x = e0 + (e1 - e0) * s;
+      if (d.grip && r.handL) {
+        const g = Math.max(0, Math.min(1, (u - d.grip[0]) / (d.grip[1] - d.grip[0])));
+        r.handL.scale.set(0.8 + 0.12 * g, 1.1 - 0.3 * g, 0.6 + 0.25 * g);
+      }
+    }
+    if (d.gaze && local) {
+      const u = Math.max(0, Math.min(1, local.t / Math.max(0.01, local.dur)));
+      const k = Math.max(0, Math.min(1, (u - d.gaze[0]) / (d.gaze[1] - d.gaze[0])));
+      const s = k * k * (3 - 2 * k);
+      r.headG.rotation.x = (d.head || 0) + (d.gaze[2] - (d.head || 0)) * s;
     }
     applyDissolve(group, r, d.dissolve, local);
     return;
@@ -381,6 +705,30 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
     }
   } else if (a.kind === 'clouds') {
     a.ring.rotation.y = pose === 'still' ? 0 : -clock * a.speed; // negative yaw = drifts screen-left → right
+  } else if (a.kind === 'dust') {
+    // Settled dust on a slab. Pose 'burst': on beat burstBeat (counted from the first downbeat) it shoots
+    // up fast, then decelerates and hangs in the air; any other pose keeps it lying on the slab.
+    const age = pose === 'burst' ? clock - a.burstBeat * beat : -1;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+    a.items.forEach((it, i) => {
+      const ag = age - it.lag;
+      const k = ag > 0 ? 1 - Math.exp(-ag / 0.16) : 0;
+      p.set(it.x * (1 + it.out * k), it.y0 + it.top * k + Math.sin(clock * 0.6 + it.ph) * 0.03 * k, it.z * (1 + it.out * k));
+      e.set(it.rx + k * it.spin, it.ry + k * it.spin * 0.7, 0);
+      q.setFromEuler(e);
+      sc.set(it.s, it.s * (k > 0 ? 1 : it.sy), it.s);
+      m.compose(p, q, sc);
+      a.mesh.setMatrixAt(i, m);
+    });
+    a.mesh.instanceMatrix.needsUpdate = true;
+    a.puffs.forEach((pf) => {
+      const u = pf.userData.dust;
+      const ag = age - u.lag;
+      const k = ag > 0 ? 1 - Math.exp(-ag / 0.22) : 0;
+      pf.visible = k > 0.01;
+      pf.position.set(u.x, u.top * k, u.z);
+      pf.scale.setScalar(Math.max(0.001, u.r * (0.25 + 0.75 * k)));
+    });
   } else if (a.kind === 'debris') {
     const still = pose === 'still';
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3();
@@ -505,11 +853,17 @@ function buildDrums(o) {
       g.add(leg);
     }
   };
-  const cymbal = (x, y, z, r, tilt) => {
+  // Each cymbal hangs on a pivot (its stand's tilter); the plate inside swings about it when physics.js pushes it.
+  g.userData.cymbals = [];
+  const cymbal = (x, y, z, r, tilt, tiltZ = 0, kind = 'crash') => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, y, z);
+    pivot.rotation.set(tilt, 0, tiltZ);
     const c = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.15, 0.025, 32, 1, true), brass));
-    c.position.set(x, y, z);
-    c.rotation.set(tilt, 0, 0);
-    g.add(c);
+    pivot.add(c);
+    g.add(pivot);
+    if (kind) g.userData.cymbals.push({ pivot, plate: c, r, kind });
+    return pivot;
   };
   // the drummer sits at -Z facing +Z (the audience); his left is +X
   const kick = drum(0.28, 0.42, 0, 0.3, 0.05, Math.PI / 2);
@@ -518,14 +872,18 @@ function buildDrums(o) {
   drum(0.12, 0.16, -0.15, 0.75, -0.02, -0.35);
   drum(0.17, 0.14, 0.33, 0.62, -0.32, -0.12);
   stand(0.33, -0.32, 0.55);
-  drum(0.2, 0.38, -0.48, 0.38, -0.36);
-  stand(0.58, -0.2, 0.9);
-  cymbal(0.58, 0.92, -0.2, 0.17, 0);
-  cymbal(0.58, 0.95, -0.2, 0.17, 0);
-  stand(0.55, 0.22, 1.25);
-  cymbal(0.55, 1.27, 0.22, 0.22, -0.3);
-  stand(-0.62, 0.15, 1.12);
-  cymbal(-0.62, 1.14, 0.15, 0.25, -0.2);
+  drum(0.2, 0.38, -0.58, 0.47, -0.1); // floor tom beside his right knee, head at snare height, clear of the kick
+  stand(0.58, -0.2, 0.81); // hi-hat a little below the K crash, which overlaps it from above (as on the cover)
+  cymbal(0.58, 0.83, -0.2, 0.17, 0, 0, null); // bottom hi-hat plate stays put
+  cymbal(0.58, 0.86, -0.2, 0.17, 0, 0, 'hihat');
+  stand(0.66, 0.08, 0.9);
+  cymbal(0.66, 0.92, 0.08, 0.22, 0.22, -0.16); // cymbals at chest height; K crash out at his left, within reach of his right hand crossing over (cover), clear of his face from the K4 camera, tipped away from him so the sticks come down over its rim
+  // his right side, as on Gunil's real kit: a big crash high at the front-right over the floor tom, and the EFX
+  // effect cymbal low out at his right (4 cymbals in all with the K crash and the hi-hat)
+  stand(-0.5, 0.3, 1.18); // the big crash hangs HIGH, well above the EFX, so after the EFX the right stick passes under it to the K crash
+  cymbal(-0.5, 1.2, 0.3, 0.24, -0.3);
+  stand(-0.95, 0.05, 0.93);
+  cymbal(-0.95, 0.95, 0.05, 0.2, -0.15, -0.3); // EFX low at his right, tipped toward him so the stick crosses its rim from above
   const seat = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 20), std('#202020')));
   seat.position.set(0, 0.5, -0.58);
   g.add(seat);
@@ -706,6 +1064,42 @@ function buildSlab(o) {
   g.add(tilt);
   const label = makeLabel(o.name);
   label.position.y = h + 0.35;
+  g.add(label);
+  return g;
+}
+
+// Dust settled on a slab top: footprint size=[w,h,d], h = how high it rises on its burst (bottom at the origin).
+function buildDust(o) {
+  const g = new THREE.Group();
+  const [w, h, d] = o.size || [3, 2, 2.4];
+  const rand = rng(o.id + 'dust');
+  const count = Math.max(15, Math.min(200, Math.round(w * d * 9))); // light scattering (~20% of the dense version)
+  const mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), std(o.color, { roughness: 1, flatShading: true }), count);
+  mesh.castShadow = true;
+  mesh.frustumCulled = false;
+  const items = [];
+  for (let i = 0; i < count; i++) {
+    const r = rand();
+    items.push({
+      x: (rand() - 0.5) * w * 0.9, z: (rand() - 0.5) * d * 0.9, y0: 0.01 + rand() * 0.02,
+      top: h * (0.15 + 0.85 * Math.pow(rand(), 0.7)), s: 0.015 + 0.04 * r * r, sy: 0.3 + rand() * 0.3,
+      out: 0.1 + rand() * 0.35, lag: rand() * 0.06, rx: rand() * 6.3, ry: rand() * 6.3, spin: (rand() - 0.5) * 2.4, ph: rand() * 6.3,
+    });
+  }
+  g.add(mesh);
+  const puffMat = new THREE.MeshStandardMaterial({ color: o.color, roughness: 1, transparent: true, opacity: 0.3, depthWrite: false });
+  const puffs = [];
+  const np = 0; // translucent puffs read as grey balls in generated video: specks only
+  for (let i = 0; i < np; i++) {
+    const pf = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 2), puffMat);
+    pf.userData.dust = { x: (rand() - 0.5) * w * 0.8, z: (rand() - 0.5) * d * 0.8, top: h * (0.25 + rand() * 0.45), r: (0.35 + rand() * 0.45) * Math.min(1.4, Math.min(w, d) / 2.5), lag: rand() * 0.08 };
+    g.add(pf);
+    puffs.push(pf);
+  }
+  g.userData.anim = { kind: 'dust', mesh, items, puffs, burstBeat: +o.burstBeat || 0 };
+  applyPose(g, 'rest', 0, 0, 0);
+  const label = makeLabel(o.name);
+  label.position.y = h + 0.3;
   g.add(label);
   return g;
 }
@@ -943,9 +1337,258 @@ export function updateMirrors(renderer, scene, groups) {
   }
 }
 
+// Flat sign board: coloured box with Korean/any text painted on the +Z face (and optionally stacked vertically).
+function buildSign(o) {
+  const g = new THREE.Group();
+  const [w, h, d] = o.size || [3, 0.8, 0.1];
+  const text = String(o.text ?? o.name ?? '');
+  const PX = 256; // px per metre
+  const cw = Math.max(64, Math.min(4096, Math.round(w * PX))), ch = Math.max(64, Math.min(4096, Math.round(h * PX)));
+  const c = document.createElement('canvas');
+  c.width = cw; c.height = ch;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = o.color || '#1faa59';
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.fillStyle = o.textColor || '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const family = '"Pretendard","Apple SD Gothic Neo","Noto Sans KR","Noto Sans CJK KR","Malgun Gothic",sans-serif';
+  const chars = Array.from(text);
+  if (o.vertical) {
+    const fs = Math.min(cw * 0.8, (ch * 0.92) / Math.max(1, chars.length));
+    ctx.font = `800 ${fs}px ${family}`;
+    chars.forEach((chr, i) => ctx.fillText(chr, cw / 2, ch * 0.04 + fs * (i + 0.5)));
+  } else {
+    let fs = ch * 0.62;
+    ctx.font = `800 ${fs}px ${family}`;
+    const m = ctx.measureText(text).width;
+    if (m > cw * 0.92) { fs *= (cw * 0.92) / m; ctx.font = `800 ${fs}px ${family}`; }
+    ctx.fillText(text, cw / 2, ch / 2 + fs * 0.04);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const side = new THREE.MeshBasicMaterial({ color: o.color || '#1faa59' });
+  const front = new THREE.MeshBasicMaterial({ map: tex });
+  // BoxGeometry face order: +x, -x, +y, -y, +z, -z
+  const m = shadowed(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), [side, side, side, side, front, side]));
+  m.position.y = h / 2;
+  g.add(m);
+  return g;
+}
+
+
+// ---------------------------------------------------------------------------
+// Ballpark: home plate at the origin, second base toward -Z (27.43 m base paths),
+// an outfield wall arc and a stepped bowl of stands packed with instanced spectators.
+const BASE = 27.43 / Math.SQRT2;
+const WALL_C = [0, -25]; // centre of the outfield wall arc (x, z)
+const WALL_R = 97;
+
+function flatMesh(geo, color, y, x = 0, z = 0, rotZ = 0) {
+  const m = new THREE.Mesh(geo, std(color, { roughness: 0.95 }));
+  m.rotation.set(-Math.PI / 2, 0, rotZ);
+  m.position.set(x, y, z);
+  m.receiveShadow = true;
+  return m;
+}
+
+// Closed outline of the stands' front edge (x, z), wound around the field.
+function standOutline() {
+  const pts = [];
+  const u1 = [Math.SQRT1_2, -Math.SQRT1_2], u3 = [-Math.SQRT1_2, -Math.SQRT1_2];
+  const n1 = [Math.SQRT1_2, Math.SQRT1_2], n3 = [-Math.SQRT1_2, Math.SQRT1_2];
+  const off = 20, poleS = 113;
+  // outfield bleachers just behind the wall, right-field pole -> left-field pole
+  const th = (p) => Math.atan2(p[0] - WALL_C[0], p[1] - WALL_C[1]);
+  const a0 = th([u1[0] * poleS, u1[1] * poleS]), a1 = th([u3[0] * poleS, u3[1] * poleS]) + Math.PI * 2;
+  for (let i = 0; i <= 40; i++) {
+    const a = a0 + ((a1 - a0) * i) / 40;
+    pts.push([WALL_C[0] + Math.sin(a) * (WALL_R + 2.5), WALL_C[1] + Math.cos(a) * (WALL_R + 2.5)]);
+  }
+  for (let s = poleS; s >= 0; s -= 8) pts.push([u3[0] * s + n3[0] * off, u3[1] * s + n3[1] * off]);
+  const b0 = Math.atan2(n3[0], n3[1]), b1 = Math.atan2(n1[0], n1[1]);
+  for (let i = 1; i < 10; i++) {
+    const b = b0 + ((b1 - b0) * i) / 10;
+    pts.push([Math.sin(b) * off, Math.cos(b) * off]);
+  }
+  for (let s = 0; s <= poleS; s += 8) pts.push([u1[0] * s + n1[0] * off, u1[1] * s + n1[1] * off]);
+  return pts;
+}
+
+function outwardNormals(pts) {
+  const F = [0, -35];
+  return pts.map((p, i) => {
+    const a = pts[(i - 1 + pts.length) % pts.length], b = pts[(i + 1) % pts.length];
+    let tx = b[0] - a[0], tz = b[1] - a[1];
+    const l = Math.hypot(tx, tz) || 1;
+    tx /= l; tz /= l;
+    let nx = tz, nz = -tx;
+    if (nx * (p[0] - F[0]) + nz * (p[1] - F[1]) < 0) { nx = -nx; nz = -nz; }
+    return [nx, nz];
+  });
+}
+
+function buildBallpark(o) {
+  const g = new THREE.Group();
+  const rand = rng(o.id + 'park');
+  // --- playing field
+  g.add(flatMesh(new THREE.CircleGeometry(150, 96), '#2f6a2b', 0.01, 0, -25));
+  g.add(flatMesh(new THREE.CircleGeometry(WALL_R, 128), o.color || '#3d7a35', 0.014, WALL_C[0], WALL_C[1]));
+  g.add(flatMesh(new THREE.RingGeometry(WALL_R - 4.5, WALL_R, 128), '#8a6a4a', 0.018, WALL_C[0], WALL_C[1]));
+  g.add(flatMesh(new THREE.CircleGeometry(29, 64), '#9a7454', 0.022, 0, -18.44));
+  g.add(flatMesh(new THREE.PlaneGeometry(25.2, 25.2), '#468f3d', 0.026, 0, -BASE, Math.PI / 4));
+  const bases = [[0, 0], [BASE, -BASE], [0, -2 * BASE], [-BASE, -BASE]];
+  for (let i = 0; i < 4; i++) {
+    const a = bases[i], b = bases[(i + 1) % 4];
+    const dx = b[0] - a[0], dz = b[1] - a[1];
+    const len = Math.hypot(dx, dz);
+    g.add(flatMesh(new THREE.PlaneGeometry(len + 1.6, 1.8), '#9a7454', 0.03, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, Math.atan2(-dz, dx)));
+  }
+  g.add(flatMesh(new THREE.CircleGeometry(4, 40), '#9a7454', 0.032, 0, 0));
+  const white = std('#f2f0ea', { roughness: 0.6 });
+  for (const s of [-1, 1]) {
+    const line = flatMesh(new THREE.PlaneGeometry(113, 0.1), '#f2f0ea', 0.036, s * 113 / 2 * Math.SQRT1_2, -113 / 2 * Math.SQRT1_2, s > 0 ? Math.PI / 4 : -Math.PI / 4);
+    line.material = new THREE.MeshBasicMaterial({ color: '#e9e7e0' });
+    g.add(line);
+    const pole = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 22, 10), std('#f4c430')));
+    pole.position.set(s * 113 * Math.SQRT1_2, 11, -113 * Math.SQRT1_2);
+    g.add(pole);
+  }
+  for (const [x, z] of bases.slice(1)) {
+    const bag = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.08, 0.38), white));
+    bag.position.set(x, 0.07, z);
+    bag.rotation.y = Math.PI / 4;
+    g.add(bag);
+  }
+  const plateShape = new THREE.Shape([[0.216, 0], [0.216, -0.216], [0, -0.43], [-0.216, -0.216], [-0.216, 0]].map(([x, y]) => new THREE.Vector2(x, y)));
+  const plate = new THREE.Mesh(new THREE.ShapeGeometry(plateShape), new THREE.MeshBasicMaterial({ color: '#f2f0ea' }));
+  plate.rotation.x = -Math.PI / 2;
+  plate.position.set(0, 0.04, 0.2);
+  g.add(plate);
+  const mound = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.9, 0.25, 40), std('#9a7454', { roughness: 0.95 })));
+  mound.position.set(0, 0.125, -18.44);
+  g.add(mound);
+  const rubber = new THREE.Mesh(new THREE.BoxGeometry(0.61, 0.03, 0.15), white);
+  rubber.position.set(0, 0.26, -18.44);
+  g.add(rubber);
+
+  // --- outfield wall (padded, dark green)
+  const th = (x, z) => Math.atan2(x - WALL_C[0], z - WALL_C[1]);
+  const t0 = th(113 * Math.SQRT1_2, -113 * Math.SQRT1_2), t1 = th(-113 * Math.SQRT1_2, -113 * Math.SQRT1_2) + Math.PI * 2;
+  const wall = new THREE.Mesh(new THREE.CylinderGeometry(WALL_R, WALL_R, 3.2, 160, 1, true, t0, t1 - t0), std('#1f4a33', { side: THREE.DoubleSide }));
+  wall.position.set(WALL_C[0], 1.6, WALL_C[1]);
+  wall.receiveShadow = true;
+  g.add(wall);
+
+  // --- stepped stands
+  const ROWS = 24, DEPTH = 0.85, RISE = 0.46, Y0 = 1.3, SEAT = 0.62;
+  const base = standOutline();
+  const nrm = outwardNormals(base);
+  const ring = (k) => base.map((p, i) => [p[0] + nrm[i][0] * k * DEPTH, p[1] + nrm[i][1] * k * DEPTH]);
+  const tread = [], riser = [];
+  const quad = (arr, a, b, c, d) => arr.push(...a, ...b, ...c, ...a, ...c, ...d);
+  for (let k = 0; k <= ROWS; k++) {
+    const inner = ring(k), outer = ring(k + 1);
+    const y = Y0 + k * RISE, yPrev = k === 0 ? 0 : Y0 + (k - 1) * RISE;
+    for (let i = 0; i < base.length - 1; i++) {
+      const a = inner[i], b = inner[i + 1], c = outer[i + 1], d = outer[i];
+      if (k < ROWS) quad(tread, [a[0], y, a[1]], [b[0], y, b[1]], [c[0], y, c[1]], [d[0], y, d[1]]);
+      quad(riser, [a[0], yPrev, a[1]], [b[0], yPrev, b[1]], [b[0], k === ROWS ? 0 : y, b[1]], [a[0], k === ROWS ? 0 : y, a[1]]);
+      if (k === ROWS) quad(riser, [a[0], yPrev, a[1]], [b[0], yPrev, b[1]], [b[0], yPrev + 7, b[1]], [a[0], yPrev + 7, a[1]]);
+    }
+  }
+  for (const [arr, color] of [[tread, '#5b6068'], [riser, '#3e434b']]) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, std(color, { side: THREE.DoubleSide, roughness: 0.9 }));
+    m.receiveShadow = true;
+    g.add(m);
+  }
+
+  // --- spectators: one instanced body + one instanced head per seat
+  const seats = [];
+  for (let k = 0; k < ROWS; k++) {
+    const mid = ring(k + 0.45), y = Y0 + k * RISE;
+    let carry = rand() * SEAT;
+    for (let i = 0; i < mid.length - 1; i++) {
+      const a = mid[i], b = mid[i + 1];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const n = nrm[i];
+      for (let d = carry; d < len; d += SEAT) {
+        const f = d / len;
+        if (rand() < 0.97) seats.push([a[0] + (b[0] - a[0]) * f, y, a[1] + (b[1] - a[1]) * f, Math.atan2(-n[0], -n[1])]);
+      }
+      carry = (carry - len % SEAT + SEAT) % SEAT;
+    }
+  }
+  const shirts = ['#2a4f9e', '#2a4f9e', '#f1f1ee', '#f1f1ee', '#c8323c', '#1c2333', '#1c2333', '#7b8794', '#e3b23c', '#2f6b4f'];
+  const skins = ['#e8c4a0', '#d6a77a', '#b07d56', '#f0d2b4', '#2a2a2a', '#3a2c22'];
+  const body = new THREE.InstancedMesh(new THREE.BoxGeometry(0.44, 0.62, 0.3), std('#ffffff', { roughness: 0.85 }), seats.length);
+  const head = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.24, 0.22), std('#ffffff', { roughness: 0.8 }), seats.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3(1, 1, 1);
+  const col = new THREE.Color();
+  seats.forEach(([x, y, z, yaw], i) => {
+    const lean = (rand() - 0.5) * 0.3;
+    q.setFromAxisAngle(up, yaw + lean);
+    const s = 0.9 + rand() * 0.2;
+    sc.set(s, s, s);
+    m4.compose(new THREE.Vector3(x, y + 0.31 * s, z), q, sc);
+    body.setMatrixAt(i, m4);
+    m4.compose(new THREE.Vector3(x, y + 0.76 * s, z), q, sc);
+    head.setMatrixAt(i, m4);
+    body.setColorAt(i, col.set(shirts[Math.floor(rand() * shirts.length)]));
+    head.setColorAt(i, col.set(rand() < 0.22 ? shirts[Math.floor(rand() * 3)] : skins[Math.floor(rand() * skins.length)]));
+  });
+  for (const m of [body, head]) {
+    m.instanceMatrix.needsUpdate = true;
+    m.instanceColor.needsUpdate = true;
+    m.computeBoundingSphere();
+    g.add(m);
+  }
+  g.userData.crowd = seats.length;
+
+  // --- light towers and scoreboard on the back rim
+  const rim = ring(ROWS + 2);
+  const lampMat = new THREE.MeshBasicMaterial({ color: '#fbfcff' });
+  const steel = std('#3a3e45', { metalness: 0.4, roughness: 0.5 });
+  for (const f of [0.08, 0.3, 0.5, 0.62, 0.78, 0.94]) {
+    const p = rim[Math.floor(f * (rim.length - 1))];
+    const hTop = Y0 + ROWS * RISE + 26;
+    const mast = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, hTop, 10), steel));
+    mast.position.set(p[0], hTop / 2, p[1]);
+    g.add(mast);
+    const bank = new THREE.Mesh(new THREE.BoxGeometry(9, 4, 0.6), lampMat);
+    bank.position.set(p[0], hTop + 1.5, p[1]);
+    bank.lookAt(0, 0, -30);
+    g.add(bank);
+  }
+  const back = rim[Math.floor(rim.length * 0.24)];
+  const board = shadowed(new THREE.Mesh(new THREE.BoxGeometry(34, 14, 1.5), std('#15181d')));
+  board.position.set(back[0] * 1.02, Y0 + ROWS * RISE + 10, back[1] * 1.02);
+  board.lookAt(0, board.position.y, 0);
+  g.add(board);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(31, 11), new THREE.MeshBasicMaterial({ color: '#1d3f78' }));
+  screen.position.copy(board.position).add(new THREE.Vector3(0, 0, 0.8).applyQuaternion(board.quaternion));
+  screen.quaternion.copy(board.quaternion);
+  g.add(screen);
+  return g;
+}
+
+function buildBaseball() {
+  const g = new THREE.Group();
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.037, 16, 12), std('#f4f1ea', { roughness: 0.6 }));
+  ball.castShadow = true;
+  g.add(ball);
+  return g;
+}
+
 export function buildObject(o) {
   let g;
   switch (o.type) {
+    case 'ballpark': g = buildBallpark(o); break;
+    case 'baseball': g = buildBaseball(o); break;
     case 'mballoon': g = buildBalloon(o, true); break;
     case 'clouds': g = buildClouds(o); break;
     case 'crackfloor': g = buildCrackFloor(o); break;
@@ -954,17 +1597,19 @@ export function buildObject(o) {
     case 'tree': g = buildTree(o); break;
     case 'table': g = buildTable(o); break;
     case 'mark': g = buildMark(o); break;
+    case 'sign': g = buildSign(o); break;
     case 'drums': g = buildDrums(o); break;
     case 'keyboard': g = buildKeyboard(o); break;
     case 'micstand': g = buildMicStand(o); break;
     case 'balloon': g = buildBalloon(o); break;
     case 'slab': g = buildSlab(o); break;
     case 'debris': g = buildDebris(o); break;
+    case 'dust': g = buildDust(o); break;
     case 'metronome': g = buildMetronome(o); break;
     case 'cylinder': {
       g = new THREE.Group();
       const [w, h] = o.size;
-      const m = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(w / 2, w / 2, h, 24), std(o.color)));
+      const m = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(w / 2, w / 2, h, 24), o.flat ? new THREE.MeshBasicMaterial({ color: o.color }) : std(o.color)));
       m.position.y = h / 2;
       g.add(m);
       break;
@@ -972,7 +1617,7 @@ export function buildObject(o) {
     default: {
       g = new THREE.Group();
       const [w, h, d] = o.size || [1, 1, 1];
-      const m = shadowed(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), std(o.color)));
+      const m = shadowed(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), o.flat ? new THREE.MeshBasicMaterial({ color: o.color }) : std(o.color)));
       m.position.y = h / 2;
       g.add(m);
     }
@@ -984,7 +1629,7 @@ export function buildObject(o) {
 
 // Rebuild is needed whenever any of these change.
 export function signature(o) {
-  return JSON.stringify([o.type, o.name, o.color, o.height, o.size, o.hold, o.tilt]);
+  return JSON.stringify([o.type, o.name, o.color, o.height, o.size, o.hold, o.tilt, o.burstBeat, o.text, o.textColor, o.vertical, o.flat, o.rotX, o.rotZ]);
 }
 
 export function poseWalk(group, dist, speed) {
@@ -1031,6 +1676,8 @@ const LIGHT_PRESETS = {
   interior: { sky: '#26282c', fog: [30, 90], hemi: ['#fff4e6', '#3a3632', 1.0], sun: ['#ffe6c8', 2.2, [4, 10, 6]], ground: '#4b4844' },
   amber: { sky: '#7a5a38', fog: [8, 45], hemi: ['#ffcf8f', '#3a2a1c', 1.1], sun: ['#ffb45e', 2.4, [-6, 8, 5]], ground: '#5a4836' },
   sunbreak: { sky: '#9ea3aa', fog: [25, 120], hemi: ['#dfe4ea', '#4d4f52', 1.3], sun: ['#ffdc96', 3.0, [-4, 26, 10]], ground: '#6b6d6f' },
+  // night game: black sky, hard cool-white key from high floodlights, long fog so the far stands stay visible
+  stadium: { sky: '#070b16', fog: [120, 520], hemi: ['#c4d0ff', '#1b2a18', 1.0], sun: ['#f3f6ff', 3.6, [14, 42, 18]], ground: '#1f2b1d' },
   // off-white paper sky, soft even light: closest to the graphite-on-paper key frames
   paper: { sky: '#e6e3dc', fog: [30, 160], hemi: ['#f4f3ef', '#77746f', 2.2], sun: ['#ffffff', 0.6, [6, 22, 8]], ground: '#9b978f' },
 };

@@ -352,6 +352,17 @@ export function parseShotText(line, project, base) {
 // ---------------------------------------------------------------------------
 // Prompt writing
 
+// How each camera ease reads in a prompt (Ease In/Out is the default and adds nothing).
+const EASE_EN = {
+  linear: 'at a constant mechanical speed',
+  in: 'starting slowly and accelerating',
+  out: 'decelerating smoothly to a gentle stop',
+  back: 'slightly overshooting the end position and settling back',
+  elastic: 'with a springy elastic wobble before settling',
+  bounce: 'with a bouncing landing at the end',
+  steps: 'in choppy stepped jumps like stop-motion',
+};
+
 function lensFeel(f) {
   if (f <= 20) return 'ultra-wide lens with strong perspective';
   if (f <= 28) return 'wide-angle lens';
@@ -398,6 +409,7 @@ export function describeShot(shot, project, index) {
   if (dir) parts.push(`${dir.en} angle${onName ? ` on ${onName}` : ''}`);
   const moveTxt = m.move === 'static' || (!m.move && keys.length < 2) ? move.en : `${speed.en} ${move.en}`;
   parts.push(moveTxt);
+  if (keys.length > 1 && EASE_EN[shot.ease]) parts.push(EASE_EN[shot.ease]);
   if ((keys[0]?.roll || 0) !== 0) parts.push('Dutch tilt');
   if (shot.shake > 0) parts.push('handheld camera with subtle natural shake');
   if (lockName) parts.push('camera keeps the subject locked in frame');

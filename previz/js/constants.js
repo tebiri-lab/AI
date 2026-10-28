@@ -87,6 +87,7 @@ export const LIGHTS = {
   amber: { ko: '회상 (호박색)' },
   sunbreak: { ko: '구름 틈 햇빛' },
   paper: { ko: '연필 종이 톤 (흐림)' },
+  stadium: { ko: '야간 경기 (조명탑)' },
 };
 
 // height: types whose "height" field is editable, with the label shown in the inspector.
@@ -94,6 +95,8 @@ export const OBJ_TYPES = {
   actor: { ko: '인물', color: '#d9a066', height: 1.75, hLabel: '키 (m)' },
   car: { ko: '자동차', color: '#3d6fa8' },
   box: { ko: '박스', color: '#8a8f99', size: [1, 1, 1] },
+  // Flat-colour sign board with text on its front (+Z) face; unlit so guide colours stay exact. size = [w, h, d].
+  sign: { ko: '간판', color: '#1faa59', size: [3, 0.8, 0.1], text: '간판' },
   cylinder: { ko: '기둥', color: '#9aa0a6', size: [0.5, 3, 0.5] },
   wall: { ko: '벽', color: '#b9b2a6', size: [4, 3, 0.2] },
   tree: { ko: '나무', color: '#4f7d3a', height: 5, hLabel: '높이 (m)' },
@@ -105,6 +108,8 @@ export const OBJ_TYPES = {
   balloon: { ko: '풍선', color: '#9cc3e6', size: [0.3, 0.36, 0.3], height: 1.6, hLabel: '끈 길이 (m)', tilt: true },
   slab: { ko: '바위판', color: '#8f8a82', size: [3, 0.6, 2.4], tilt: true },
   debris: { ko: '부유 파편', color: '#7d7973', size: [6, 3, 6] },
+  // Dust settled on a slab; size = [w, rise height, d]; burstBeat = beat (from the first downbeat) it lifts on.
+  dust: { ko: '먼지', color: '#b8afa2', size: [3, 2, 2.4] },
   metronome: { ko: '메트로놈', color: '#6b4a2f' },
   // A teardrop latex balloon whose glossy skin mirrors the live scene (cube-camera reflection).
   mballoon: { ko: '반사 풍선', color: '#9cc3e6', size: [0.3, 0.38, 0.3], height: 0, hLabel: '끈 길이 (m)', tilt: true },
@@ -112,6 +117,9 @@ export const OBJ_TYPES = {
   clouds: { ko: '구름층', color: '#ffffff', size: [400, 0, 0] },
   // Cracked-plate ground decal; size = [width, -, depth].
   crackfloor: { ko: '균열 지면', color: '#6f6c68', size: [60, 0, 60] },
+  // Full ballpark: home plate at the origin, centre field toward -Z, stands packed with spectators.
+  ballpark: { ko: '야구장 (만원 관중)', color: '#3d7a35' },
+  baseball: { ko: '야구공', color: '#f4f1ea' },
 };
 
 // Poses per object type. The first entry is the default.
@@ -124,17 +132,32 @@ export const POSE_SETS = {
     drum_fill: '드럼 필인 (탐을 내려다봄)',
     drum_look: '드럼 필인 → 카메라 응시 (샷 중반에 고개를 듦)',
     sticks_up: '스틱 치켜들기',
+    count: '스틱 카운트 (왼손 스틱은 고정, 오른손 스틱으로 박마다 두드리고, 드롭 박에 드럼을 힘껏 내리침)',
     kneel: '한쪽 무릎',
     kneel_up: '한쪽 무릎 · 올려다보기',
     guitar: '기타 · 베이스 연주',
     keys: '건반 연주',
+    drum_rock: '드럼 연주 (드롭: 팔을 크게 내리치고 박마다 고개·몸 끄덕임)',
+    guitar_rock: '기타 · 베이스 연주 (드롭: 8분음표 큰 스트로크 + 박마다 고개·무릎 바운스)',
+    keys_rock: '건반 연주 (드롭: 박마다 양손으로 누르고 어깨를 흔들며 고개 끄덕임)',
+    drum_crash: '크래시 (왼손 스틱으로 67·69·71박에 왼쪽 크래시, 사이엔 높이 듦, 오른손은 스네어 / 68.2·69.1·71.4박부터 양손 롤로 탐을 훑음)',
+    drum_score67: '드럼 악보·커버대로 (67박~: 왼손 K 크래시 → 오른손 EFX → 왼손 K 크래시 → 하이탐 R L R L → 미드탐 R → 플로어 R, 왼손 크로스 → 다음 마디 같은 크래시 → 스네어 6잇단)',
     hold: '두 손 모으기 (얼굴 앞)',
     hug: '끌어안기 (가슴 앞)',
     reach_up: '한 손 뻗어 올리기',
+    pull_walk: '걸으며 끈에 왼팔이 끌려 올라감 (가슴 → 어깨 높이)',
+    pull_wrap: '끌려 올라간 왼팔 + 끈을 한 바퀴 더 감아쥠',
+    pull_grip: '끌려 올라간 왼팔로 끈을 움켜쥐고 당김 → 풍선 올려다보기',
+    pull_rise: '끌려 올라가는 왼팔이 같은 속도로 계속 올라감 → 멈춰 서서 풍선 올려다보기',
     dissolve: '산화 (어깨부터 먼지로 흩어짐)',
+    run: '전력 질주 (도루 · 이동 거리에 맞춘 보폭)',
+    field_ready: '수비 준비 자세',
+    throw: '송구 동작 (정지)',
+    catcher: '포수 자세',
   },
   metronome: { swing: '박자대로 흔들림', start: '시작 (가운데에서 천천히 커져 샷 끝에 최대 폭)', rest: '정지 (가운데)', slow: '점점 느려짐', stop: '정지 (한쪽 끝)' },
   debris: { float: '천천히 떠다님', still: '공중 정지' },
+  dust: { rest: '바위판 위에 가라앉아 있음', burst: '킥 박에 솟아올라 공중에 멈춤' },
   balloon: { sway: '바람에 흔들림', circle: '원을 그리며 흔들림 (위에서 볼 때 시계 방향, 샷 동안 한 바퀴)', still: '정지' },
   mballoon: {
     circle: '원을 그리며 흔들림 (위에서 볼 때 시계 방향, 샷 동안 한 바퀴)',

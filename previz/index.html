@@ -18,13 +18,20 @@
 <body>
   <header id="topbar">
     <div class="brand"><span class="dot"></span>PREVIZ<span class="brand-sub">STUDIO</span></div>
+    <nav class="site-nav" aria-label="사이트"><a href="./" aria-current="page">프리비즈</a><a href="lab.html">구도 실험실</a></nav>
     <input id="projectName" class="project-name" spellcheck="false" aria-label="프로젝트 이름" />
     <div class="top-actions">
       <button id="btnUndo" title="실행 취소 (Ctrl+Z)">↶</button>
       <button id="btnRedo" title="다시 실행 (Ctrl+Shift+Z)">↷</button>
       <span class="sep"></span>
       <button id="btnNew">새로 만들기</button>
-      <button id="btnSample">예제</button>
+      <div class="menu">
+        <button id="btnSample">예제 ▾</button>
+        <div id="sampleMenu" class="menu-pop" hidden>
+          <button data-sample="alley">골목 대치 씬 (5샷)</button>
+          <button data-sample="stadium">야구장 도루 — 불릿타임 오빗 (10초)</button>
+        </div>
+      </div>
       <button id="btnOpen">열기</button>
       <button id="btnSave">저장</button>
       <input id="fileInput" type="file" accept=".json,application/json" hidden />
@@ -87,6 +94,10 @@
               <option value="linear">Linear</option>
               <option value="in">Ease In</option>
               <option value="out">Ease Out</option>
+            <option value="back">Overshoot</option>
+            <option value="elastic">Elastic</option>
+            <option value="bounce">Bounce</option>
+            <option value="steps">Steps</option>
             </select></label>
           </div>
           <div class="row">
@@ -112,6 +123,7 @@
             <button data-add="actor">인물</button>
             <button data-add="car">자동차</button>
             <button data-add="box">박스</button>
+            <button data-add="sign">간판</button>
             <button data-add="cylinder">기둥</button>
             <button data-add="wall">벽</button>
             <button data-add="tree">나무</button>
@@ -138,6 +150,9 @@
           <div class="grid2">
             <label class="span2">이름<input id="oName" /></label>
             <label>색상<input id="oColor" type="color" /></label>
+            <label id="oTextColorWrap">글자색<input id="oTextColor" type="color" value="#ffffff" /></label>
+            <label class="span2" id="oTextWrap">간판 글자<input id="oText" spellcheck="false" /></label>
+            <label class="chk span2" id="oVertWrap"><input type="checkbox" id="oVert" /> 세로쓰기 (글자 아래로 쌓기)</label>
             <label id="oHWrap"><span id="oHLabel">키 (m)</span><input id="oH" type="number" step="0.05" min="0" /></label>
             <label id="oTiltWrap">기울기 (°)<input id="oTilt" type="number" step="1" min="-60" max="60" /></label>
             <label class="dims">폭<input id="oSX" type="number" step="0.1" min="0.05" /></label>
@@ -296,6 +311,10 @@
             <option value="linear">Linear</option>
             <option value="in">Ease In</option>
             <option value="out">Ease Out</option>
+            <option value="back">Overshoot</option>
+            <option value="elastic">Elastic</option>
+            <option value="bounce">Bounce</option>
+            <option value="steps">Steps</option>
           </select></label>
           <label class="span2">액션 / 설명<textarea id="sDesc" rows="3" placeholder="예) 비 내리는 골목, 그녀가 천천히 뒤돌아본다"></textarea></label>
           <label class="span2">라이팅 (이 샷)<select id="sLight"></select></label>

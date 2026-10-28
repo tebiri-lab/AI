@@ -7,6 +7,7 @@ import { generateShot, parseShotText, describeShot, defaultParams, objectHeight,
 import { buildObject, signature, applyPose, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
 import { exportPNG, recordWebM, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 import { SongPlayer } from './audio.js';
+import { CymbalPhysics } from './physics.js';
 import { idbGet, idbSet, idbDel } from './store.js';
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ function makeObject(type, overrides = {}) {
   if (def.size) o.size = def.size.slice();
   if (def.tilt) o.tilt = 0;
   if (type === 'actor') o.hold = 'none';
+  if (def.text) o.text = def.text;
   return Object.assign(o, overrides);
 }
 
@@ -96,6 +98,76 @@ function sampleProject() {
   for (const [params, desc] of specs) p.shots.push(makeShot(generateShot(params, p), { desc }));
   return p;
 }
+
+// Packed ballpark, time frozen: only the runner stealing third moves (in high-speed slow motion)
+// while the camera orbits him in one direction for 10 s.
+function stadiumProject() {
+  const p = baseProject('야구장 도루 — 불릿타임');
+  p.lighting = 'stadium';
+  p.style = 'Photorealistic live-action night baseball game under stadium floodlights, sold-out crowd. '
+    + 'Frozen-time bullet-time moment: the crowd, fielders, umpires and the ball hang perfectly still; '
+    + 'only the runner moves, in ultra high-speed slow motion (1000 fps look), dust lifting from his cleats. '
+    + 'Subtle film grain, anamorphic lens flares from the light towers.';
+  const B = 27.43 / Math.SQRT2;
+  const B2 = [0, 0, -2 * B], B3 = [-B, 0, -B];
+  const dir = [-Math.SQRT1_2, Math.SQRT1_2]; // 2nd -> 3rd base on the ground plane
+  const yawTo = (from, to) => r3(THREE.MathUtils.radToDeg(Math.atan2(to[0] - from[0], to[2] - from[2])));
+  const home = [0, 0, 0];
+  const offense = '#e9e5dc', defense = '#2c3e66';
+  const park = makeObject('ballpark', { name: '야구장' });
+  const runner = makeObject('actor', { name: '주자', color: offense, height: 1.83, pose: 'run', rotY: -45, pos: [B2[0] + dir[0] * 8, 0, B2[2] + dir[1] * 8] });
+  const third = [-B + 1.1, 0, -B - 0.6];
+  const fielder = (name, pos, pose = 'field_ready', face = home) => makeObject('actor', { name, color: defense, pose, pos, rotY: yawTo(pos, face) });
+  const catcherPos = [0, 0, 1.0];
+  const ball = makeObject('baseball', { name: '야구공 (공중 정지)', pos: [r3(-B * 0.55), 2.15, r3(catcherPos[2] + (-B - catcherPos[2]) * 0.55)] });
+  p.objects.push(
+    park,
+    runner,
+    fielder('3루수', third, 'field_ready', catcherPos),
+    fielder('유격수', [-9.5, 0, -33], 'field_ready'),
+    fielder('2루수', [9.5, 0, -33], 'field_ready'),
+    fielder('1루수', [B - 1.5, 0, -B - 2], 'field_ready'),
+    fielder('투수', [0, 0.25, -18.2], 'stand'),
+    fielder('포수', catcherPos, 'throw', B3),
+    fielder('좌익수', [-30, 0, -72]),
+    fielder('중견수', [0, 0, -88]),
+    fielder('우익수', [30, 0, -72]),
+    makeObject('actor', { name: '주심', color: '#1d1f24', pose: 'field_ready', pos: [0, 0, 2.3], rotY: 180 }),
+    makeObject('actor', { name: '3루심', color: '#1d1f24', pose: 'field_ready', pos: [-B - 4, 0, -B + 5], rotY: yawTo([-B - 4, 0, -B + 5], [-B, 0, -B]) }),
+    makeObject('actor', { name: '3루 코치', color: offense, pose: 'reach_up', pos: [-B - 6, 0, -B + 9], rotY: yawTo([-B - 6, 0, -B + 9], runner.pos) }),
+    ball,
+  );
+
+  // Runner covers 9.5 m in 10 s (~8x slower than a real 8.5 m/s sprint): high-speed slow motion.
+  const dur = 10, run = 9.5;
+  const at = (t) => [runner.pos[0] + dir[0] * run * (t / dur), 0, runner.pos[2] + dir[1] * run * (t / dur)];
+  const anim = { [runner.id]: [
+    { t: 0, pos: runner.pos.map(r3), rotY: -45 },
+    { t: dur, pos: at(dur).map(r3), rotY: -45 },
+  ] };
+  // One-direction orbit: from just ahead of him (az 25°) round his left side to behind (az 215°).
+  const R = 6, H = 1.15, aim = 1.0, keys = [];
+  for (let t = 0; t <= dur + 1e-6; t += 0.5) {
+    const c = at(t);
+    const az = THREE.MathUtils.degToRad(-45 + 25 + (190 * t) / dur);
+    keys.push({
+      t: r3(t),
+      pos: [r3(c[0] + Math.sin(az) * R), H, r3(c[2] + Math.cos(az) * R)],
+      target: [r3(c[0]), aim, r3(c[2])],
+      focal: 24,
+      roll: 0,
+    });
+  }
+  p.shots.push({
+    id: uid(), name: '도루 · 불릿타임 오빗', duration: dur, ease: 'linear', shake: 0,
+    desc: '만원 관중의 야구장, 시간이 멈춘 순간 2루 주자만 3루를 향해 초고속 슬로모션으로 질주한다. 관중·수비수·심판·공중의 공은 완전히 정지해 있고, 카메라는 주자를 중심으로 한 방향으로 원을 그리며 돈다.',
+    keys, anim, genAnim: [], lookAt: { id: runner.id, offset: [0, aim, 0] },
+    meta: { subject: runner.id, size: 'fs', angle: 'eye', dir: 'side', move: 'orbit_l', speed: 'slow', lens: 24, duration: dur },
+  });
+  return p;
+}
+
+const SAMPLES = { alley: sampleProject, stadium: stadiumProject };
 
 function blankProject() {
   const p = baseProject('새 프리비즈');
@@ -378,8 +450,17 @@ function setLight(name) {
 const defaultPose = (type) => Object.keys(POSE_SETS[type] || {})[0] || '';
 const poseOf = (o, shot) => shot?.poses?.[o.id] || o.pose || defaultPose(o.type);
 
-// Pose every object for (shot, t): transform, visibility, pose and per-shot lighting.
+// Pose every object for (shot, t), then run the cymbal physics up to that moment (physics.js re-poses the
+// objects on its own 240 Hz clock while it steps, and leaves them posed at t).
+const physics = new CymbalPhysics();
 function poseObjects(shot, t) {
+  poseObjectsAt(shot, t);
+  const c = clockFor(shot, t);
+  physics.update(shot, c, clockFor(shot, 0), (tc) => poseObjectsAt(shot, t + (tc - c)), [...meshes.values()]);
+}
+
+// Pose every object for (shot, t): transform, visibility, pose and per-shot lighting.
+function poseObjectsAt(shot, t) {
   const clock = clockFor(shot, t);
   const beat = beatLen();
   for (const o of project.objects) {
@@ -1041,6 +1122,9 @@ function renderObjInspector() {
   $('oName').value = o.name;
   $('oColor').value = o.color;
   const def = OBJ_TYPES[o.type] || {};
+  const isSign = o.type === 'sign';
+  ['oTextWrap', 'oTextColorWrap', 'oVertWrap'].forEach((id) => { $(id).hidden = !isSign; });
+  if (isSign) { $('oText').value = o.text ?? o.name; $('oTextColor').value = o.textColor || '#ffffff'; $('oVert').checked = !!o.vertical; }
   const hasH = !!def.hLabel;
   $('oHWrap').hidden = !hasH;
   if (hasH) { $('oH').value = o.height ?? def.height; $('oHLabel').textContent = def.hLabel; }
@@ -1615,7 +1699,14 @@ function bindUI() {
   $('btnUndo').onclick = undo;
   $('btnRedo').onclick = redo;
   $('btnNew').onclick = () => { loadProject(blankProject(), true); toast('새 프로젝트를 시작했습니다 — Ctrl+Z 로 이전 작업 복구'); };
-  $('btnSample').onclick = () => loadProject(sampleProject(), true);
+  const sampleMenu = $('sampleMenu');
+  $('btnSample').onclick = (e) => { e.stopPropagation(); sampleMenu.hidden = !sampleMenu.hidden; };
+  document.addEventListener('click', () => { sampleMenu.hidden = true; });
+  sampleMenu.querySelectorAll('[data-sample]').forEach((b) => b.addEventListener('click', () => {
+    sampleMenu.hidden = true;
+    loadProject(SAMPLES[b.dataset.sample](), true);
+    toast(`예제 "${project.name}" 을(를) 열었습니다 — Ctrl+Z 로 이전 작업 복구`);
+  }));
   $('btnSave').onclick = () => exportJSON(exportable());
   $('btnOpen').onclick = () => $('fileInput').click();
   $('fileInput').addEventListener('change', async (e) => {
@@ -1686,6 +1777,9 @@ function bindUI() {
   };
   $('oName').addEventListener('change', (e) => objEdit((o) => { o.name = e.target.value.trim() || o.name; }));
   $('oColor').addEventListener('change', (e) => objEdit((o) => { o.color = e.target.value; }));
+  $('oText').addEventListener('change', (e) => objEdit((o) => { o.text = e.target.value; }));
+  $('oTextColor').addEventListener('change', (e) => objEdit((o) => { o.textColor = e.target.value; }));
+  $('oVert').addEventListener('change', (e) => objEdit((o) => { o.vertical = e.target.checked; }));
   $('oH').addEventListener('change', (e) => objEdit((o) => {
     const v = +e.target.value;
     o.height = clamp(Number.isFinite(v) ? v : (OBJ_TYPES[o.type]?.height || 1.75), (o.type === 'balloon' || o.type === 'mballoon') ? 0 : 0.3, 80);
@@ -2028,6 +2122,34 @@ function loadProject(p, undoable) {
 }
 
 // ---------------------------------------------------------------------------
+// Shots handed over from the camera lab page (lab.html) through localStorage.
+
+function importFromLab() {
+  let h = null;
+  try {
+    h = JSON.parse(localStorage.getItem('previz.handoff.v1') || 'null');
+    localStorage.removeItem('previz.handoff.v1');
+  } catch { h = null; }
+  if (!h || !h.params || Date.now() - (h.at || 0) > 10 * 60 * 1000) return;
+  let actor = project.objects.find((o) => o.type === 'actor');
+  mutate(() => {
+    if (!actor) {
+      actor = makeObject('actor', { name: '인물' });
+      project.objects.push(actor);
+    }
+    const gen = generateShot({ ...defaultParams(), ...h.params, subject: actor.id }, project, null);
+    const extra = {};
+    if (h.desc) extra.desc = h.desc;
+    if (h.light) extra.light = h.light;
+    project.shots.splice(shotIdx + 1, 0, makeShot(gen, extra));
+    shotIdx += 1;
+    time = 0;
+  });
+  queueThumbs();
+  toast(`구도 실험실에서 샷 #${shotIdx + 1}을(를) 가져왔습니다 — 피사체: ${actor.name}`, 4000);
+}
+
+// ---------------------------------------------------------------------------
 // Boot
 
 const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(undefined), ms))]);
@@ -2043,7 +2165,10 @@ async function boot() {
     const stored = await withTimeout(idbGet('assets'), 1500);
     if (stored && typeof stored === 'object') initial.assets = { ...stored, ...initial.assets };
   }
-  loadProject(initial || sampleProject(), false);
+  // A bare #stadium (or #alley) in the link opens that example directly.
+  const hashSample = SAMPLES[(location.hash || '').slice(1)];
+  loadProject(hashSample ? hashSample() : initial || sampleProject(), false);
+  importFromLab();
   setLayout(window.innerWidth < 900 ? 'camera' : 'split');
   requestAnimationFrame(frame);
   const saved = await withTimeout(idbGet('song'), 3000);
@@ -2054,6 +2179,8 @@ boot();
 // Debug / automation hook.
 window.previz = {
   get project() { return project; },
+  get meshes() { return meshes; },
+  get physics() { return physics; },
   setShot, setTime, generateShot, parseShotText, describeShot, downloadText,
   makeObject, makeShot, normalizeProject, loadProject, renderFrame, defaultParams, song,
   loadSong, refresh, exportable,
