@@ -729,6 +729,21 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
       pf.position.set(u.x, u.top * k, u.z);
       pf.scale.setScalar(Math.max(0.001, u.r * (0.25 + 0.75 * k)));
     });
+  } else if (a.kind === 'crowd') {
+    // 'bob' bounces from the start of the shot; 'wake' holds still until local.freezeAt (seconds into
+    // the shot) and eases the bounce in over 0.6 s — the frozen crowd coming back to life.
+    const t = local ? local.t : clock;
+    const t0 = pose === 'wake' ? (local?.freezeAt ?? 0) : 0;
+    const k = pose === 'bob' || pose === 'wake' ? Math.max(0, Math.min(1, (t - t0) / 0.6)) : 0;
+    if (k === 0 && !a.live) return;
+    a.live = k > 0;
+    [a.body, a.head].forEach((m, j) => {
+      const arr = m.instanceMatrix.array, base = a.base[j];
+      a.bob.forEach(([fq, ph, amp], i) => {
+        arr[i * 16 + 13] = base[i * 16 + 13] + (k ? Math.max(0, Math.sin((t - t0) * fq * Math.PI * 2 + ph)) * amp * k : 0);
+      });
+      m.instanceMatrix.needsUpdate = true;
+    });
   } else if (a.kind === 'debris') {
     const still = pose === 'still';
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3();
@@ -1579,6 +1594,12 @@ function buildBallpark(o) {
     g.add(m);
   }
   g.userData.crowd = seats.length;
+  // Per-spectator bob (pose 'bob' / 'wake'): a small up-down bounce with its own rate and phase.
+  g.userData.anim = {
+    kind: 'crowd', body, head, live: false,
+    base: [body.instanceMatrix.array.slice(), head.instanceMatrix.array.slice()],
+    bob: seats.map(() => [0.5 + rand() * 0.45, rand() * Math.PI * 2, 0.04 + rand() * 0.06]),
+  };
 
   // --- light towers and scoreboard on the back rim
   const rim = ring(ROWS + 2);
