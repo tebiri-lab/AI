@@ -1,0 +1,1271 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>카메라 구도 실험실</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: camera-monitor viewer on the left (sticky), operator control column on the right; stacks on phones with the monitor pinned on top. */
+:root {
+  --ink: #0e1013;
+  --panel: #16191e;
+  --raise: #1e2229;
+  --line: #2a2f37;
+  --text: #ebe7df;
+  --muted: #8e929b;
+  --focus: #f0b13a;      /* focus-peaking amber, the one accent */
+  --tally: #ff4a3d;      /* REC tally light */
+  --font-ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { background: var(--ink); color: var(--text); margin: 0; }
+body {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 40px;
+}
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+button, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px; max-width: 1400px; margin: 0 auto 16px; }
+.top h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.top p { margin: 0; color: var(--muted); font-size: 13px; }
+.brandrow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.site-nav { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.site-nav a { padding: 4px 12px; color: var(--muted); text-decoration: none; font-size: 12.5px; }
+.site-nav a + a { border-left: 1px solid var(--line); }
+.site-nav a:hover { color: var(--text); background: var(--raise); }
+.site-nav a[aria-current="page"] { color: var(--text); background: var(--raise); }
+.send { background: var(--raise); color: var(--text); border: 1px solid #5a4720; border-radius: 7px; padding: 7px 14px; font-weight: 700; cursor: pointer; }
+.send:hover { border-color: var(--focus); }
+
+.app {
+  max-width: 1400px; margin: 0 auto;
+  display: grid; gap: 20px;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-areas: "view panel" "notes panel";
+  align-items: start;
+}
+.view { grid-area: view; }
+.panel { grid-area: panel; display: flex; flex-direction: column; gap: 14px; min-width: 0; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); max-height: calc(100vh - 24px - env(safe-area-inset-top, 0px)); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-width: thin; }
+.notes { grid-area: notes; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* ---------- monitor ---------- */
+.stage { display: flex; justify-content: center; background: #000; border-radius: 10px; padding: 10px; border: 1px solid var(--line); }
+.frame { position: relative; width: 100%; aspect-ratio: 16 / 9; max-width: 100%; overflow: hidden; background: #050608; }
+.frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.guides { position: absolute; inset: 0; pointer-events: none; }
+.guides i { position: absolute; background: rgba(255,255,255,0.28); }
+.guides .v1 { left: 33.333%; top: 0; bottom: 0; width: 1px; }
+.guides .v2 { left: 66.666%; top: 0; bottom: 0; width: 1px; }
+.guides .h1 { top: 33.333%; left: 0; right: 0; height: 1px; }
+.guides .h2 { top: 66.666%; left: 0; right: 0; height: 1px; }
+.guides .cross { left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; background: none; }
+.guides .cross::before, .guides .cross::after { content: ""; position: absolute; background: rgba(255,255,255,0.55); }
+.guides .cross::before { left: 8.5px; top: 0; bottom: 0; width: 1px; }
+.guides .cross::after { top: 8.5px; left: 0; right: 0; height: 1px; }
+.hud { position: absolute; inset: 0; pointer-events: none; font-family: var(--font-data); font-size: 11.5px; letter-spacing: 0.04em; color: #f4f1ea; text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
+.hud .row { position: absolute; left: 10px; right: 10px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.hud .row.t { top: 8px; }
+.hud .row.b { bottom: 8px; }
+.hud span { white-space: nowrap; }
+.rec::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--tally); margin-right: 6px; vertical-align: 0; box-shadow: 0 0 6px var(--tally); }
+.hud .af { color: var(--focus); }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+
+/* ---------- cards ---------- */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.card h2 { font-size: 15px; font-weight: 700; display: flex; align-items: baseline; gap: 8px; }
+.card h2 small { font-family: var(--font-data); font-weight: 500; font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+.desc { margin: 0; color: var(--muted); font-size: 13px; min-height: 2.6em; }
+.desc b { color: var(--text); font-weight: 500; }
+
+.seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.seg.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.seg button {
+  background: var(--raise); border: 1px solid var(--line); border-radius: 7px;
+  padding: 7px 6px 6px; cursor: pointer; text-align: center; line-height: 1.25;
+  display: flex; flex-direction: column; gap: 2px; align-items: center; min-width: 0;
+  transition: border-color .15s, background .15s;
+}
+.seg button:hover { border-color: #3d434d; }
+.seg button .k { font-family: var(--font-data); font-size: 12px; font-weight: 600; letter-spacing: 0.03em; }
+.seg button .n { font-size: 11.5px; color: var(--muted); }
+.seg button[aria-pressed="true"] { border-color: var(--focus); background: #2a2417; }
+.seg button[aria-pressed="true"] .n { color: #e9cf96; }
+
+.slider { display: grid; grid-template-columns: 78px minmax(0, 1fr) 58px; align-items: center; gap: 10px; }
+.slider label { font-size: 12.5px; color: var(--muted); }
+.slider output { font-family: var(--font-data); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--focus); margin: 0; height: 22px; }
+
+.ticks { display: flex; justify-content: space-between; gap: 4px; flex-wrap: wrap; }
+.ticks button { background: none; border: 1px solid transparent; border-radius: 5px; padding: 1px 5px; cursor: pointer; font-family: var(--font-data); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ticks button:hover { color: var(--text); border-color: var(--line); }
+.ticks button[aria-pressed="true"] { color: var(--focus); border-color: #5a4720; }
+
+.big { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.big .val { font-family: var(--font-data); font-size: 26px; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.pill { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: #3a1f1c; color: #ffb3a8; border: 1px solid #5c2b26; white-space: nowrap; }
+.pill.cool { background: #172540; color: #a9c6ff; border-color: #283f6b; }
+.pill.mid { background: #2a2a24; color: #e3dcc2; border-color: #424034; }
+
+.ktrack { --kt: linear-gradient(90deg, #ff8a2b, #ffb46b 15%, #ffd7aa 30%, #fff1e2 43%, #f2f4ff 57%, #c8d6ff 72%, #9db6ff 100%); }
+.ktrack input[type="range"] { -webkit-appearance: none; appearance: none; height: 22px; background: transparent; }
+.ktrack input[type="range"]::-webkit-slider-runnable-track { height: 8px; border-radius: 4px; background: var(--kt); }
+.ktrack input[type="range"]::-moz-range-track { height: 8px; border-radius: 4px; background: var(--kt); }
+.ktrack input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; margin-top: -5px; background: var(--thumb, #fff); border: 2px solid #0e1013; box-shadow: 0 0 0 1px #fff8; }
+.ktrack input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--thumb, #fff); border: 2px solid #0e1013; }
+
+.dof { font-family: var(--font-data); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dofbar { position: relative; height: 26px; border-radius: 6px; background: var(--raise); border: 1px solid var(--line); overflow: hidden; }
+.dofbar .zone { position: absolute; top: 0; bottom: 0; background: rgba(240,177,58,0.22); border-left: 1px solid var(--focus); border-right: 1px solid var(--focus); }
+.dofbar .subj { position: absolute; top: 4px; bottom: 4px; width: 3px; margin-left: -1.5px; background: var(--text); border-radius: 2px; }
+.dofbar .lbl { position: absolute; bottom: 3px; font-family: var(--font-data); font-size: 10px; color: var(--muted); }
+
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.check input { accent-color: var(--focus); width: 16px; height: 16px; }
+
+.note { margin: 0; font-size: 12px; color: var(--muted); }
+
+/* notes column */
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+.summary div { background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; min-width: 0; }
+.summary dt { font-family: var(--font-data); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.summary dd { margin: 2px 0 0; font-size: 13px; }
+.fields { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+.fields input { background: var(--raise); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; min-width: 0; }
+.prompt { position: relative; }
+#subject { width: 100%; resize: vertical; background: #0a0c0f; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: var(--font-data); font-size: 12.5px; line-height: 1.55; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.presets button { background: var(--raise); border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.presets button:hover { color: var(--text); border-color: #3d434d; }
+.traits { display: flex; flex-wrap: wrap; gap: 5px; }
+.traits span { font-size: 11.5px; padding: 1px 8px; border-radius: 5px; background: #2a2417; color: #e9cf96; border: 1px solid #5a4720; }
+.prompt pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #0a0c0f; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font-family: var(--font-data); font-size: 12.5px; line-height: 1.6; color: #f1ebdc; }
+.copy { align-self: flex-start; background: var(--focus); color: #1b1407; border: 0; border-radius: 7px; padding: 7px 14px; font-weight: 700; cursor: pointer; }
+.copy:hover { filter: brightness(1.08); }
+.copied { font-size: 12px; color: var(--focus); }
+
+.lanes-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.lanes-head .grow { flex: 1 1 160px; min-width: 0; }
+.play { background: var(--raise); border: 1px solid var(--line); border-radius: 7px; padding: 5px 12px; cursor: pointer; font-family: var(--font-data); font-size: 12px; }
+.play:hover { border-color: #3d434d; }
+.clock { font-family: var(--font-data); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#lanes { width: 100%; display: block; cursor: pointer; touch-action: manipulation; }
+.easeinfo { margin: 0; font-size: 13px; color: var(--muted); }
+.easeinfo b { color: var(--text); font-weight: 500; }
+.easeinfo code { font-family: var(--font-data); font-size: 11.5px; color: var(--focus); }
+.seg.four.tight button { padding: 5px 4px; }
+.seg.four.tight button .k { font-size: 11px; }
+@media (max-width: 960px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "view" "panel" "notes"; }
+  .view { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; }
+  .panel { position: static; max-height: none; overflow: visible; padding-right: 0; }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--ink); }
+  .stage { padding: 6px; border-radius: 0 0 10px 10px; }
+}
+@media (max-width: 420px) {
+  .slider { grid-template-columns: 64px minmax(0, 1fr) 50px; }
+  .fields { grid-template-columns: 1fr; }
+  .hud { font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brandrow">
+    <h1>카메라 구도 실험실</h1>
+    <nav class="site-nav" aria-label="사이트"><a href="./">프리비즈</a><a href="lab.html" aria-current="page">구도 실험실</a></nav>
+  </div>
+  <p>샷 크기 · 앵글 · 렌즈 · 조리개(F값) · 색온도를 직접 바꿔 보며 화면이 어떻게 달라지는지 확인하세요.</p>
+</header>
+
+<main class="app">
+  <section class="view" aria-label="카메라 모니터">
+    <div class="stage" id="stage">
+      <div class="frame" id="frame">
+        <canvas id="gl" aria-label="3D 장면 미리보기"></canvas>
+        <div class="loading" id="loading">장면 불러오는 중…</div>
+        <div class="guides" id="guides" aria-hidden="true"><i class="v1"></i><i class="v2"></i><i class="h1"></i><i class="h2"></i><i class="cross"></i></div>
+        <div class="hud" aria-hidden="true">
+          <div class="row t"><span class="rec" id="hudShot">LS</span><span id="hudLens">35mm · f/2.8</span></div>
+          <div class="row b"><span id="hudAngle">EYE 0°</span><span class="af" id="hudFocus">AF 4.9m</span><span id="hudK">3000K</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel" aria-label="카메라 설정">
+    <section class="card">
+      <h2>인물 <small>Subject prompt</small></h2>
+      <textarea id="subject" rows="3" spellcheck="false" aria-label="인물 묘사 프롬프트">a young woman with long black hair in a beige trench coat, dark jeans and white sneakers</textarea>
+      <div class="presets" id="subjectPresets"></div>
+      <div class="traits" id="traits" aria-live="polite"></div>
+      <p class="note">영문·한글 모두 읽어요. 성별, 머리 모양과 색, 코트·재킷·원피스·치마·바지·청바지, 신발·부츠, 모자, 목도리, 백팩, 가방과 색 이름을 바꿔 보세요.</p>
+    </section>
+    <section class="card">
+      <h2>카메라 구도 <small>Shot size</small></h2>
+      <div class="seg" id="shots"></div>
+      <p class="desc" id="shotDesc"></p>
+    </section>
+
+    <section class="card">
+      <h2>앵글 <small>Angle</small></h2>
+      <div class="seg" id="angles"></div>
+      <div class="slider"><label for="el">높이각</label><input type="range" id="el" min="-35" max="89" step="1"><output id="elOut"></output></div>
+      <div class="slider"><label for="az">방향</label><input type="range" id="az" min="-180" max="180" step="1"><output id="azOut"></output></div>
+      <div class="slider"><label for="roll">기울기</label><input type="range" id="roll" min="-30" max="30" step="1"><output id="rollOut"></output></div>
+      <p class="desc" id="angleDesc"></p>
+    </section>
+
+    <section class="card">
+      <h2>카메라 무빙 <small>Movement</small></h2>
+      <div class="seg" id="moves"></div>
+      <p class="desc" id="moveDesc"></p>
+      <div class="seg four tight" id="eases" aria-label="무빙 이징"></div>
+      <div class="slider"><label for="moveDur">무빙 시간</label><input type="range" id="moveDur" min="0.6" max="6" step="0.1"><output id="moveDurOut"></output></div>
+      <p class="note" id="easeNote"></p>
+    </section>
+
+    <section class="card">
+      <h2>렌즈 <small>Focal length</small></h2>
+      <div class="big"><span class="val" id="focalVal">35mm</span><span class="pill mid" id="focalPill">광각</span></div>
+      <input type="range" id="focal" min="0" max="1000" step="1" aria-label="초점거리">
+      <div class="ticks" id="focalTicks"></div>
+      <p class="desc" id="focalDesc"></p>
+    </section>
+
+    <section class="card">
+      <h2>조리개 <small>F-stop</small></h2>
+      <div class="big"><span class="val" id="stopVal">f/2.8</span><span class="pill" id="stopPill">얕은 심도</span></div>
+      <input type="range" id="stop" min="0" max="8" step="1" aria-label="조리개값">
+      <div class="ticks" id="stopTicks"></div>
+      <div class="dofbar" id="dofbar" aria-hidden="true"><div class="zone" id="dofZone"></div><div class="subj" id="dofSubj"></div><span class="lbl" style="left:6px">0m</span><span class="lbl" style="right:6px" id="dofMax">20m</span></div>
+      <div class="dof" id="dofText"></div>
+      <p class="desc" id="stopDesc"></p>
+    </section>
+
+    <section class="card">
+      <h2>이미지의 온도 <small>Color temp</small></h2>
+      <div class="big"><span class="val" id="kVal">3000K</span><span class="pill" id="kPill">더 따뜻한 느낌</span></div>
+      <div class="ktrack"><input type="range" id="kelvin" min="2000" max="9000" step="100" aria-label="색온도"></div>
+      <div class="ticks" id="kTicks"></div>
+      <p class="desc" id="kDesc"></p>
+    </section>
+
+    <section class="card">
+      <h2>화면 <small>Frame</small></h2>
+      <div class="seg four" id="ratios"></div>
+      <label class="check"><input type="checkbox" id="guidesOn" checked> 3분할 가이드 · 중심 표시</label>
+      <label class="check"><input type="checkbox" id="hudOn" checked> 촬영 정보(HUD) 표시</label>
+    </section>
+  </aside>
+
+  <section class="notes" aria-label="설정 요약과 프롬프트">
+    <section class="card">
+      <h2>키프레임 이징 <small>Easing</small></h2>
+      <p class="easeinfo">모든 공이 <b>같은 거리를 같은 시간</b>에 이동해요. 달라지는 건 키프레임 사이의 <b>속도 변화(이징)</b>뿐입니다. 회색 점은 같은 시간 간격의 위치라서, 점이 촘촘하면 느리고 넓으면 빨라요. 레인을 누르면 위 3D 카메라 무빙에도 그 이징이 적용됩니다.</p>
+      <div class="lanes-head">
+        <button class="play" id="lanePlay" type="button">일시정지</button>
+        <div class="slider grow" style="grid-template-columns: 52px minmax(0,1fr) 46px"><label for="laneDur">시간</label><input type="range" id="laneDur" min="0.4" max="3" step="0.1"><output id="laneDurOut"></output></div>
+        <span class="clock" id="laneClock">0.00s</span>
+      </div>
+      <canvas id="lanes" height="480" aria-label="이징 비교 애니메이션"></canvas>
+      <p class="easeinfo" id="easeDetail"></p>
+    </section>
+    <section class="card">
+      <h2>지금 화면의 느낌</h2>
+      <dl class="summary" id="summary"></dl>
+    </section>
+    <section class="card">
+      <h2>영상 프롬프트 <small>English</small></h2>
+      <div class="fields">
+        <label for="place">장소 (영문)<input id="place" value="on a rooftop ledge overlooking a city skyline"></label>
+      </div>
+      <div class="prompt"><pre id="promptOut"></pre></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button class="copy" id="copyBtn" type="button">프롬프트 복사</button><button class="send" id="sendBtn" type="button">프리비즈 샷으로 보내기</button><span class="copied" id="copied" hidden>복사됨</span></div>
+      <p class="note" id="sendNote">지금 구도(샷 크기·앵글·방향·무빙·이징·렌즈·시간·빛)를 프리비즈 스튜디오에 새 샷으로 추가하고 이동해요. 인물 묘사는 샷 설명으로 들어갑니다.</p>
+      <p class="note">미리보기는 이해를 돕는 단순화된 3D 장면입니다. 실제 영상 생성에는 위 프롬프트에 원하는 피사체·장소를 넣어 쓰세요.</p>
+    </section>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+/* ================= data ================= */
+const SHOTS = {
+  ELS: { ko: "익스트림 롱샷", H: 16, lift: 0.3, az: 0,
+    desc: "<b>넓은 배경을 보여줘요.</b> 피사체는 아주 작고 장소와 분위기를 설명할 때(오프닝, 설정 샷) 씁니다.",
+    en: "extreme long shot (extreme wide establishing shot), the subject is tiny in the frame" },
+  LS: { ko: "롱샷", H: 2.35, lift: 0.04, az: -15,
+    desc: "<b>인물과 배경을 함께 보여줘요.</b> 전신과 주변 공간이 모두 보여 상황을 이해시키기 좋습니다.",
+    en: "long shot (wide shot), full body visible with the surrounding environment" },
+  MS: { ko: "미디엄 샷", H: 0.95, lift: 0.05, az: 40,
+    desc: "<b>인물의 움직임을 보여줄 때.</b> 상반신 위주로 표정과 몸짓이 함께 읽힙니다.",
+    en: "medium shot, framed from the waist up" },
+  CU: { ko: "클로즈업", H: 0.42, lift: 0.03, az: 120,
+    desc: "<b>감정과 표정을 강조할 때.</b> 얼굴이 화면을 채워 관객이 인물의 감정에 집중합니다.",
+    en: "close-up on the face, emphasizing emotion and expression" },
+  ECU: { ko: "익스트림 클로즈업", H: 0.075, lift: 0, az: 135,
+    desc: "<b>세부를 강조할 때.</b> 눈, 손끝처럼 아주 작은 디테일 하나만 화면에 남깁니다.",
+    en: "extreme close-up on the eye, macro-level detail" },
+  OTS: { ko: "오버숄더 샷", H: 0, lift: 0, az: 0,
+    desc: "<b>대상을 바라보는 시선을 보여줄 때.</b> 어깨 너머로 인물이 보고 있는 것을 함께 담습니다. (높이각·방향 슬라이더는 이 샷에서 쓰지 않아요)",
+    en: "over-the-shoulder shot from just behind the subject, looking out at what they see" },
+};
+const ANGLES = [
+  { id: "eye", ko: "아이 레벨", k: "EYE", el: 0, roll: 0 },
+  { id: "high", ko: "하이 앵글", k: "HIGH", el: 38, roll: 0 },
+  { id: "low", ko: "로우 앵글", k: "LOW", el: -28, roll: 0 },
+  { id: "top", ko: "탑 뷰", k: "TOP", el: 89, roll: 0 },
+  { id: "dutch", ko: "더치 앵글", k: "DUTCH", el: 0, roll: 18 },
+];
+const MOVES = [
+  { id: "static", ko: "고정", k: "LOCK",
+    desc: "카메라를 고정합니다. 안정적이고 관찰하는 느낌.", en: "locked-off static camera" },
+  { id: "pan", ko: "패닝", k: "PAN",
+    desc: "<b>움직임을 따라가며 보여줘요.</b> 카메라 위치는 그대로, 좌우로 고개를 돌려 걷는 피사체를 따라갑니다.", en: "smooth horizontal camera pan following the subject as they walk" },
+  { id: "tilt", ko: "틸트", k: "TILT",
+    desc: "카메라 위치는 그대로, <b>위아래로 고개를 들어</b> 피사체에서 하늘·건물로 시선을 옮깁니다. 규모와 높이를 드러낼 때.", en: "slow vertical tilt up from the subject to the skyline" },
+  { id: "dolly", ko: "돌리 인", k: "DOLLY",
+    desc: "카메라 자체가 <b>앞으로 다가갑니다.</b> 긴장감이 쌓이거나 감정에 몰입시키는 효과.", en: "slow dolly-in pushing toward the subject" },
+  { id: "arc", ko: "아크", k: "ARC",
+    desc: "피사체를 중심으로 <b>원을 그리며 돕니다.</b> 인물이 특별한 순간에 있음을 강조할 때.", en: "slow arc shot orbiting around the subject" },
+  { id: "zoom", ko: "돌리 줌", k: "VERTIGO",
+    desc: "카메라는 다가가고 렌즈는 넓어지며(또는 반대로) <b>피사체 크기는 그대로, 배경만 늘었다 줄었다</b> 합니다. 충격·깨달음의 순간.", en: "dolly zoom (vertigo effect), background stretching while the subject stays the same size" },
+];
+const STOPS = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22];
+const backC = 1.70158;
+const bounceOut = (x) => { const n = 7.5625, d = 2.75;
+  if (x < 1 / d) return n * x * x; if (x < 2 / d) return n * (x -= 1.5 / d) * x + 0.75; if (x < 2.5 / d) return n * (x -= 2.25 / d) * x + 0.9375; return n * (x -= 2.625 / d) * x + 0.984375; };
+const EASES = [
+  { id: "linear", name: "Linear", ko: "리니어", use: "로딩·회전, 기계적인 움직임", f: (x) => x, css: "linear",
+    desc: "처음부터 끝까지 <b>같은 속도</b>. 시작과 끝이 딱 끊겨 기계적으로 보여요. 로딩 스피너, 컨베이어, 일정한 드론 이동에.",
+    en: "at a perfectly constant, mechanical speed" },
+  { id: "in", name: "Ease in", ko: "이즈 인", use: "화면 밖으로 나갈 때", f: (x) => x * x * x, css: "cubic-bezier(0.32, 0, 0.67, 0)",
+    desc: "<b>천천히 출발해서 점점 빨라져요.</b> 멈춰 있던 것이 떠나거나 화면 밖으로 사라질 때 자연스러워요.",
+    en: "starting slowly and accelerating (ease-in)" },
+  { id: "out", name: "Ease out", ko: "이즈 아웃", use: "화면에 들어올 때", f: (x) => 1 - Math.pow(1 - x, 3), css: "cubic-bezier(0.33, 1, 0.68, 1)",
+    desc: "<b>빠르게 출발해서 부드럽게 멈춰요.</b> 화면에 들어와 자리를 잡는 것에 가장 잘 어울려요.",
+    en: "moving in quickly and decelerating to a gentle stop (ease-out)" },
+  { id: "inout", name: "Ease in-out", ko: "이즈 인아웃", use: "화면 안에서 이동할 때", f: (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2, css: "cubic-bezier(0.65, 0, 0.35, 1)",
+    desc: "<b>천천히 출발, 가운데서 빠르게, 천천히 도착.</b> 애프터이펙트의 Easy Ease(F9)와 같은 느낌. 카메라 무빙의 기본값으로 가장 무난해요.",
+    en: "with smooth acceleration and deceleration (ease in-out)" },
+  { id: "back", name: "Overshoot", ko: "오버슈트", use: "팝업·버튼에 탄력을 줄 때", f: (x) => 1 + (backC + 1) * Math.pow(x - 1, 3) + backC * Math.pow(x - 1, 2), css: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    desc: "<b>목표 지점을 살짝 지나쳤다가 되돌아와요.</b> 버튼, 팝업처럼 약간의 개성이 필요한 등장에.",
+    en: "slightly overshooting the end position and settling back" },
+  { id: "elastic", name: "Elastic", ko: "엘라스틱", use: "장난스러운 순간 (아껴서)", f: (x) => x === 0 ? 0 : x === 1 ? 1 : Math.pow(2, -10 * x) * Math.sin((x * 10 - 0.75) * (2 * Math.PI / 3)) + 1, css: "keyframes (스프링)",
+    desc: "<b>고무줄처럼 여러 번 출렁이며 멈춰요.</b> 재미있지만 과하면 산만하니 아껴 쓰세요.",
+    en: "with a springy elastic wobble before settling" },
+  { id: "bounce", name: "Bounce", ko: "바운스", use: "떨어지거나 착지할 때", f: bounceOut, css: "keyframes (바운스)",
+    desc: "<b>바닥에 닿아 몇 번 튕긴 뒤 멈춰요.</b> 떨어지는 물체, 착지하는 순간에.",
+    en: "with a bouncing landing at the end" },
+  { id: "steps", name: "Steps", ko: "스텝", use: "시계·카운터·스톱모션", f: (x) => Math.min(1, Math.floor(x * 6) / 6 + (x >= 1 ? 1 : 0)), css: "steps(6, end)",
+    desc: "<b>중간 프레임 없이 뚝뚝 끊겨 이동해요.</b> 초침, 숫자 카운터, 스톱모션 느낌을 낼 때.",
+    en: "in choppy stepped jumps like stop-motion (about 6 steps)" },
+];
+const easeById = (id) => EASES.find((e) => e.id === id) || EASES[3];
+const STOP_INFO = [
+  { max: 1.8, ko: "아주 얕은 심도", desc: "<b>배경이 많이 흐려지고 피사체가 돋보여요.</b> 감성적인 느낌. 초점이 맞는 범위가 아주 좁습니다.", en: "very shallow depth of field, creamy bokeh, background melts away" },
+  { max: 3.2, ko: "얕은 심도", desc: "<b>배경이 부드럽게 흐려져요.</b> 인물을 강조하는 감성적인 분위기.", en: "shallow depth of field, softly blurred background" },
+  { max: 6.0, ko: "중간 심도", desc: "<b>적당히 선명하고 자연스러운 느낌.</b> 일상적인 촬영에 많이 씁니다.", en: "moderate depth of field, natural look" },
+  { max: 9.0, ko: "깊은 심도", desc: "<b>배경이 거의 선명해요.</b> 풍경과 인물을 함께 보여줄 때, 깨끗한 느낌.", en: "deep depth of field, background mostly sharp" },
+  { max: 13, ko: "더 깊은 심도", desc: "<b>전반적으로 선명합니다.</b> 풍경, 건물 등 넓은 장면에 사용.", en: "deep focus, nearly everything in focus" },
+  { max: 99, ko: "가장 깊은 심도", desc: "<b>전체가 선명하고 세부까지 모두 보여요.</b> 풍경 촬영에 적합.", en: "deep focus, everything sharp from foreground to horizon" },
+];
+const K_INFO = [
+  { k: 2000, ko: "매우 따뜻한 느낌", tone: "warm", desc: "<b>노을·해질녘 같은 강한 따뜻함.</b> 촛불, 백열등에 가까운 주황빛.", en: "deep amber golden-hour sunset light around 2000K, intense warm orange tones" },
+  { k: 3000, ko: "더 따뜻한 느낌", tone: "warm", desc: "<b>포근하고 감성적인 분위기.</b> 분홍·주황 노을 하늘.", en: "warm 3000K sunset light, pink and orange sky, soft nostalgic mood" },
+  { k: 4000, ko: "따뜻한 느낌", tone: "warm", desc: "<b>편안하고 아늑한 느낌.</b> 늦은 오후의 황금빛.", en: "warm 4000K late-afternoon light, cozy and comfortable" },
+  { k: 5000, ko: "자연스러운 느낌", tone: "mid", desc: "<b>가장 기본적인 자연광 느낌.</b> 색이 왜곡되지 않은 낮.", en: "neutral 5000K daylight, natural true-to-life colors" },
+  { k: 6000, ko: "약간 차가운 느낌", tone: "cool", desc: "<b>깨끗하고 차분한 느낌.</b> 맑은 하늘의 푸른 낮.", en: "clean cool 6000K daylight, crisp clear sky" },
+  { k: 7000, ko: "차가운 느낌", tone: "cool", desc: "<b>차갑고 조용한 블루아워.</b> 해가 진 직후, 창문 불빛이 켜지기 시작.", en: "cold 7000K blue-hour light just after sunset, city windows starting to glow" },
+  { k: 9000, ko: "차가운 느낌 (청색톤)", tone: "cool", desc: "<b>차갑고, 조용하고, 쓸쓸한 분위기.</b> 달빛 아래 푸른 밤.", en: "cold 9000K moonlit blue night, quiet and lonely atmosphere, city lights glowing" },
+];
+const RATIOS = [
+  { id: "16:9", r: 16 / 9, n: "가로 영상" },
+  { id: "2.39:1", r: 2.39, n: "시네마" },
+  { id: "9:16", r: 9 / 16, n: "숏폼" },
+  { id: "1:1", r: 1, n: "정사각" },
+];
+const FOCAL_TICKS = [14, 24, 35, 50, 85, 135, 200];
+const F_MIN = 14, F_MAX = 200;
+
+const state = { ease: "inout", moveDur: 3, laneDur: 1.4, shot: "LS", el: 2, az: -15, roll: 0, move: "static", focal: 35, stop: 2, K: 3000, ratio: "16:9", guides: true, hud: true };
+
+/* ================= helpers ================= */
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const focalToSlider = (f) => Math.round(Math.log(f / F_MIN) / Math.log(F_MAX / F_MIN) * 1000);
+const sliderToFocal = (s) => Math.round(F_MIN * Math.pow(F_MAX / F_MIN, s / 1000));
+function kelvinRGB(K) {
+  const t = K / 100; let r, g, b;
+  if (t <= 66) { r = 255; g = 99.4708025861 * Math.log(t) - 161.1195681661; b = t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307; }
+  else { r = 329.698727446 * Math.pow(t - 60, -0.1332047592); g = 288.1221695283 * Math.pow(t - 60, -0.0755148492); b = 255; }
+  return [clamp(r, 0, 255), clamp(g, 0, 255), clamp(b, 0, 255)].map(Math.round);
+}
+function nearestK(K) { let best = K_INFO[0]; for (const k of K_INFO) if (Math.abs(k.k - K) < Math.abs(best.k - K)) best = k; return best; }
+function stopInfo(N) { return STOP_INFO.find((s) => N <= s.max); }
+function lensInfo(f) {
+  if (f < 21) return { ko: "초광각", desc: "공간이 넓게 담기고 <b>원근이 과장</b>돼요. 가까운 것은 크게, 먼 것은 아주 작게.", en: "ultra-wide lens" };
+  if (f < 40) return { ko: "광각", desc: "<b>인물과 환경을 함께</b> 담기 좋은 화각. 영화에서 가장 흔한 범위입니다.", en: "wide-angle lens" };
+  if (f < 70) return { ko: "표준", desc: "<b>사람 눈으로 보는 것과 비슷한</b> 원근감. 왜곡이 적고 자연스럽습니다.", en: "normal lens" };
+  if (f < 120) return { ko: "망원(인물)", desc: "<b>배경이 압축되어 가까워 보이고</b> 얼굴 왜곡이 적어 인물 촬영에 좋아요.", en: "portrait telephoto lens, compressed background" };
+  return { ko: "초망원", desc: "<b>배경이 크게 압축</b>되어 피사체 바로 뒤에 붙은 듯 보입니다. 같은 샷 크기라도 카메라는 멀리 있어요.", en: "long telephoto lens, strong background compression" };
+}
+function angleLabel(el, roll) {
+  let a;
+  if (el >= 70) a = { k: "TOP", ko: "탑 뷰", desc: "<b>바로 위에서 내려다봐요.</b> 상황을 한눈에 보여줄 때, 지도처럼 객관적인 느낌.", en: "top-down bird's-eye view, overhead shot" };
+  else if (el >= 12) a = { k: "HIGH", ko: "하이 앵글", desc: "<b>위에서 내려다보는 구도.</b> 피사체가 작고 귀엽게, 혹은 약하고 외로워 보입니다.", en: "high angle, camera looking down at the subject" };
+  else if (el > -8) a = { k: "EYE", ko: "아이 레벨", desc: "<b>눈높이에서 바라보는 기본 구도.</b> 가장 자연스럽고 중립적인 느낌.", en: "eye-level angle" };
+  else a = { k: "LOW", ko: "로우 앵글", desc: "<b>아래에서 올려다보는 구도.</b> 강한 인상, 웅장하고 위압적인 느낌.", en: "low angle, camera looking up at the subject, heroic and imposing" };
+  if (Math.abs(roll) >= 5) a = { k: a.k + "+DUTCH", ko: a.ko + " + 더치", desc: a.desc + " 여기에 <b>화면을 기울여(더치 앵글)</b> 긴장감과 불안정하고 역동적인 느낌을 더합니다.", en: a.en + `, Dutch angle tilted ${Math.abs(roll)} degrees` };
+  return a;
+}
+function dofRange(fmm, N, Sm) {
+  const c = 0.03, S = Sm * 1000;
+  const Hh = fmm * fmm / (N * c) + fmm;
+  const near = S * (Hh - fmm) / (Hh + S - 2 * fmm);
+  const far = S < Hh ? S * (Hh - fmm) / (Hh - S) : Infinity;
+  return { near: near / 1000, far: far / 1000, hyper: Hh / 1000 };
+}
+const fmtM = (m) => !isFinite(m) ? "∞" : m < 1 ? `${Math.round(m * 100)}cm` : m < 10 ? `${m.toFixed(2)}m` : `${m.toFixed(1)}m`;
+
+/* ================= UI build ================= */
+function segButton(parent, { id, k, n, onClick }) {
+  const b = document.createElement("button");
+  b.type = "button"; b.id = id; b.setAttribute("aria-pressed", "false");
+  b.innerHTML = `<span class="k">${k}</span><span class="n">${n}</span>`;
+  b.addEventListener("click", onClick); parent.appendChild(b); return b;
+}
+Object.entries(SHOTS).forEach(([key, s]) => segButton($("shots"), { id: "shot-" + key, k: key, n: s.ko, onClick: () => {
+  state.shot = key; if (key !== "OTS") state.az = s.az; sync();
+} }));
+ANGLES.forEach((a) => segButton($("angles"), { id: "ang-" + a.id, k: a.k, n: a.ko, onClick: () => {
+  state.el = a.el; state.roll = a.roll; if (state.shot === "OTS") state.shot = "LS"; sync();
+} }));
+MOVES.forEach((m) => segButton($("moves"), { id: "mv-" + m.id, k: m.k, n: m.ko, onClick: () => { state.move = m.id; moveT = 0; sync(); } }));
+EASES.forEach((e) => segButton($("eases"), { id: "ease-" + e.id, k: e.name, n: e.ko, onClick: () => { state.ease = e.id; moveT = 0; sync(); } }));
+$("moveDur").addEventListener("input", (e) => { state.moveDur = +e.target.value; sync(); });
+$("laneDur").addEventListener("input", (e) => { state.laneDur = +e.target.value; laneT = 0; sync(); });
+RATIOS.forEach((r) => segButton($("ratios"), { id: "ratio-" + r.id.replace(/[:.]/g, "-"), k: r.id, n: r.n, onClick: () => { state.ratio = r.id; layout(); sync(); } }));
+function tickRow(parent, items, onPick) {
+  items.forEach((it) => { const b = document.createElement("button"); b.type = "button"; b.textContent = it.label; b.dataset.v = it.v; b.setAttribute("aria-pressed", "false"); b.addEventListener("click", () => onPick(it.v)); parent.appendChild(b); });
+}
+tickRow($("focalTicks"), FOCAL_TICKS.map((f) => ({ label: f, v: f })), (v) => { state.focal = +v; sync(); });
+tickRow($("stopTicks"), STOPS.map((s, i) => ({ label: s, v: i })), (v) => { state.stop = +v; sync(); });
+tickRow($("kTicks"), K_INFO.map((k) => ({ label: (k.k / 1000) + "K", v: k.k })), (v) => { state.K = +v; sync(); });
+
+$("el").addEventListener("input", (e) => { state.el = +e.target.value; if (state.shot === "OTS") state.shot = "LS"; sync(); });
+$("az").addEventListener("input", (e) => { state.az = +e.target.value; if (state.shot === "OTS") state.shot = "LS"; sync(); });
+$("roll").addEventListener("input", (e) => { state.roll = +e.target.value; sync(); });
+$("focal").addEventListener("input", (e) => { state.focal = sliderToFocal(+e.target.value); sync(); });
+$("stop").addEventListener("input", (e) => { state.stop = +e.target.value; sync(); });
+$("kelvin").addEventListener("input", (e) => { state.K = +e.target.value; sync(); });
+$("guidesOn").addEventListener("change", (e) => { state.guides = e.target.checked; sync(); });
+$("hudOn").addEventListener("change", (e) => { state.hud = e.target.checked; sync(); });
+const SUBJECT_PRESETS = [
+  ["트렌치코트", "a young woman with long black hair in a beige trench coat, dark jeans and white sneakers"],
+  ["빨간 원피스", "a woman with a blonde ponytail in a red dress and black boots"],
+  ["단발 오피스룩", "a woman with a brown bob haircut in a navy blazer, gray skirt and black heels, carrying a camel shoulder bag"],
+  ["겨울 여행자", "a young woman in a white padded coat with a red scarf, gray beanie, blue jeans and brown boots, wearing a khaki backpack"],
+  ["후드티 남성", "a man with short black hair in a black hoodie, light blue jeans and white sneakers"],
+];
+SUBJECT_PRESETS.forEach(([ko, en]) => { const b = document.createElement("button"); b.type = "button"; b.textContent = ko; b.title = en;
+  b.addEventListener("click", () => { $("subject").value = en; onSubject(); }); $("subjectPresets").appendChild(b); });
+let subjectTimer = 0;
+function onSubject() { writePrompt(); clearTimeout(subjectTimer); subjectTimer = setTimeout(() => { if (ready) setPerson($("subject").value); }, 200); }
+$("subject").addEventListener("input", onSubject);
+$("place").addEventListener("input", () => writePrompt());
+$("copyBtn").addEventListener("click", () => {
+  const text = $("promptOut").textContent;
+  const done = () => { $("copied").hidden = false; setTimeout(() => ($("copied").hidden = true), 1600); };
+  const fallback = () => { const r = document.createRange(); r.selectNodeContents($("promptOut")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+  try { navigator.clipboard.writeText(text).then(done, fallback); } catch (_) { fallback(); }
+});
+
+/* ================= sync UI ================= */
+let live = { focal: 35, focusM: 5, el: 0, dof: null };
+function sync() {
+  const s = state, shot = SHOTS[s.shot], N = STOPS[s.stop];
+  document.querySelectorAll("#shots button").forEach((b) => b.setAttribute("aria-pressed", b.id === "shot-" + s.shot));
+  document.querySelectorAll("#angles button").forEach((b) => {
+    const a = ANGLES.find((x) => "ang-" + x.id === b.id);
+    b.setAttribute("aria-pressed", s.shot !== "OTS" && a.el === s.el && a.roll === s.roll);
+  });
+  document.querySelectorAll("#moves button").forEach((b) => b.setAttribute("aria-pressed", b.id === "mv-" + s.move));
+  document.querySelectorAll("#ratios button").forEach((b) => b.setAttribute("aria-pressed", b.id === "ratio-" + s.ratio.replace(/[:.]/g, "-")));
+  $("el").value = s.el; $("az").value = s.az; $("roll").value = s.roll;
+  $("elOut").textContent = s.el + "°"; $("azOut").textContent = s.az + "°"; $("rollOut").textContent = s.roll + "°";
+  $("shotDesc").innerHTML = shot.desc;
+  const ang = s.shot === "OTS" ? { ko: "오버숄더", desc: "피사체 어깨 뒤, 눈높이에서 피사체가 보는 방향을 바라봅니다.", en: "" } : angleLabel(s.el, s.roll);
+  $("angleDesc").innerHTML = ang.desc + (s.shot === "OTS" && Math.abs(s.roll) >= 5 ? " 화면 기울기(더치)가 더해졌어요." : "");
+  const mv = MOVES.find((m) => m.id === s.move); $("moveDesc").innerHTML = mv.desc;
+  const ez = easeById(s.ease);
+  document.querySelectorAll("#eases button").forEach((b) => b.setAttribute("aria-pressed", b.id === "ease-" + s.ease));
+  $("moveDur").value = s.moveDur; $("moveDurOut").textContent = s.moveDur.toFixed(1) + "s";
+  $("laneDur").value = s.laneDur; $("laneDurOut").textContent = s.laneDur.toFixed(1) + "s";
+  $("easeNote").innerHTML = s.move === "static" ? "무빙을 고르면 이 이징으로 키프레임 A→B를 반복해서 보여줘요." : `${ez.name}: ${ez.use}`;
+  $("easeDetail").innerHTML = `<b>${ez.name} (${ez.ko})</b> · ${ez.desc} <code>${ez.css}</code>`;
+  $("focal").value = focalToSlider(s.focal);
+  const li = lensInfo(s.focal);
+  $("focalVal").textContent = s.focal + "mm"; $("focalPill").textContent = li.ko; $("focalDesc").innerHTML = li.desc;
+  document.querySelectorAll("#focalTicks button").forEach((b) => b.setAttribute("aria-pressed", +b.dataset.v === s.focal));
+  $("stop").value = s.stop;
+  const si = stopInfo(N);
+  $("stopVal").textContent = "f/" + N; $("stopPill").textContent = si.ko; $("stopDesc").innerHTML = si.desc;
+  $("stopPill").className = "pill " + (N <= 3.2 ? "" : N <= 6 ? "mid" : "cool");
+  document.querySelectorAll("#stopTicks button").forEach((b) => b.setAttribute("aria-pressed", +b.dataset.v === s.stop));
+  $("kelvin").value = s.K;
+  const ki = nearestK(s.K), rgb = kelvinRGB(s.K);
+  $("kVal").textContent = s.K + "K"; $("kPill").textContent = ki.ko; $("kDesc").innerHTML = ki.desc;
+  $("kPill").className = "pill " + (ki.tone === "warm" ? "" : ki.tone === "mid" ? "mid" : "cool");
+  $("kelvin").style.setProperty("--thumb", `rgb(${rgb.join(",")})`);
+  document.querySelectorAll("#kTicks button").forEach((b) => b.setAttribute("aria-pressed", +b.dataset.v === s.K));
+  $("guides").hidden = !s.guides;
+  document.querySelector(".hud").hidden = !s.hud;
+  $("guidesOn").checked = s.guides; $("hudOn").checked = s.hud;
+  applyLook(); dirty = true;
+  writeSummary(); writePrompt();
+}
+function updateHud() {
+  const s = state, N = STOPS[s.stop];
+  const ang = s.shot === "OTS" ? "OTS" : angleLabel(live.el, s.roll).k;
+  $("hudShot").textContent = `${s.shot} · ${s.move === "static" ? "LOCK" : MOVES.find((m) => m.id === s.move).k}`;
+  $("hudLens").textContent = `${Math.round(live.focal)}mm · f/${N} · ${s.ratio}`;
+  $("hudAngle").textContent = `${ang} ${Math.round(live.el)}°${Math.abs(s.roll) >= 1 ? " · ROLL " + s.roll + "°" : ""}`;
+  $("hudFocus").textContent = `AF ${fmtM(live.focusM)}`;
+  $("hudK").textContent = `${s.K}K`;
+  const d = dofRange(live.focal, N, live.focusM);
+  const maxM = Math.max(4, Math.ceil(live.focusM * 2.2));
+  const pct = (m) => clamp(m / maxM * 100, 0, 100);
+  $("dofZone").style.left = pct(d.near) + "%"; $("dofZone").style.width = (pct(d.far) - pct(d.near)) + "%";
+  $("dofSubj").style.left = pct(live.focusM) + "%";
+  $("dofMax").textContent = maxM + "m";
+  $("dofText").textContent = `초점 ${fmtM(live.focusM)} · 선명한 범위 ${fmtM(d.near)} ~ ${fmtM(d.far)}` + (isFinite(d.far) ? ` (${fmtM(d.far - d.near)})` : "");
+}
+function writeSummary() {
+  const s = state, shot = SHOTS[s.shot], N = STOPS[s.stop];
+  const ang = s.shot === "OTS" ? { ko: "오버숄더(눈높이)" } : angleLabel(s.el, s.roll);
+  const rows = [
+    ["Shot", `${shot.ko} (${s.shot})`],
+    ["Angle", ang.ko],
+    ["Move", MOVES.find((m) => m.id === s.move).ko + (s.move === "static" ? "" : ` · ${easeById(s.ease).name} ${s.moveDur.toFixed(1)}s`)],
+    ["Lens", `${s.focal}mm · ${lensInfo(s.focal).ko}`],
+    ["Aperture", `f/${N} · ${stopInfo(N).ko}`],
+    ["Color", `${s.K}K · ${nearestK(s.K).ko}`],
+  ];
+  $("summary").innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+}
+function writePrompt() {
+  const s = state, shot = SHOTS[s.shot], N = STOPS[s.stop];
+  const subj = $("subject").value.trim() || "the subject", place = $("place").value.trim();
+  const parts = [];
+  parts.push(`${cap(shot.en)} of ${subj}${place ? " " + place : ""}.`);
+  if (s.shot !== "OTS") parts.push(cap(angleLabel(s.el, s.roll).en) + ".");
+  else if (Math.abs(s.roll) >= 5) parts.push(`Dutch angle tilted ${Math.abs(s.roll)} degrees.`);
+  parts.push(cap(MOVES.find((m) => m.id === s.move).en) + (s.move === "static" ? "." : `, ${easeById(s.ease).en}, over about ${s.moveDur.toFixed(1)} seconds.`));
+  parts.push(`Shot on a ${s.focal}mm ${lensInfo(s.focal).en} at f/${N}, ${stopInfo(N).en}.`);
+  parts.push(cap(nearestK(s.K).en) + ".");
+  parts.push(`Photorealistic, cinematic, natural film grain, aspect ratio ${s.ratio}.`);
+  $("promptOut").textContent = parts.join(" ");
+}
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+/* ================= hand-off to Previz Studio ================= */
+function labToPreviz() {
+  const s = state;
+  const size = { ELS: "ews", LS: "fs", MS: "ms", CU: "cu", ECU: "ecu", OTS: "ms" }[s.shot];
+  const angle = s.shot === "OTS" ? "eye" : s.el >= 70 ? "overhead" : s.el >= 12 ? "high" : s.el > -8 ? "eye" : "low";
+  const rel = (((s.az - 151) % 360) + 540) % 360 - 180, a = Math.abs(rel); // 151° = the figure's facing in this scene
+  const dir = s.shot === "OTS" ? "ots" : a < 20 ? "front" : a < 60 ? (rel > 0 ? "ql" : "qr") : a < 120 ? "side" : "back";
+  const move = { static: "static", pan: "pan_r", tilt: "tilt_up", dolly: "push", arc: "orbit_r", zoom: "dolly_zoom" }[s.move];
+  const light = s.K <= 4500 ? "golden" : s.K <= 6500 ? "day" : "night";
+  const subj = $("subject").value.trim(), place = $("place").value.trim();
+  return {
+    at: Date.now(), light,
+    desc: [subj, place].filter(Boolean).join(" ") + ` · f/${STOPS[s.stop]} · ${s.K}K`,
+    params: { size, angle, dir, move, speed: "normal", lens: s.focal, duration: s.move === "static" ? 4 : s.moveDur, ease: s.move === "static" ? "inout" : s.ease, handheld: false, dutch: Math.abs(s.roll) >= 5 },
+  };
+}
+$("sendBtn").addEventListener("click", () => {
+  try { localStorage.setItem("previz.handoff.v1", JSON.stringify(labToPreviz())); }
+  catch (_) { $("sendNote").textContent = "이 브라우저에서 저장소를 쓸 수 없어 샷을 넘기지 못했어요. 프롬프트 복사를 이용해 주세요."; return; }
+  location.href = "./";
+});
+
+/* ================= layout ================= */
+function layout() {
+  const ratio = RATIOS.find((r) => r.id === state.ratio).r;
+  const stage = $("stage"), frame = $("frame");
+  const cs = getComputedStyle(stage);
+  const availW = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const narrow = innerWidth <= 960;
+  const maxH = narrow ? innerHeight * (ratio < 1 ? 0.5 : 0.42) : innerHeight - 120;
+  const w = Math.max(120, Math.min(availW, maxH * ratio));
+  frame.style.width = w + "px";
+  frame.style.aspectRatio = String(ratio);
+  resize();
+}
+
+/* ================= 3D ================= */
+let walkPhase = 0, laneT = 0, lanePlaying = true;
+function movePhase(t) { const pre = 0.5, hold = 1.0, D = state.moveDur; const u = ((t % (pre + D + hold)) + (pre + D + hold)) % (pre + D + hold); return easeById(state.ease).f(clamp((u - pre) / D, 0, 1)); }
+let renderer, scene, camera, rt, post, skyMat, sun, hemi, person, parts = {}, cityMats = [], dirty = true, moveT = 0, ready = false;
+const lin = (hex) => new THREE.Color(hex).convertSRGBToLinear();
+
+const KEYS = [
+  { K: 2000, top: "#563766", hor: "#ff8335", ground: "#2a1a22", cloud: "#b4607a", sun: "#ff8a35", sunEl: 2.5, sunVis: 1, lightEl: 6, sunI: 2.2, hemiS: "#ffb07a", hemiG: "#4a2a2a", hemiI: 0.45, win: 0.22, exp: 1.0, night: 0, moon: 0 },
+  { K: 3000, top: "#4c4c9c", hor: "#ff9f86", ground: "#2a2234", cloud: "#c47a9a", sun: "#ffb27a", sunEl: 7, sunVis: 1, lightEl: 9, sunI: 2.4, hemiS: "#c8a4dc", hemiG: "#3a2c3a", hemiI: 0.55, win: 0.12, exp: 1.0, night: 0, moon: 0 },
+  { K: 4000, top: "#5d84cc", hor: "#ffd6aa", ground: "#38322e", cloud: "#f1d0bc", sun: "#ffd29e", sunEl: 15, sunVis: 1, lightEl: 15, sunI: 2.8, hemiS: "#bfd2f0", hemiG: "#4a4036", hemiI: 0.65, win: 0.02, exp: 0.95, night: 0, moon: 0 },
+  { K: 5000, top: "#3b79de", hor: "#cfe2f8", ground: "#3b3f44", cloud: "#f4f6f8", sun: "#fff3e4", sunEl: 40, sunVis: 1, lightEl: 40, sunI: 3.2, hemiS: "#bcd6ff", hemiG: "#4a4a44", hemiI: 0.85, win: 0, exp: 0.82, night: 0, moon: 0 },
+  { K: 6000, top: "#2e6de4", hor: "#d6e9ff", ground: "#3a4048", cloud: "#f2f6ff", sun: "#eef3ff", sunEl: 55, sunVis: 1, lightEl: 55, sunI: 3.2, hemiS: "#b3d0ff", hemiG: "#444a52", hemiI: 0.95, win: 0, exp: 0.8, night: 0, moon: 0 },
+  { K: 7000, top: "#15235c", hor: "#3d5db2", ground: "#121a33", cloud: "#2c3d78", sun: "#7f9dff", sunEl: -6, sunVis: 0, lightEl: 30, sunI: 0.5, hemiS: "#5a78c8", hemiG: "#1a2038", hemiI: 0.6, win: 0.8, exp: 1.6, night: 0.45, moon: 0.6 },
+  { K: 9000, top: "#050a24", hor: "#17265c", ground: "#080c1c", cloud: "#121c40", sun: "#6f8cff", sunEl: -15, sunVis: 0, lightEl: 35, sunI: 0.35, hemiS: "#2f4890", hemiG: "#0c1022", hemiI: 0.45, win: 1, exp: 2.1, night: 1, moon: 1 },
+];
+function lookAtK(K) {
+  let a = KEYS[0], b = KEYS[KEYS.length - 1];
+  for (let i = 0; i < KEYS.length - 1; i++) if (K >= KEYS[i].K && K <= KEYS[i + 1].K) { a = KEYS[i]; b = KEYS[i + 1]; break; }
+  const t = b.K === a.K ? 0 : (K - a.K) / (b.K - a.K);
+  const o = {};
+  for (const k in a) o[k] = typeof a[k] === "string" ? lin(a[k]).lerp(lin(b[k]), t) : lerp(a[k], b[k], t);
+  return o;
+}
+const SUN_AZ = THREE.MathUtils.degToRad(26);
+const dirFrom = (azRad, elDeg) => { const e = THREE.MathUtils.degToRad(elDeg); return new THREE.Vector3(Math.sin(azRad) * Math.cos(e), Math.sin(e), -Math.cos(azRad) * Math.cos(e)).normalize(); };
+const MOON_DIR = dirFrom(THREE.MathUtils.degToRad(-28), 32);
+
+function applyLook() {
+  if (!ready) return;
+  const L = lookAtK(state.K);
+  const sunDir = dirFrom(SUN_AZ, L.sunEl);
+  const u = skyMat.uniforms;
+  u.uTop.value.copy(L.top); u.uHor.value.copy(L.hor); u.uGround.value.copy(L.ground); u.uCloud.value.copy(L.cloud);
+  u.uSun.value.copy(L.sun); u.uSunDir.value.copy(sunDir); u.uSunVis.value = L.sunVis; u.uMoonVis.value = L.moon; u.uNight.value = L.night;
+  u.uMoonDir.value.copy(MOON_DIR);
+  const lightDir = L.night > 0.2 ? MOON_DIR.clone().lerp(dirFrom(SUN_AZ, L.lightEl), 0).normalize() : dirFrom(SUN_AZ, Math.max(L.lightEl, 3));
+  sun.userData.dir = lightDir;
+  sun.color.copy(L.night > 0.2 ? lin("#9fb4ff") : L.sun); sun.intensity = L.sunI;
+  hemi.color.copy(L.hemiS); hemi.groundColor.copy(L.hemiG); hemi.intensity = L.hemiI;
+  scene.fog.color.copy(L.hor).multiplyScalar(0.92);
+  cityMats.forEach((m) => { m.emissiveIntensity = L.win * 2.6; });
+  post.uniforms.uExposure.value = L.exp;
+}
+
+function makeFacadeTextures() {
+  const W = 128, H = 256, cols = 8, rows = 24;
+  const c1 = document.createElement("canvas"), c2 = document.createElement("canvas");
+  c1.width = c2.width = W; c1.height = c2.height = H;
+  const a = c1.getContext("2d"), e = c2.getContext("2d");
+  a.fillStyle = "#c9c4cf"; a.fillRect(0, 0, W, H);
+  e.fillStyle = "#000"; e.fillRect(0, 0, W, H);
+  const cw = W / cols, rh = H / rows;
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    const gx = x * cw + cw * 0.18, gy = y * rh + rh * 0.22, gw = cw * 0.64, gh = rh * 0.56;
+    a.fillStyle = rnd() < 0.5 ? "#5d6f8c" : "#6c7c98"; a.fillRect(gx, gy, gw, gh);
+    if (rnd() < 0.42) { e.fillStyle = rnd() < 0.75 ? "#ffcf8a" : "#fff0d0"; e.fillRect(gx, gy, gw, gh); }
+  }
+  const t1 = new THREE.CanvasTexture(c1), t2 = new THREE.CanvasTexture(c2);
+  [t1, t2].forEach((t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding; t.anisotropy = 4; });
+  return [t1, t2];
+}
+function makeTileTexture() {
+  const c = document.createElement("canvas"); c.width = c.height = 256;
+  const g = c.getContext("2d");
+  g.fillStyle = "#d7cfc4"; g.fillRect(0, 0, 256, 256);
+  let seed = 3; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) { const v = 200 + Math.floor(rnd() * 24); g.fillStyle = `rgb(${v},${v - 6},${v - 14})`; g.fillRect(x * 64 + 2, y * 64 + 2, 60, 60); }
+  for (let i = 0; i < 1600; i++) { g.fillStyle = `rgba(80,70,60,${rnd() * 0.08})`; g.fillRect(rnd() * 256, rnd() * 256, 2, 2); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding; t.anisotropy = 8;
+  return t;
+}
+function scaledBox(w, h, d, tile) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  const uv = g.attributes.uv;
+  const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+  for (let f = 0; f < 6; f++) for (let v = 0; v < 4; v++) {
+    const i = f * 4 + v;
+    if (tile.top === false && (f === 2 || f === 3)) { uv.setXY(i, 0.01, 0.995); continue; }
+    uv.setXY(i, uv.getX(i) * dims[f][0] / tile.u, uv.getY(i) * dims[f][1] / tile.v);
+  }
+  return g;
+}
+
+/* ================= character from the subject prompt ================= */
+const CHAR_HOME = new THREE.Vector3(0, 0, -0.35);
+const CHAR_YAW = -0.5;
+const COLOR_WORDS = [
+  [/black|검은|검정|까만|블랙/, "#1e1d22", "검정"],
+  [/white|흰|하얀|화이트/, "#ecebe6", "흰색"],
+  [/ivory|cream|아이보리|크림/, "#eee4cf", "아이보리"],
+  [/beige|베이지/, "#cdb28c", "베이지"],
+  [/camel|카멜/, "#b88954", "카멜"],
+  [/brown|갈색|브라운/, "#5e3f2b", "갈색"],
+  [/burgundy|wine|버건디|와인/, "#6b1d2c", "버건디"],
+  [/red|빨간|빨강|레드/, "#b3262c", "빨강"],
+  [/pink|분홍|핑크/, "#e39bb1", "분홍"],
+  [/orange|주황|오렌지/, "#df7230", "주황"],
+  [/yellow|노란|노랑|옐로/, "#e6c03e", "노랑"],
+  [/khaki|olive|카키|올리브/, "#6c6741", "카키"],
+  [/green|초록|녹색|그린/, "#3d6a46", "초록"],
+  [/navy|네이비|남색/, "#22305a", "네이비"],
+  [/blue|파란|파랑|블루/, "#3a63ae", "파랑"],
+  [/purple|violet|보라|퍼플/, "#6a4a8e", "보라"],
+  [/gr[ae]y|charcoal|회색|그레이|차콜/, "#7d8087", "회색"],
+  [/blond|금발/, "#d6b26a", "금발"],
+  [/silver|은발|백발/, "#c8c8ce", "은발"],
+];
+const GARMENTS = [
+  ["hair", /hair|머리|헤어/],
+  ["coat", /coat|trench|parka|코트|트렌치|패딩|파카/],
+  ["jacket", /jacket|blazer|hoodie|cardigan|jumper|재킷|자켓|블레이저|후드|가디건|점퍼/],
+  ["dress", /dress|gown|원피스|드레스/],
+  ["top", /shirt|blouse|sweater|knit|tee|top|셔츠|블라우스|니트|스웨터|티셔츠|상의/],
+  ["jeans", /jeans|denim|청바지|데님/],
+  ["pants", /pants|trousers|slacks|바지|슬랙스/],
+  ["skirt", /skirt|치마|스커트/],
+  ["shoes", /shoe|sneaker|boot|heel|loafer|신발|운동화|스니커즈|부츠|구두|힐|로퍼/],
+  ["hat", /hat|beanie|cap|beret|모자|비니|캡|베레/],
+  ["scarf", /scarf|muffler|목도리|스카프|머플러/],
+  ["backpack", /backpack|rucksack|백팩|배낭/],
+  ["bag", /bag|tote|purse|가방|토트|핸드백|숄더백/],
+];
+function shade(hex, k) { const c = new THREE.Color(hex); k < 1 ? c.multiplyScalar(k) : c.lerp(new THREE.Color("#ffffff"), k - 1); return "#" + c.getHexString(); }
+function parseSubject(text) {
+  const t = (text || "").toLowerCase();
+  const male = /\b(man|male|boy|guy|gentleman)\b|남자|남성|소년|아저씨/.test(t) && !/\b(woman|girl|lady)\b|여자|여성|소녀/.test(t);
+  const spec = { male, skin: /tan|dark[- ]skin|구릿빛|까무잡잡/.test(t) ? "#a8724f" : /pale|fair|하얀 피부|창백/.test(t) ? "#f0d3bd" : "#e2b796",
+    hair: "#2a1d17", hairStyle: male ? "short" : "long", outerType: null, outer: null, top: "#e9e3d8", lower: "pants", bottom: "#2b2f3a",
+    shoes: "#ecebe6", boots: false, hat: null, scarf: null, backpack: null, bag: null, found: [] };
+  const toks = t.split(/[\s,.;:/()]+/).filter(Boolean);
+  const colorAt = (i) => {
+    for (let j = i; j >= Math.max(0, i - 3); j--) for (const [re, hex, ko] of COLOR_WORDS) if (re.test(toks[j]) && !(j < i && GARMENTS.some(([, g]) => g.test(toks[j])))) {
+      let h = hex; const prev = toks[j - 1] || "";
+      if (/dark|deep|진한|어두운|^진/.test(toks[j]) || /dark|deep|진한|어두운/.test(prev)) h = shade(h, 0.55);
+      if (/light|pale|연한|밝은|^연/.test(toks[j]) || /light|pale|연한|밝은/.test(prev)) h = shade(h, 1.45);
+      return { hex: h, ko };
+    }
+    return null;
+  };
+  const label = { hair: "머리", coat: "코트", jacket: "재킷", dress: "원피스", top: "상의", jeans: "청바지", pants: "바지", skirt: "치마", shoes: "신발", hat: "모자", scarf: "목도리", backpack: "백팩", bag: "가방" };
+  const seen = new Set();
+  toks.forEach((tok, i) => {
+    for (const [kind, re] of GARMENTS) {
+      if (!re.test(tok) || seen.has(kind)) continue;
+      if (kind === "bag" && /backpack|백팩/.test(tok)) continue;
+      if (kind === "top" && /hoodie|후드/.test(tok)) continue;
+      seen.add(kind);
+      let c = colorAt(i);
+      if (!c) { const near = toks.slice(Math.max(0, i - 2), i + 1).join(" ");
+        if (/dark|deep|진한|어두운|진청/.test(near)) c = { hex: null, ko: "어두운", k: 0.55 };
+        else if (/light|pale|연한|밝은|연청/.test(near)) c = { hex: null, ko: "밝은", k: 1.45 }; }
+      const tone = c && c.hex === null ? c : null; if (tone) c = null;
+      if (kind === "hair") { if (c) spec.hair = c.hex; }
+      else if (kind === "coat" || kind === "jacket") { spec.outerType = kind; spec.outer = c ? c.hex : kind === "coat" ? "#cdb28c" : "#2b2f3a"; }
+      else if (kind === "dress") { spec.outerType = spec.outerType || null; spec.dress = c ? c.hex : "#22305a"; }
+      else if (kind === "top") { if (c) spec.top = c.hex; }
+      else if (kind === "jeans") { spec.lower = "pants"; spec.bottom = c ? c.hex : "#2f4566"; }
+      else if (kind === "pants") { spec.lower = "pants"; if (c) spec.bottom = c.hex; }
+      else if (kind === "skirt") { spec.lower = "skirt"; spec.bottom = c ? c.hex : "#3a3a40"; }
+      else if (kind === "shoes") { spec.shoes = c ? c.hex : /boot|heel|구두|부츠|힐|로퍼|loafer/.test(tok) ? "#1e1d22" : "#ecebe6"; spec.boots = /boot|부츠/.test(tok); }
+      else spec[kind] = c ? c.hex : kind === "scarf" ? "#b3262c" : kind === "hat" ? "#1e1d22" : "#2c4176";
+      if (kind === "hat") spec.hatType = /cap|캡/.test(tok) && !/beanie|비니/.test(tok) ? "cap" : "beanie";
+      if (tone) { const key = { hair: "hair", coat: "outer", jacket: "outer", dress: "dress", top: "top", jeans: "bottom", pants: "bottom", skirt: "bottom", shoes: "shoes" }[kind];
+        if (key && spec[key]) spec[key] = shade(spec[key], tone.k); else if (spec[kind]) spec[kind] = shade(spec[kind], tone.k); c = tone; }
+      spec.found.push((c ? c.ko + " " : "") + label[kind] + (kind === "shoes" && spec.boots ? "(부츠)" : ""));
+    }
+  });
+  if (/blond|금발/.test(t) && !seen.has("hair")) { spec.hair = "#d6b26a"; spec.found.push("금발"); }
+  const style = [["ponytail", /ponytail|포니테일|묶은/, "포니테일"], ["bun", /\bbun\b|updo|올림머리|똥머리|번 머리/, "올림머리"], ["bob", /\bbob\b|단발/, "단발"], ["short", /short hair|pixie|buzz|숏컷|짧은 머리|짧은머리/, "짧은 머리"], ["long", /long hair|long [a-z]+ hair|wavy|긴 머리|긴머리|긴 [가-힣]+ 머리|장발|웨이브/, "긴 머리"]];
+  for (const [id, re, ko] of style) if (re.test(t)) { spec.hairStyle = id; spec.found.unshift(ko); break; }
+  spec.found.unshift(male ? "남성" : "여성");
+  if (spec.dress) { spec.lower = "dress"; }
+  return spec;
+}
+
+function buildPerson(spec) {
+  const g = new THREE.Group(), parts = {};
+  const M = (hex, rough = 0.75, extra) => new THREE.MeshStandardMaterial(Object.assign({ color: lin(hex), roughness: rough }, extra || {}));
+  const add = (geo, mat, x, y, z, parent) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); (parent || g).add(m); return m; };
+  const lathe = (pts, seg = 28) => new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg);
+  const male = spec.male;
+  const skin = M(spec.skin, 0.55), hairM = M(spec.hair, 0.45, { side: THREE.DoubleSide });
+  const topM = M(spec.top, 0.8), botM = M(spec.bottom, 0.8), shoeM = M(spec.shoes, 0.45);
+  const outerM = spec.outerType ? M(spec.outer, 0.72, { side: THREE.DoubleSide }) : null;
+  const dressM = spec.dress ? M(spec.dress, 0.7, { side: THREE.DoubleSide }) : null;
+  const sleeveM = outerM || dressM || topM;
+  const bareLegs = spec.lower === "skirt" || spec.lower === "dress";
+
+  // legs (pivot at the hip so they can swing)
+  for (const s of [-1, 1]) {
+    const pivot = new THREE.Group(); pivot.position.set(s * (male ? 0.1 : 0.088), 0.86, 0); g.add(pivot);
+    add(new THREE.CylinderGeometry(male ? 0.074 : 0.066, 0.042, 0.78, 16), bareLegs ? skin : botM, 0, -0.39, 0, pivot);
+    add(new THREE.SphereGeometry(0.06, 18, 12), shoeM, 0, -0.81, -0.045, pivot).scale.set(0.95, 0.62, 2.0);
+    if (spec.boots) add(new THREE.CylinderGeometry(0.056, 0.05, 0.28, 14), shoeM, 0, -0.66, 0, pivot);
+    parts[s < 0 ? "legL" : "legR"] = pivot;
+  }
+  // pelvis + torso
+  add(new THREE.SphereGeometry(male ? 0.16 : 0.165, 24, 16), bareLegs ? (dressM || botM) : botM, 0, 0.9, 0).scale.set(1, 0.62, 0.66);
+  const torsoPts = male
+    ? [[0.155, 0.86], [0.16, 0.93], [0.155, 1.04], [0.17, 1.18], [0.19, 1.32], [0.195, 1.41], [0.13, 1.475], [0.05, 1.5]]
+    : [[0.15, 0.86], [0.162, 0.93], [0.126, 1.04], [0.132, 1.14], [0.152, 1.26], [0.158, 1.36], [0.122, 1.45], [0.05, 1.49]];
+  add(lathe(torsoPts), dressM || topM, 0, 0, 0).scale.set(1, 1, 0.64);
+  if (spec.lower === "skirt") add(lathe([[0.135, 1.02], [0.17, 0.9], [0.2, 0.72], [0.225, 0.56]]), M(spec.bottom, 0.8, { side: THREE.DoubleSide }), 0, 0, 0).scale.set(1, 1, 0.75);
+  if (spec.lower === "dress") add(lathe([[0.13, 1.04], [0.17, 0.9], [0.21, 0.7], [0.24, 0.5]]), dressM, 0, 0, 0).scale.set(1, 1, 0.78);
+  if (spec.outerType === "coat") {
+    add(lathe([[0.06, 1.5], [0.145, 1.47], [0.178, 1.41], [0.172, 1.27], [0.152, 1.08], [0.172, 0.92], [0.2, 0.7], [0.225, 0.44]]), outerM, 0, 0, 0).scale.set(male ? 1.13 : 1, 1, male ? 0.8 : 0.72);
+    const belt = add(new THREE.TorusGeometry(0.152, 0.013, 8, 28), M(shade(spec.outer, 0.7), 0.7), 0, 1.07, 0);
+    belt.rotation.x = Math.PI / 2; belt.scale.set(1, 0.74, 1);
+  } else if (spec.outerType === "jacket") {
+    add(lathe([[0.06, 1.5], [0.145, 1.47], [0.18, 1.41], [0.172, 1.27], [0.155, 1.08], [0.17, 0.92], [0.172, 0.8]]), outerM, 0, 0, 0).scale.set(male ? 1.13 : 1, 1, male ? 0.8 : 0.72);
+  }
+  // shoulders + arms
+  const shX = (male ? 0.2 : 0.172) + (spec.outerType ? 0.022 : 0);
+  for (const s of [-1, 1]) {
+    add(new THREE.SphereGeometry(0.06, 16, 12), sleeveM, s * shX, 1.405, 0);
+    const pivot = new THREE.Group(); pivot.position.set(s * shX, 1.41, 0); pivot.rotation.z = s * 0.13; g.add(pivot);
+    add(new THREE.CylinderGeometry(spec.outerType ? 0.056 : 0.048, 0.04, 0.56, 14), sleeveM, 0, -0.28, 0, pivot);
+    add(new THREE.SphereGeometry(0.042, 14, 10), skin, 0, -0.6, 0, pivot).scale.set(0.8, 1.2, 0.6);
+    parts[s < 0 ? "armL" : "armR"] = pivot;
+  }
+  // neck + head
+  add(new THREE.CylinderGeometry(0.045, 0.05, 0.13, 14), skin, 0, 1.52, 0.005);
+  const head = new THREE.Group(); head.position.set(0, 1.64, 0); g.add(head);
+  add(new THREE.SphereGeometry(0.105, 40, 28), skin, 0, 0, 0, head).scale.set(0.9, 1.12, 0.98);
+  add(new THREE.SphereGeometry(0.055, 20, 14), skin, 0, -0.055, -0.03, head).scale.set(1.1, 0.85, 1);
+  const white = M("#f3efe8", 0.25), iris = M(male ? "#3b2a1c" : "#4a2f1d", 0.25), pupilM = M("#08080a", 0.2), brow = M(shade(spec.hair, 0.8), 0.6);
+  for (const s of [-1, 1]) {
+    const eye = add(new THREE.SphereGeometry(0.0155, 20, 14), white, s * 0.035, 0.012, -0.089, head); eye.scale.set(1.15, 0.7, 0.55);
+    add(new THREE.SphereGeometry(0.0085, 16, 12), iris, s * 0.035, 0.012, -0.0965, head).scale.set(1, 1, 0.5);
+    add(new THREE.SphereGeometry(0.0045, 10, 8), pupilM, s * 0.035, 0.012, -0.1005, head).scale.set(1, 1, 0.4);
+    add(new THREE.SphereGeometry(0.0015, 6, 4), M("#ffffff", 0.1, { emissive: 0xffffff, emissiveIntensity: 2 }), s * 0.035 + 0.003, 0.0155, -0.1015, head);
+    add(new THREE.BoxGeometry(0.03, 0.0045, 0.008), brow, s * 0.036, 0.036, -0.093, head).rotation.z = s * -0.12;
+    add(new THREE.SphereGeometry(0.02, 12, 10), skin, s * 0.094, 0, 0.004, head).scale.set(0.4, 1, 0.75);
+    parts[s < 0 ? "eyeL" : "eyeR"] = eye;
+  }
+  add(new THREE.SphereGeometry(0.016, 14, 10), skin, 0, -0.014, -0.103, head).scale.set(0.7, 1.05, 0.95);
+  add(new THREE.SphereGeometry(0.016, 16, 10), M(male ? shade(spec.skin, 0.85) : "#b55b67", 0.4), 0, -0.05, -0.093, head).scale.set(1.35, 0.42, 0.55);
+  // hair
+  const cap = add(new THREE.SphereGeometry(0.113, 40, 20, 0, Math.PI * 2, 0, Math.PI * 0.56), hairM, 0, 0.008, 0.006, head);
+  cap.scale.set(0.93, 1.1, 1.0); cap.rotation.x = male || spec.hairStyle === "short" ? 0.55 : 0.47;
+  const hs = spec.hairStyle;
+  if (hs === "long") { const back = add(new THREE.CylinderGeometry(0.104, 0.15, 0.36, 32, 1, true, -Math.PI * 0.62, Math.PI * 1.24), hairM, 0, -0.16, 0.03, head); back.scale.set(1, 1, 0.95); }
+  if (hs === "bob") { const back = add(new THREE.CylinderGeometry(0.108, 0.122, 0.17, 32, 1, true, -Math.PI * 0.66, Math.PI * 1.32), hairM, 0, -0.06, 0.008, head); back.scale.set(0.98, 1, 0.92); }
+  if (hs === "ponytail") { add(new THREE.SphereGeometry(0.022, 12, 10), hairM, 0, 0.03, 0.11, head); const tail = add(new THREE.CylinderGeometry(0.03, 0.012, 0.3, 14), hairM, 0, -0.12, 0.135, head); tail.rotation.x = 0.22; }
+  if (hs === "bun") add(new THREE.SphereGeometry(0.052, 20, 14), hairM, 0, 0.1, 0.075, head);
+  // accessories
+  if (spec.hat) {
+    const hm = M(spec.hat, 0.8);
+    const h = add(new THREE.SphereGeometry(0.12, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5), hm, 0, 0.018, 0.01, head); h.scale.set(0.95, 1.05, 1.02); h.rotation.x = 0.28;
+    if (spec.hatType === "cap") { const brim = add(new THREE.CylinderGeometry(0.075, 0.075, 0.008, 20, 1, false, Math.PI / 2, Math.PI), hm, 0, 0.04, -0.07, head); brim.rotation.x = 0.12; }
+  }
+  if (spec.scarf) { const sc = add(new THREE.TorusGeometry(0.068, 0.03, 12, 28), M(spec.scarf, 0.9), 0, 1.475, 0); sc.rotation.x = Math.PI / 2; sc.scale.set(1.1, 0.9, 1); }
+  if (spec.backpack) {
+    const pm = M(spec.backpack, 0.75), pd = M(shade(spec.backpack, 0.7), 0.75);
+    add(new THREE.SphereGeometry(0.17, 28, 18), pm, 0, 1.18, 0.17).scale.set(0.95, 1.3, 0.52);
+    add(new THREE.BoxGeometry(0.2, 0.12, 0.05), pd, 0, 1.08, 0.255);
+    for (const s of [-1, 1]) { const st = add(new THREE.TorusGeometry(0.2, 0.014, 6, 20, Math.PI), pd, s * 0.1, 1.24, 0.02); st.rotation.y = Math.PI / 2; st.rotation.z = -Math.PI / 2 - 0.2; }
+  }
+  if (spec.bag) {
+    const bm = M(spec.bag, 0.6);
+    add(new THREE.BoxGeometry(0.07, 0.18, 0.26), bm, 0.23, 0.93, 0.02);
+    const strap = add(new THREE.CylinderGeometry(0.008, 0.008, 0.62, 6), bm, 0.03, 1.2, 0.0); strap.rotation.z = -0.62;
+  }
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  g.userData.parts = parts;
+  return g;
+}
+function setPerson(text) {
+  const spec = parseSubject(text);
+  if (person) { scene.remove(person); person.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } }); }
+  person = buildPerson(spec); parts = person.userData.parts;
+  person.position.copy(CHAR_HOME); person.rotation.y = CHAR_YAW; scene.add(person);
+  $("traits").innerHTML = spec.found.map((f) => `<span>${f}</span>`).join("");
+  dirty = true;
+}
+
+function buildScene() {
+  const canvas = $("gl");
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
+  renderer.setClearColor(0x000000, 1);
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0xffffff, 180, 1300);
+  camera = new THREE.PerspectiveCamera(30, 16 / 9, 0.02, 3000);
+
+  /* sky */
+  skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { uTop: { value: new THREE.Color() }, uHor: { value: new THREE.Color() }, uGround: { value: new THREE.Color() }, uCloud: { value: new THREE.Color() }, uSun: { value: new THREE.Color() },
+      uSunDir: { value: new THREE.Vector3() }, uMoonDir: { value: new THREE.Vector3() }, uSunVis: { value: 1 }, uMoonVis: { value: 0 }, uNight: { value: 0 } },
+    vertexShader: `varying vec3 vDir; void main(){ vDir = (modelMatrix * vec4(position,1.0)).xyz - cameraPosition; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      uniform vec3 uTop,uHor,uGround,uCloud,uSun,uSunDir,uMoonDir; uniform float uSunVis,uMoonVis,uNight; varying vec3 vDir;
+      float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(hash(i),hash(i+vec2(1.0,0.0)),f.x), mix(hash(i+vec2(0.0,1.0)),hash(i+vec2(1.0,1.0)),f.x), f.y); }
+      float fbm(vec2 p){ float v=0.0, a=0.5; for(int i=0;i<5;i++){ v+=a*noise(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return v; }
+      void main(){
+        vec3 d = normalize(vDir); float h = d.y;
+        vec3 col = mix(uHor, uTop, pow(clamp(h,0.0,1.0), 0.5));
+        col = mix(col, uGround, 1.0 - smoothstep(-0.12, 0.0, h));
+        float s = max(dot(d, uSunDir), 0.0);
+        col += uSun * uSunVis * (pow(s, 6.0) * 0.28 + pow(s, 60.0) * 0.7);
+        if (h > 0.0) {
+          vec2 cp = d.xz / (h + 0.1) * 0.8;
+          float n = fbm(cp * 1.4);
+          float cov = smoothstep(0.52, 0.8, n) * smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.5, 0.9, h));
+          vec3 cc = mix(uCloud, uSun * 1.5, pow(s, 3.0) * uSunVis * 0.7);
+          col = mix(col, cc, cov * 0.8);
+        }
+        col += uSun * uSunVis * smoothstep(0.99955, 0.9998, s) * 30.0 * step(-0.004, h);
+        float m = max(dot(d, uMoonDir), 0.0);
+        col += vec3(0.8,0.86,1.0) * uMoonVis * (smoothstep(0.99975, 0.99988, m) * 5.0 + pow(m, 300.0) * 0.25);
+        vec2 sp = floor(vec2(atan(d.z, d.x) * 260.0, h * 520.0));
+        col += vec3(step(0.9975, hash(sp)) * uNight * smoothstep(0.04, 0.35, h) * 1.4);
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(2400, 48, 24), skyMat);
+  sky.frustumCulled = false; sky.renderOrder = -1; scene.add(sky); scene.userData.sky = sky;
+
+  /* lights */
+  hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6); scene.add(hemi);
+  sun = new THREE.DirectionalLight(0xffffff, 2); sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near: 1, far: 80 });
+  sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.02;
+  scene.add(sun); scene.add(sun.target);
+
+  /* city */
+  const [facade, glow] = makeFacadeTextures();
+  const TYPES = [[22, 50, 20], [18, 80, 16], [26, 100, 22], [16, 125, 16], [20, 150, 18], [14, 205, 14]];
+  const per = TYPES.map(() => []);
+  let seed = 11; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 1500; i++) {
+    const a = rnd() * Math.PI * 2, rad = 80 + Math.pow(rnd(), 0.8) * 680;
+    const x = Math.sin(a) * rad, z = -Math.cos(a) * rad;
+    const ahead = z < 0 ? 1 : 0.55;
+    let t = Math.floor(rnd() * 3.2 + rnd() * 3 * ahead * (rad > 160 ? 1 : 0.4));
+    t = clamp(t, 0, TYPES.length - 1);
+    per[t].push({ x, z, sx: 0.8 + rnd() * 0.45, sy: 0.75 + rnd() * 0.5, r: Math.floor(rnd() * 4) * Math.PI / 2, tint: rnd() });
+  }
+  const TINTS = ["#c8c2d6", "#b9c3d8", "#d8c6c0", "#c4c8cc", "#a9b4cc", "#d6d0c8"].map(lin);
+  const dummy = new THREE.Object3D();
+  TYPES.forEach(([w, h, d], ti) => {
+    const geo = scaledBox(w, h, d, { u: 12, v: 84, top: false }); geo.translate(0, h / 2, 0);
+    const mat = new THREE.MeshStandardMaterial({ map: facade, emissiveMap: glow, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.82, metalness: 0.05 });
+    cityMats.push(mat);
+    const list = per[ti]; if (!list.length) return;
+    const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((b, i) => {
+      dummy.position.set(b.x, -140, b.z); dummy.rotation.set(0, b.r, 0); dummy.scale.set(b.sx, b.sy, b.sx); dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix); mesh.setColorAt(i, TINTS[Math.floor(b.tint * TINTS.length)]);
+    });
+    scene.add(mesh);
+  });
+  /* landmark tower */
+  const tMat = new THREE.MeshStandardMaterial({ map: facade, emissiveMap: glow, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.6, color: lin("#cfd3e2") });
+  cityMats.push(tMat);
+  const tower = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(7, 9, 190, 16), tMat); shaft.position.y = 95; tower.add(shaft);
+  const crown = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 7, 22, 16), tMat); crown.position.y = 201; tower.add(crown);
+  const spire = new THREE.Mesh(new THREE.ConeGeometry(1.2, 40, 8), new THREE.MeshStandardMaterial({ color: 0x9aa0b0, roughness: 0.4, metalness: 0.6 })); spire.position.y = 232; tower.add(spire);
+  tower.position.set(-30, -140, -380); tower.scale.setScalar(1.15); scene.add(tower);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshStandardMaterial({ color: lin("#4a4a58"), roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -140; scene.add(ground);
+
+  /* our rooftop: observation deck with a glass railing */
+  const tiles = makeTileTexture();
+  const concrete = new THREE.MeshStandardMaterial({ color: lin("#b9b0a6"), roughness: 0.9 });
+  const deckTop = new THREE.Mesh(scaledBox(30, 0.12, 1.6, { u: 1.2, v: 1.2 }), new THREE.MeshStandardMaterial({ map: tiles, roughness: 0.85 }));
+  deckTop.position.set(0, -0.06, -0.2); deckTop.receiveShadow = true; scene.add(deckTop);
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(30, 1.5, 1.6), concrete); deck.position.set(0, -0.87, -0.2); deck.receiveShadow = true; scene.add(deck);
+  const tilesBig = tiles.clone(); tilesBig.needsUpdate = true;
+  const floor = new THREE.Mesh(scaledBox(30, 0.2, 23.4, { u: 2.4, v: 2.4 }), new THREE.MeshStandardMaterial({ map: tilesBig, roughness: 0.9 }));
+  floor.position.set(0, -1.72, 12.3); floor.receiveShadow = true; scene.add(floor);
+  const facadeBody = new THREE.Mesh(new THREE.BoxGeometry(30, 140, 25), new THREE.MeshStandardMaterial({ color: lin("#8f8a90"), roughness: 0.9 }));
+  facadeBody.position.set(0, -71.83, 11.5); scene.add(facadeBody);
+  const glass = new THREE.MeshStandardMaterial({ color: lin("#d2e6ee"), roughness: 0.05, transparent: true, opacity: 0.14, depthWrite: false });
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(30, 0.95, 0.02), glass); panel.position.set(0, 0.5, -0.96); scene.add(panel);
+  const metal = new THREE.MeshStandardMaterial({ color: lin("#8a8d93"), roughness: 0.35, metalness: 0.8 });
+  const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 30, 12), metal); rail.rotation.z = Math.PI / 2; rail.position.set(0, 1.0, -0.96); rail.castShadow = true; scene.add(rail);
+  for (let i = 0; i < 14; i++) { const post = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.0, 0.04), metal); post.position.set(-14.8 + i * 2.2, 0.5, -0.96); post.castShadow = true; scene.add(post); }
+  /* planters with greenery */
+  const leaf = new THREE.MeshStandardMaterial({ color: lin("#4c7a3a"), roughness: 0.8 });
+  const leaf2 = new THREE.MeshStandardMaterial({ color: lin("#6f9a3e"), roughness: 0.8 });
+  const pot = new THREE.MeshStandardMaterial({ color: lin("#e3dcd2"), roughness: 0.8 });
+  [[-4.4, 1], [6.8, 1.2], [-9, 0.9]].forEach(([x, s], k) => {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(1.1 * s, 0.45 * s, 0.7), pot); p.position.set(x, 0.225 * s, 0.05); p.castShadow = p.receiveShadow = true; scene.add(p);
+    for (let i = 0; i < 7; i++) {
+      const b = new THREE.Mesh(new THREE.IcosahedronGeometry(0.28 * s * (0.7 + ((i * 37 + k * 11) % 10) / 20), 1), i % 2 ? leaf : leaf2);
+      b.position.set(x + (i - 3) * 0.14 * s, 0.5 * s + ((i * 13) % 5) * 0.06 * s, 0.05 + ((i * 7) % 3 - 1) * 0.12);
+      b.castShadow = true; scene.add(b);
+    }
+  });
+
+  /* post: DOF + tone map */
+  post = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+    depthTest: false, depthWrite: false,
+    uniforms: { tColor: { value: null }, tDepth: { value: null }, uNear: { value: camera.near }, uFar: { value: camera.far }, uFocus: { value: 5 }, uFocal: { value: 35 }, uStop: { value: 2.8 },
+      uSensorH: { value: 20.25 }, uAspect: { value: 16 / 9 }, uExposure: { value: 1 }, uMaxR: { value: 0.045 }, uTime: { value: 0 } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+    fragmentShader: `
+      uniform sampler2D tColor, tDepth; uniform float uNear,uFar,uFocus,uFocal,uStop,uSensorH,uAspect,uExposure,uMaxR,uTime; varying vec2 vUv;
+      float linDepth(vec2 uv){ float z = texture2D(tDepth, uv).x * 2.0 - 1.0; return 2.0 * uNear * uFar / (uFar + uNear - z * (uFar - uNear)); }
+      float coc(float Dm){ float D = Dm * 1000.0, S = uFocus * 1000.0, f = uFocal;
+        float c = (f * f / (uStop * max(S - f, 1.0))) * abs(D - S) / D; return min(0.5 * c / uSensorH, uMaxR); }
+      vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
+      void main(){
+        vec3 base = texture2D(tColor, vUv).rgb;
+        float cC = coc(linDepth(vUv));
+        vec3 acc = base; float ws = 1.0;
+        if (cC > 0.0007) {
+          for (int i = 0; i < 64; i++) {
+            float fi = float(i); float r = sqrt((fi + 0.5) / 64.0); float a = fi * 2.39996323;
+            vec2 off = vec2(cos(a) / uAspect, sin(a)) * r * cC;
+            vec2 su = clamp(vUv + off, vec2(0.001), vec2(0.999));
+            vec3 sc = texture2D(tColor, su).rgb;
+            float sCoc = coc(linDepth(su));
+            float w = smoothstep(r * cC * 0.7 - 0.0004, r * cC + 0.0004, sCoc);
+            float l = dot(sc, vec3(0.2126, 0.7152, 0.0722));
+            w *= 1.0 + 3.0 * smoothstep(0.9, 4.0, l);
+            acc += sc * w; ws += w;
+          }
+        }
+        vec3 col = acc / ws * uExposure;
+        col = aces(col);
+        vec2 q = vUv - 0.5; q.x *= uAspect; col *= 1.0 - 0.28 * smoothstep(0.35, 1.0, length(q) / max(uAspect, 1.0) * 1.6);
+        col = pow(col, vec3(1.0 / 2.2));
+        col += (fract(sin(dot(vUv * 913.7 + uTime, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0 * 2.0;
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  }));
+  post.frustumCulled = false;
+  post.uniforms = post.material.uniforms;
+  post.scene = new THREE.Scene(); post.scene.add(post); post.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  ready = true;
+}
+
+function resize() {
+  if (!ready) return;
+  const frame = $("frame");
+  const w = Math.max(2, Math.round(frame.clientWidth)), h = Math.max(2, Math.round(frame.clientHeight));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(dpr); renderer.setSize(w, h, false);
+  const W = Math.round(w * dpr), H = Math.round(h * dpr);
+  if (rt) { rt.dispose(); rt.depthTexture.dispose(); }
+  const dt = new THREE.DepthTexture(W, H); dt.type = THREE.UnsignedIntType; dt.format = THREE.DepthFormat;
+  rt = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true });
+  rt.depthTexture = dt;
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  post.uniforms.tColor.value = rt.texture; post.uniforms.tDepth.value = dt;
+  dirty = true;
+}
+
+/* camera rig */
+const v3 = new THREE.Vector3(), tmp = new THREE.Vector3();
+function placeCamera(t) {
+  const s = state, shot = SHOTS[s.shot];
+  const ratio = RATIOS.find((r) => r.id === s.ratio).r;
+  const sensorH = ratio >= 1 ? 36 / ratio : 36;
+  const pp = movePhase(t);
+
+  // subject motion
+  person.position.copy(CHAR_HOME); person.rotation.set(0, CHAR_YAW, 0);
+  for (const k of ["legL", "legR", "armL", "armR"]) parts[k].rotation.x = 0;
+  if (s.move === "pan") {
+    const x = lerp(-3, 3, pp), speed = Math.abs(x - lerp(-3, 3, movePhase(t - 1 / 60))) * 60;
+    walkPhase += speed / 60 * 5.5;
+    const amp = clamp(speed / 1.4, 0, 1), sw = Math.sin(walkPhase) * amp;
+    person.position.x = x; person.position.y += Math.abs(Math.cos(walkPhase)) * 0.025 * amp;
+    person.rotation.y = -Math.PI / 2;
+    parts.legL.rotation.x = sw * 0.42; parts.legR.rotation.x = -sw * 0.42;
+    parts.armL.rotation.x = -sw * 0.32; parts.armR.rotation.x = sw * 0.32;
+  }
+  person.updateMatrixWorld(true);
+
+  let focal = s.focal;
+  let vfov = 2 * Math.atan(sensorH / 2 / focal);
+  const homeTarget = CHAR_HOME.clone();
+  let lookTarget, camPos, focusPoint, el = s.el, az = s.az;
+
+  if (s.shot === "OTS") {
+    const f = new THREE.Vector3(-Math.sin(CHAR_YAW), 0, -Math.cos(CHAR_YAW));
+    const right = new THREE.Vector3(-f.z, 0, f.x);
+    camPos = CHAR_HOME.clone().addScaledVector(f, -0.8).addScaledVector(right, 0.36).add(v3.set(0, 1.6, 0));
+    if (s.move === "dolly") camPos.addScaledVector(f, lerp(-0.6, 0.35, pp));
+    if (s.move === "arc") { const a = lerp(-0.5, 0.5, pp); camPos.sub(CHAR_HOME).applyAxisAngle(v3.set(0, 1, 0), a).add(CHAR_HOME); }
+    lookTarget = person.position.clone().addScaledVector(f, 90).addScaledVector(right, -12).add(v3.set(0, -4, 0));
+    focusPoint = lookTarget.clone();
+    if (s.move === "zoom") { focal = s.focal * lerp(0.6, 1.6, pp); vfov = 2 * Math.atan(sensorH / 2 / focal); }
+  } else {
+    let target;
+    if (s.shot === "ECU") {
+      const eyes = [parts.eyeL, parts.eyeR].map((e) => e.getWorldPosition(new THREE.Vector3()));
+      const camDir = new THREE.Vector3(Math.sin(THREE.MathUtils.degToRad(az)), 0, Math.cos(THREE.MathUtils.degToRad(az)));
+      target = eyes.sort((a, b) => b.clone().sub(person.position).dot(camDir) - a.clone().sub(person.position).dot(camDir))[0];
+    } else {
+      target = person.position.clone().add(v3.set(0, s.shot === "CU" ? 1.62 : s.shot === "MS" ? 1.3 : 0.9, 0));
+    }
+    let H = shot.H;
+    let d = (H / 2) / Math.tan(vfov / 2);
+    if (s.move === "dolly") d *= lerp(1.7, 0.55, pp);
+    if (s.move === "zoom") { const m = lerp(0.5, 1.9, pp); focal = s.focal * m; vfov = 2 * Math.atan(sensorH / 2 / focal); d *= m; }
+    if (s.move === "arc") az += lerp(-35, 35, pp);
+    const pivot = s.move === "pan" ? homeTarget.clone().add(v3.set(0, target.y - person.position.y, 0)) : target.clone();
+    const er = THREE.MathUtils.degToRad(el), ar = THREE.MathUtils.degToRad(az);
+    camPos = pivot.clone().add(tmp.set(Math.cos(er) * Math.sin(ar), Math.sin(er), Math.cos(er) * Math.cos(ar)).multiplyScalar(d));
+    // keep the camera out of the rooftop floor / wall
+    const onRoof = Math.abs(camPos.x) < 15 && camPos.z < 24;
+    const minY = onRoof && camPos.z > 0.6 ? -1.5 : onRoof && camPos.z > -1.0 ? 0.05 : -138;
+    if (camPos.y < minY) camPos.y = minY;
+    lookTarget = target.clone().add(v3.set(0, H * shot.lift, 0));
+    if (el > 60) lookTarget = target.clone();
+    focusPoint = target.clone();
+  }
+  camera.fov = THREE.MathUtils.radToDeg(vfov);
+  camera.position.copy(camPos);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(lookTarget);
+  if (s.move === "tilt") camera.rotateX(THREE.MathUtils.degToRad(lerp(0, 32, pp)));
+  if (s.roll) camera.rotateZ(THREE.MathUtils.degToRad(-s.roll));
+  camera.updateProjectionMatrix();
+
+  const flat = Math.hypot(focusPoint.x - camPos.x, focusPoint.z - camPos.z);
+  live.el = s.shot === "OTS" ? 0 : THREE.MathUtils.radToDeg(Math.atan2(camPos.y - focusPoint.y, flat));
+  live.focal = focal; live.focusM = camPos.distanceTo(focusPoint);
+
+  const pu = post.uniforms;
+  pu.uFocus.value = live.focusM; pu.uFocal.value = focal; pu.uStop.value = STOPS[s.stop];
+  pu.uSensorH.value = sensorH; pu.uAspect.value = camera.aspect;
+
+  // sun / shadow follows the character
+  const ld = sun.userData.dir || dirFrom(SUN_AZ, 20);
+  sun.target.position.copy(person.position); sun.position.copy(person.position).addScaledVector(ld, 30);
+  scene.userData.sky.position.copy(camera.position);
+}
+
+let lastHud = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!ready) return;
+  const moving = state.move !== "static";
+  if (moving) moveT += 1 / 60;
+  if (!dirty && !moving) return;
+  dirty = false;
+  placeCamera(moveT);
+  post.uniforms.uTime.value = (now % 1000) / 1000;
+  renderer.setRenderTarget(rt); renderer.render(scene, camera);
+  renderer.setRenderTarget(null); renderer.render(post.scene, post.cam);
+  if (!moving || now - lastHud > 120) { updateHud(); lastHud = now; }
+}
+
+/* ================= easing lanes ================= */
+const laneCv = $("lanes"), lctx = laneCv.getContext("2d");
+const PINK = "#f0b13a";
+let laneVisible = true, laneLast = 0;
+function sizeLanes() {
+  const w = laneCv.clientWidth || 600, rowH = w < 480 ? 58 : 62, h = EASES.length * rowH + 4;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  laneCv.style.height = h + "px"; laneCv.width = Math.round(w * dpr); laneCv.height = Math.round(h * dpr);
+  laneCv._m = { w, h, rowH, dpr };
+}
+function rr(x, y, w, h, r) { lctx.beginPath(); lctx.moveTo(x + r, y); lctx.arcTo(x + w, y, x + w, y + h, r); lctx.arcTo(x + w, y + h, x, y + h, r); lctx.arcTo(x, y + h, x, y, r); lctx.arcTo(x, y, x + w, y, r); lctx.closePath(); }
+function drawLanes() {
+  const m = laneCv._m; if (!m) return;
+  const { w, rowH, dpr } = m, D = state.laneDur, pre = 0.35, hold = 0.75, cyc = pre + D + hold;
+  const u = laneT % cyc, x = clamp((u - pre) / D, 0, 1), arrived = u >= pre + D;
+  $("laneClock").textContent = `${(x * D).toFixed(2)}s / ${D.toFixed(2)}s`;
+  lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.clearRect(0, 0, w, m.h);
+  const icon = 40, tx = icon + 12, tw = w - tx, th = 24;
+  const sx = tx + 14, ex = tx + (tw - 28) * 0.72 + 14, dist = ex - sx;
+  EASES.forEach((e, i) => {
+    const y0 = i * rowH + 2, sel = e.id === state.ease;
+    // icon with curve
+    rr(0, y0 + 6, icon, icon, 9); lctx.fillStyle = sel ? "#2a2417" : "#1e2229"; lctx.fill();
+    lctx.lineWidth = 1; lctx.strokeStyle = sel ? "#5a4720" : "#2a2f37"; lctx.stroke();
+    let lo = 0, hi = 1; for (let k = 0; k <= 60; k++) { const v = e.f(k / 60); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const gx = (t) => 7 + t * (icon - 14), gy = (v) => y0 + 6 + icon - 7 - (v - lo) / (hi - lo) * (icon - 14);
+    lctx.beginPath(); for (let k = 0; k <= 60; k++) { const t = k / 60; k ? lctx.lineTo(gx(t), gy(e.f(t))) : lctx.moveTo(gx(t), gy(e.f(t))); }
+    lctx.strokeStyle = sel ? PINK : "#8e929b"; lctx.lineWidth = 1.5; lctx.stroke();
+    lctx.beginPath(); lctx.arc(gx(x), gy(e.f(x)), 2.6, 0, Math.PI * 2); lctx.fillStyle = PINK; lctx.fill();
+    // labels
+    lctx.textBaseline = "alphabetic";
+    lctx.font = `600 13px "IBM Plex Sans KR", system-ui, sans-serif`; lctx.fillStyle = sel ? PINK : "#ebe7df"; lctx.textAlign = "left";
+    lctx.fillText(e.name, tx, y0 + 17);
+    lctx.font = `11px "IBM Plex Sans KR", system-ui, sans-serif`; lctx.fillStyle = "#8e929b"; lctx.textAlign = "right";
+    lctx.fillText(e.use, w - 2, y0 + 17);
+    // track
+    const ty = y0 + 24; rr(tx, ty, tw, th, th / 2); lctx.fillStyle = "#0a0c0f"; lctx.fill();
+    if (sel) { lctx.strokeStyle = "#5a4720"; lctx.lineWidth = 1; lctx.stroke(); }
+    const cy = ty + th / 2;
+    lctx.setLineDash([3, 3]); lctx.beginPath(); lctx.moveTo(ex, ty + 3); lctx.lineTo(ex, ty + th - 3); lctx.strokeStyle = "#b35a50"; lctx.lineWidth = 1; lctx.stroke(); lctx.setLineDash([]);
+    // equal-time spacing dots
+    for (let k = 0; k <= 12; k++) { const px = sx + e.f(k / 12) * dist; lctx.beginPath(); lctx.arc(px, cy, 1.7, 0, Math.PI * 2); lctx.fillStyle = k / 12 <= x + 1e-6 && x > 0 ? "rgba(240,177,58,0.55)" : "#3a3f48"; lctx.fill(); }
+    // motion trail
+    for (let k = 6; k >= 1; k--) { const tt = x - k * 0.022; if (tt <= 0) continue; const px = sx + e.f(tt) * dist; lctx.beginPath(); lctx.arc(px, cy, 7 - k * 0.6, 0, Math.PI * 2); lctx.fillStyle = `rgba(240,177,58,${0.22 - k * 0.03})`; lctx.fill(); }
+    const bx = sx + e.f(x) * dist;
+    if (arrived) { const a = clamp((u - pre - D) / hold, 0, 1); lctx.beginPath(); lctx.arc(bx, cy, 8 + a * 10, 0, Math.PI * 2); lctx.strokeStyle = `rgba(240,177,58,${0.6 * (1 - a)})`; lctx.lineWidth = 1.5; lctx.stroke(); }
+    const grd = lctx.createRadialGradient(bx, cy, 0, bx, cy, 14); grd.addColorStop(0, "rgba(240,177,58,0.45)"); grd.addColorStop(1, "rgba(240,177,58,0)");
+    lctx.fillStyle = grd; lctx.beginPath(); lctx.arc(bx, cy, 14, 0, Math.PI * 2); lctx.fill();
+    lctx.beginPath(); lctx.arc(bx, cy, 7.5, 0, Math.PI * 2); lctx.fillStyle = PINK; lctx.fill();
+  });
+}
+function laneLoop(now) {
+  requestAnimationFrame(laneLoop);
+  const dt = laneLast ? Math.min(0.1, (now - laneLast) / 1000) : 0; laneLast = now;
+  if (!laneVisible) return;
+  if (lanePlaying) laneT += dt;
+  drawLanes();
+}
+laneCv.addEventListener("click", (ev) => {
+  const m = laneCv._m, r = laneCv.getBoundingClientRect();
+  const i = Math.floor((ev.clientY - r.top) / m.rowH);
+  if (EASES[i]) { state.ease = EASES[i].id; moveT = 0; sync(); }
+});
+$("lanePlay").addEventListener("click", () => { lanePlaying = !lanePlaying; $("lanePlay").textContent = lanePlaying ? "일시정지" : "재생"; });
+try { new IntersectionObserver((en) => { laneVisible = en[0].isIntersecting; }).observe(laneCv); } catch (_) {}
+new ResizeObserver(() => { sizeLanes(); drawLanes(); }).observe(laneCv);
+sizeLanes();
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) { lanePlaying = false; laneT = 0.35 + 1.4 * 0.6; $("lanePlay").textContent = "재생"; }
+requestAnimationFrame(laneLoop);
+
+/* ================= boot ================= */
+try {
+  buildScene();
+  setPerson($("subject").value);
+  $("loading").hidden = true;
+} catch (err) {
+  $("loading").textContent = "이 브라우저에서 3D 미리보기를 열 수 없어요 (WebGL 필요). 설정·설명·프롬프트는 그대로 쓸 수 있습니다.";
+  console.error(err);
+}
+layout();
+sync();
+new ResizeObserver(() => layout()).observe($("stage"));
+addEventListener("resize", layout);
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
