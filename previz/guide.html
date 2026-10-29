@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ko"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>프롬프트 가이드 · Video Skill</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {
+  --bg:#0f1114; --panel:#171a1f; --raise:#1e2229; --line:#2a2f37;
+  --text:#e6e8eb; --muted:#8b939e; --accent:#ff5a4e; --accent-2:#ffd84a; --blue:#5fa8ff;
+  --code-bg:#0b0d10;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg:#f6f7f9; --panel:#ffffff; --raise:#eceef2; --line:#d9dce2;
+  --text:#1a1d22; --muted:#5d6672; --accent:#d93a2e; --accent-2:#9a7600; --blue:#1f6fd1;
+  --code-bg:#eef0f4; color-scheme: light;
+} }
+:root[data-theme="light"] {
+  --bg:#f6f7f9; --panel:#ffffff; --raise:#eceef2; --line:#d9dce2;
+  --text:#1a1d22; --muted:#5d6672; --accent:#d93a2e; --accent-2:#9a7600; --blue:#1f6fd1;
+  --code-bg:#eef0f4; color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin:0; background: var(--bg); color: var(--text);
+  font: 14px/1.6 Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+header.top { display:flex; flex-wrap:wrap; align-items:center; gap:12px 16px; padding:12px 0; border-bottom:1px solid var(--line); }
+.brand { font-weight:700; letter-spacing:.08em; font-size:13px; display:flex; align-items:center; gap:8px; }
+.brand .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); }
+.brand-sub { color:var(--muted); font-weight:500; }
+.site-nav { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+.site-nav a { padding:4px 12px; color:var(--muted); text-decoration:none; font-size:12.5px; }
+.site-nav a + a { border-left:1px solid var(--line); }
+.site-nav a:hover { color:var(--text); background:var(--raise); }
+.site-nav a[aria-current="page"] { color:var(--text); background:var(--raise); }
+main { max-width: 860px; margin: 0 auto; }
+h1 { font-size:22px; margin:28px 0 6px; text-wrap:balance; }
+.lead { color:var(--muted); margin:0 0 20px; max-width:65ch; }
+.tools { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+.tools button, .chip {
+  background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:7px;
+  padding:5px 12px; font:inherit; font-size:12.5px; cursor:pointer;
+}
+.tools button:hover { background:var(--raise); }
+.tools button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
+section.grp { margin-top:28px; }
+section.grp h2 { font-size:15px; margin:0 0 10px; display:flex; gap:8px; align-items:baseline; }
+section.grp h2 .k { color:var(--accent); font-family:ui-monospace, Menlo, monospace; }
+ol.items { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+ol.items li {
+  background:var(--panel); border:1px solid var(--line); border-radius:8px;
+  padding:10px 12px 10px 48px; position:relative; min-width:0;
+}
+ol.items li .n {
+  position:absolute; left:12px; top:10px; width:26px; text-align:right;
+  font:12px ui-monospace, Menlo, monospace; color:var(--muted);
+}
+.tag { font-size:10.5px; border-radius:4px; padding:1px 6px; margin-right:6px; vertical-align:1px; letter-spacing:.03em; }
+.tag.new { background:color-mix(in srgb, var(--accent) 18%, transparent); color:var(--accent); }
+.tag.old { background:var(--raise); color:var(--muted); }
+code { background:var(--code-bg); border:1px solid var(--line); border-radius:4px; padding:0 5px; font:12.5px ui-monospace, Menlo, monospace; overflow-wrap:anywhere; }
+.cp { float:right; margin-left:8px; background:none; border:1px solid var(--line); color:var(--muted); border-radius:5px; font-size:11px; padding:1px 7px; cursor:pointer; }
+.cp:hover { color:var(--text); background:var(--raise); }
+.note { margin-top:30px; border:1px solid var(--line); border-left:3px solid var(--accent-2); background:var(--panel); border-radius:8px; padding:12px 14px; }
+.note h2 { font-size:14px; margin:0 0 6px; }
+.note ul { margin:0; padding-left:18px; color:var(--muted); }
+.note li + li { margin-top:4px; }
+.hide-old li.old-item { display:none; }
+#toast { position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); background:var(--raise); border:1px solid var(--line); padding:6px 14px; border-radius:7px; font-size:12.5px; opacity:0; pointer-events:none; transition:opacity .2s; }
+#toast.on { opacity:1; }
+</style>
+</head><body>
+<header class="top">
+  <div class="brand"><span class="dot"></span>VIDEO<span class="brand-sub">SKILL</span></div>
+  <nav class="site-nav" aria-label="사이트"><a href="./">프리비즈</a><a href="lab.html">구도 실험실</a><a href="filter.html">프롬프트 게이지</a><a href="guide.html" aria-current="page">프롬프트 가이드</a></nav>
+</header>
+
+<main id="root">
+  <h1>범용 프롬프트 설정 가이드</h1>
+  <p class="lead">특정 프로젝트와 무관하게 쓸 수 있는 원칙 27개. 이번 링크 21개 분석에서 온 것은 <span class="tag new">신규</span>, 기존 학습에서 온 것은 <span class="tag old">기존</span>으로 표시했습니다.</p>
+  <div class="tools">
+    <button id="fNew" aria-pressed="false">신규만 보기</button>
+    <button id="cpAll">전체 복사</button>
+  </div>
+  <div id="groups"></div>
+
+  <aside class="note">
+    <h2>엔진별로 갈리는 항목 (범용에서 제외)</h2>
+    <ul>
+      <li>Flow의 첫 프레임 지정/참조 모드/첫+끝 프레임 비교는 Flow 기준 결과이며, Seedance에서는 시작/끝프레임을 쓰지 않고 <code>@Image N</code> 참조만 사용</li>
+      <li>시간대 지시는 한글 프롬프트가 더 뚜렷하게 반영된 사례(GPT Image 2.5 Sunburst, 소수 샘플) — 엔진 특이 사항</li>
+      <li>직광 플래시의 물리 흔적(하드섀도우·급격한 노출 드롭)은 텍스트 구체화만으로는 재현되지 않았고, 원본 무드보드를 image_reference로 같이 넣는 방식이 다음 시도 후보</li>
+    </ul>
+  </aside>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const D = [
+ ["A","입력(이미지·레퍼런스) 설정",[
+  [1,"n","모든 컷은 텍스트만으로 시작하지 말고 확정된 이미지를 입력으로 시작 — 글로만 시키면 얼굴·옷을 모델이 정함. 레퍼런스 이미지는 항상 `@Image N` 태그로 지칭"],
+  [2,"n","같은 장소를 반복해야 하면 3D 블록아웃(블렌더 등) 영상을 먼저 만들고, 이미지 질감만 그 위에 입히는 영상→영상 방식으로 배경 일관성 확보. 프롬프트 3블록: 공간에 고정 / 이미지별 합성 위치 / 디테일·조명 유지"],
+  [3,"n","나중에 사람만 오려낼 소스는 캐릭터에 없는 단색 배경으로 생성"],
+  [4,"n","작품·IP 이름 대신 생김새(머리색·옷색·문장 모양)를 묘사"],
+  [5,"n","병렬 생성한 결과는 파일명을 믿지 말고 열어서 내용 기준으로 확인"],
+  [6,"o","레퍼런스 시트 형태의 합성 이미지는 모델이 밝은 카탈로그 톤으로 수렴해 톤이 무너짐 → 개별 확정 이미지를 코드(PIL)로 조립"],
+  [7,"o","얼굴 클로즈업이 붕괴되면 레퍼런스 얼굴에 격자(크로스해치) 훼손을 줘서 픽셀 복사 대신 구조 재해석 유도 (텍스트 얼굴 고정 지시와 병행)"]]],
+ ["B","프롬프트 문장 설계",[
+  [8,"n","한 컷 꼬리 문장 고정: `One continuous shot, no scene cuts.` + 소리는 별도 처리할 경우 `No dialogue, no music.`"],
+  [9,"n","모호한 지시를 수치·버전·제약으로 바꾸기 (예: 5초 안에 전달, 3가지 버전+추천 이유, 50% 축소, N개 제안) — 메타프롬프트 지시문에도 동일 적용"],
+  [10,"o","품질 형용사보다 실패 패턴 금지(안티 AI 구체화): 무엇을 피할지를 구체적으로 적기"],
+  [11,"o","조명·시간대·색온도를 먼저 텍스트로 고정한 뒤 배경·인서트샷 생성 — 일관성에 가장 효과적. 광원은 \"이 영상의 유일한 광원은 ○○뿐\" 식으로 한 줄 고정"],
+  [12,"n","피부 사실감은 \"사실적으로\" 대신 5요소(모공/솜털/핏줄/국소 SSS/PBR+부위별 거칠기)를 물리 조건으로 분해해 지시. 영상에서는 카메라를 고정하고 움직임을 빛에만 주면 디테일이 시간적으로 안정됨"],
+  [13,"o","그레인은 어색함을 가리는 용도일 뿐 해결이 아니며, 영상에서는 깜빡임·고정 노이즈를 유발할 수 있음"],
+  [14,"n","\"녹는다\" 같은 동사는 물리 현상(젖은 광택, 늘어지는 가닥, 표면장력, 기포)으로 구체화"]]],
+ ["C","카메라·연출 어휘",[
+  [15,"n","렌즈는 mm만이 아니라 렌즈+촬영 거리를 같이 지정 (예: `85mm / 6m`) — 배경 압축감은 렌즈 자체보다 카메라가 얼마나 멀리 있는가의 영향이 큼"],
+  [16,"n","샷사이즈·앵글을 용도로 고르기: 와이드=장소, 미디엄=움직임, 클로즈업=감정, ECU=디테일, 하이앵글=작고 약함, 로우앵글=강하고 웅장, 틸트=긴장"],
+  [17,"n","앵글 변경만 필요하면 원본 영상을 레퍼런스로 넣어 일관성을 유지한 채 앵글만 바꾸는 방식을 먼저 고려"],
+  [18,"n","셔터 느낌은 수치 대신 결과 상태로 지시 — 또렷한 입자는 `crisp, minimal motion blur`, 부드러운 속도감은 `natural cinematic motion blur` (생성 모델이 실제 셔터앵글을 계산하는지는 미검증)"],
+  [19,"n","색온도(K) 수치는 분위기 예시일 뿐 정밀 지시값이 아님 → `warm tungsten`, `cool daylight` 같은 상대 표현 병행"]]],
+ ["D","텍스트·글자",[
+  [20,"o","한글 간판류는 전경 큰 글자만 보고 판단하지 말고 중경 작은 글자까지 200~300% 확대 검수. 모든 엔진이 100% 깨끗하지 않으므로 글자 영역 별도 리터치 또는 글자가 안 보이는 구도 선택"],
+  [21,"o","따옴표 안 글자는 오타까지 그대로 반영되므로 미리 철자 확인, 프롬프트 끝에 \"내가 적은 글자 외에는 넣지 마\" 한 줄 추가"]]],
+ ["E","생성·검수 운영 (비용 절약)",[
+  [22,"n","본 생성 전에 저해상도 소량 테스트로 함정(배경 유지, 컷 분할, 워터마크 등) 파악 후 본 생성"],
+  [23,"n","동시 제출로 속도를 내되, 로컬 무거운 후처리는 동시 작업 수를 제한"],
+  [24,"n","정확한 박자·프레임이 필요한 요소는 코드가 담당하고 AI는 그림과 움직임만 담당"],
+  [25,"n","음악은 BPM·드롭 시점을 수치로 1차 선별, 음성은 음성인식으로 받아 적게 해 발음 오류 테이크 제거"],
+  [26,"n","반려한 지점과 이유를 기록해 다음 작업 시작 전에 규칙으로 적어둠 (되돌림 감소)"],
+  [27,"n","중간 과정 이미지를 먼저 확정해 레퍼런스로 던지는 방식과, 본인용 프롬프트 제작 도구 하나를 만들어두는 방식이 재생성 횟수를 줄임"]]]
+];
+const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const fmt = s => esc(s).replace(/`([^`]+)`/g,"<code>$1</code>");
+const root = document.getElementById("groups");
+root.innerHTML = D.map(([k,t,items]) => `
+  <section class="grp"><h2><span class="k">${k}</span>${esc(t)}</h2>
+  <ol class="items">${items.map(([n,f,x]) => `
+    <li class="${f==="o"?"old-item":"new-item"}" data-text="${esc(x.replace(/`/g,""))}">
+      <span class="n">${n}</span>
+      <button class="cp" type="button">복사</button>
+      <span class="tag ${f==="n"?"new":"old"}">${f==="n"?"신규":"기존"}</span>${fmt(x)}
+    </li>`).join("")}</ol></section>`).join("");
+
+const toast = document.getElementById("toast");
+let tt;
+function say(m){ toast.textContent = m; toast.classList.add("on"); clearTimeout(tt); tt = setTimeout(()=>toast.classList.remove("on"),1400); }
+async function copy(text){
+  try { await navigator.clipboard.writeText(text); say("복사됨"); }
+  catch(e){
+    const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); say("복사됨"); } catch(_) { say("복사 실패 — 직접 선택해 복사하세요"); }
+    ta.remove();
+  }
+}
+root.addEventListener("click", e => {
+  const b = e.target.closest(".cp"); if (!b) return;
+  copy(b.closest("li").dataset.text);
+});
+document.getElementById("cpAll").addEventListener("click", () => {
+  const vis = [...root.querySelectorAll("li")].filter(li => li.offsetParent !== null);
+  copy(vis.map(li => li.querySelector(".n").textContent + ". " + li.dataset.text).join("\n"));
+});
+const fNew = document.getElementById("fNew");
+fNew.addEventListener("click", () => {
+  const on = fNew.getAttribute("aria-pressed") !== "true";
+  fNew.setAttribute("aria-pressed", on);
+  document.getElementById("root").classList.toggle("hide-old", on);
+});
+</script>
+</body></html>

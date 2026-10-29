@@ -5,7 +5,7 @@ import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_
 import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
 import { generateShot, parseShotText, describeShot, defaultParams, objectHeight, aimOffset } from './generator.js';
 import { buildObject, signature, applyPose, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
-import { exportPNG, encodeVideo, saveBlob, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
+import { exportPNG, encodeVideo, saveBlob, canSaveMov, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 import { SongPlayer } from './audio.js';
 import { CymbalPhysics } from './physics.js';
 import { idbGet, idbSet, idbDel } from './store.js';
@@ -172,6 +172,124 @@ function stadiumProject() {
   return p;
 }
 
+// Same ballpark, same steal of third, seen from the dirt: a static ground-level wide-angle frame beside the bag
+// (ECU · low angle · static). The third baseman takes the throw over the bag and sweeps the tag down while the
+// runner dives head first into the bag, all in ~10x high-speed slow motion.
+function slideProject() {
+  const p = baseProject('3루 슬라이딩 — 그라운드 로우앵글');
+  p.lighting = 'day'; // the reference frame is a sunny day game
+  p.style = 'Photorealistic live-action baseball game on a bright sunny afternoon, sold-out crowd. '
+    + 'Camera lying in the infield dirt right beside third base, ultra-wide lens a few centimetres off the ground, '
+    + 'strong Dutch tilt: the base fills the foreground, the third baseman\'s cleats and legs tower over the lens. '
+    + 'High-speed slow motion (240 fps look): the runner drops into a feet-first bent-leg slide, lead cleat aimed at the bag, dirt spraying '
+    + 'in slow clouds. Hard sunlight and long shadows, subtle film grain, slight vignette, teal sky above the light towers.';
+  const B = 27.43 / Math.SQRT2;
+  const S = Math.SQRT1_2;
+  // s: metres from third base toward second; l: metres sideways toward the home-plate side
+  const pt = (s, l = 0, y = 0) => [r3(-B + S * s + S * l), y, r3(-B - S * s + S * l)];
+  const yawTo = (from, to) => r3(THREE.MathUtils.radToDeg(Math.atan2(to[0] - from[0], to[2] - from[2])));
+  const home = [0, 0, 0], B3 = [-B, 0, -B];
+  const offense = '#e9e5dc', defense = '#2c3e66';
+  const dur = 10;
+  const catcherPos = [0, 0, 1.0];
+  const runner = makeObject('actor', { name: '주자', color: offense, height: 1.83, pose: 'slide_feet', rotY: -45 });
+  const fPos = pt(0.3, -0.8);
+  const third = makeObject('actor', { name: '3루수', color: defense, pose: 'tag', pos: fPos, rotY: yawTo(fPos, pt(3, 2.5)) });
+  const fielder = (name, pos, pose = 'field_ready', face = home) => makeObject('actor', { name, color: defense, pose, pos, rotY: yawTo(pos, face) });
+  const ball = makeObject('baseball', { name: '야구공 (송구)' });
+
+  // Where a posed actor's left hand (the glove) and right hand are at shot time t, in world space.
+  const handsAt = (o, t) => {
+    const g = buildObject(o);
+    g.position.set(...o.pos);
+    g.rotation.y = THREE.MathUtils.degToRad(o.rotY);
+    applyPose(g, o.pose, 0, 0, t, 0.65, { t, dur, c0: 0 });
+    g.updateMatrixWorld(true);
+    const r = g.userData.rig;
+    return { L: r.handL.getWorldPosition(new THREE.Vector3()), R: r.handR.getWorldPosition(new THREE.Vector3()) };
+  };
+  // Where a posed actor's feet are at shot time t (the shoe is the last child of each knee).
+  const feetAt = (o, t) => {
+    const g = buildObject(o);
+    g.position.set(...o.pos);
+    g.rotation.y = THREE.MathUtils.degToRad(o.rotY);
+    applyPose(g, o.pose, 0, 0, t, 0.65, { t, dur, c0: 0 });
+    g.updateMatrixWorld(true);
+    const r = g.userData.rig;
+    const shoe = (knee) => knee.children[knee.children.length - 1].getWorldPosition(new THREE.Vector3());
+    return { L: shoe(r.kneeL), R: shoe(r.kneeR) };
+  };
+
+  // Runner: last strides (0-3 s), drop back into the slide (3-5 s, the pose's blend window), feet-first slide that
+  // stops at 9.2 s with the lead cleat against the bag. ~0.8 m/s on screen = a 8 m/s sprint at ~10x slow motion.
+  runner.pos = pt(0);
+  const h = feetAt(runner, dur);
+  const sOf = (w) => S * (w.x - B3[0]) - S * (w.z - B3[2]);
+  const reach = -Math.min(sOf(h.L), sOf(h.R)); // pivot -> leading shoe along the base path, lying back
+  const v = 0.8, tLand = 5.5, tStop = 9.2, slide = (v * (tStop - tLand)) / 2;
+  // The lead shoe comes to rest against the near edge of the bag (the bag spans s = -0.19..0.19).
+  const sEnd = reach + 0.2, sLand = sEnd + slide, s0 = sLand + v * tLand;
+  const sAt = (t) => {
+    if (t <= tLand) return s0 - v * t;
+    if (t >= tStop) return sEnd;
+    const u = t - tLand;
+    return sLand - (v * u - (v * u * u) / (2 * (tStop - tLand)));
+  };
+  runner.pos = pt(s0);
+  const runKeys = [];
+  for (let t = 0; t <= dur + 1e-6; t += 0.25) runKeys.push({ t: r3(t), pos: pt(sAt(t)), rotY: -45 });
+
+  // Ball: the catcher's throw, on its real arc, drifting in slowly over the last few metres (0.9 m/s on screen)
+  // into the glove at 7.2 s; then it rides the glove down for the tag.
+  const tCatch = 7.2, ballV = 0.9;
+  const glove = (t) => { const g = handsAt(third, t).L; return [r3(g.x), r3(g.y + 0.04), r3(g.z)]; };
+  const g0 = glove(tCatch);
+  const from = [catcherPos[0] - 0.3, 1.85, catcherPos[2] - 0.3];
+  const throwLen = Math.hypot(g0[0] - from[0], g0[2] - from[2]);
+  const arcAt = (u) => [0, 1, 2].map((i) => r3(from[i] + (g0[i] - from[i]) * u + (i === 1 ? 1.1 * Math.sin(Math.PI * u) : 0)));
+  const ballKeys = [];
+  for (let t = 0; t < tCatch - 1e-6; t += 0.3) {
+    ballKeys.push({ t: r3(t), pos: arcAt(1 - (ballV * (tCatch - t)) / throwLen), rotY: 0 });
+  }
+  for (let t = tCatch; t <= dur + 1e-6; t += 0.2) ballKeys.push({ t: r3(t), pos: glove(t), rotY: 0 });
+  ball.pos = ballKeys[0].pos.slice();
+
+  // Dirt kicked up where the hip lands (5.5 s) and where the cleat hits the bag (8.6 s); 'spray' = slow burst.
+  const dust = (name, s, size, at) => makeObject('dust', { name, color: '#b08a5e', pos: pt(s), rotY: -45, size, pose: 'spray', burstBeat: r3(at / 0.65) });
+
+  p.objects.push(
+    makeObject('ballpark', { name: '야구장' }),
+    runner, third, ball,
+    dust('먼지 (착지)', sLand + 0.9, [1.3, 0.7, 1.8], tLand),
+    dust('먼지 (베이스)', 0.45, [1.5, 0.9, 1.2], 8.6),
+    fielder('유격수', [-9.5, 0, -33]),
+    fielder('2루수', [9.5, 0, -33]),
+    fielder('1루수', [B - 1.5, 0, -B - 2]),
+    fielder('투수', [0, 0.25, -18.2], 'stand', B3),
+    fielder('포수', catcherPos, 'throw', B3),
+    fielder('좌익수', [-30, 0, -72]),
+    fielder('중견수', [0, 0, -88]),
+    fielder('우익수', [30, 0, -72]),
+    makeObject('actor', { name: '주심', color: '#1d1f24', pose: 'field_ready', pos: [0, 0, 2.3], rotY: 180 }),
+    makeObject('actor', { name: '3루심', color: '#1d1f24', pose: 'field_ready', pos: pt(-1.5, 4.5), rotY: yawTo(pt(-1.5, 4.5), B3) }),
+    makeObject('actor', { name: '3루 코치', color: offense, pose: 'reach_up', pos: [-B - 6, 0, -B + 9], rotY: yawTo([-B - 6, 0, -B + 9], B3) }),
+  );
+
+  // Static lens in the dirt on the home-plate side of the bag, looking up across it toward second base:
+  // bag big in the lower-left foreground, the fielder's legs over it, the runner sliding in feet first from the right.
+  const cam = pt(-0.55, 0.35, 0.22);
+  const key = { t: 0, pos: cam, target: pt(4.15, -1.36, 0.5), focal: 10, roll: 15 };
+  p.shots.push({
+    id: uid(), name: '3루 발 슬라이딩 · 그라운드 로우앵글', duration: dur, ease: 'linear', shake: 0,
+    desc: '3루 베이스 바로 옆 흙바닥에 카메라를 눕혀 올려다보는 고정 초광각 컷. 앞에 베이스가 크게 걸리고 3루수의 다리가 화면 위로 솟아 있다. '
+      + '2루 주자가 초고속 슬로모션으로 마지막 두 걸음을 딛고 몸을 뒤로 눕히며 발부터 미끄러져 들어온다. 앞발은 베이스를 향해 곧게 뻗고 뒷다리는 접혀 있으며, 흙먼지가 천천히 피어오르고, '
+      + '송구를 받은 3루수가 글러브를 베이스 앞으로 내려 태그한다.',
+    keys: [key], anim: { [runner.id]: runKeys, [ball.id]: ballKeys }, genAnim: [],
+    meta: { subject: runner.id, size: 'ecu', angle: 'low', dir: 'front', move: 'static', lens: 10, duration: dur },
+  });
+  return p;
+}
+
 // Same ballpark, side view: a triple. The batter has rounded 2nd and sprints for 3rd while the center fielder's
 // throw comes in to the shortstop (the relay man). Time is frozen and he runs in slow motion; 1 s into shot 1 the
 // freeze breaks and everything, the runner included, ramps up to real speed.
@@ -316,8 +434,7 @@ function tripleSideProject() {
   return p;
 }
 
-// 'steal' is the older name of the triple example; old links keep working.
-const SAMPLES = { alley: sampleProject, stadium: stadiumProject, triple: tripleSideProject, steal: tripleSideProject };
+const SAMPLES = { alley: sampleProject, stadium: stadiumProject, slide: slideProject, triple: tripleSideProject, steal: tripleSideProject };
 
 function blankProject() {
   const p = baseProject('새 프리비즈');
@@ -434,6 +551,29 @@ function autosave() {
       idbSet('assets', project.assets || {});
     }
   }, 400);
+}
+
+// Save button / Ctrl+S: write the project to this browser right away, then offer it as a
+// .previz.json file the viewer can keep and reopen with "열기".
+let saving = false;
+async function saveProject() {
+  if (saving) return;
+  saving = true;
+  clearTimeout(saveTimer);
+  let local = true;
+  try { localStorage.setItem('previz.project.v1', JSON.stringify({ ...project, assets: undefined })); } catch { local = false; }
+  assetsDirty = false;
+  idbSet('assets', project.assets || {});
+  const where = local ? '이 브라우저에 저장했습니다' : '브라우저 저장소를 쓸 수 없습니다';
+  toast(`${where} — 파일로도 받으려면 확인 창에서 저장을 누르세요`, 4000);
+  try {
+    const st = await exportJSON(exportable());
+    toast(st === 'declined' ? `${where} (파일 저장은 취소)` : `${where} · "${project.name}.previz.json" 파일 저장 완료`, 4000);
+  } catch (err) {
+    toast(`${where} · 파일 저장 실패: ${err.message}`, 5000);
+  } finally {
+    saving = false;
+  }
 }
 
 // Project copy for saving: only the reference images still in use.
@@ -586,6 +726,8 @@ function syncScene() {
     meshes.set(o.id, ng);
     if (selection?.kind === 'object' && selection.id === o.id) gizmo.attach(ng);
   }
+  // A ballpark paints its own field 1 cm up; drop the 3 km base ground well below it so the two never z-fight.
+  ground.position.y = project.objects.some((o) => o.type === 'ballpark') ? -0.3 : 0;
   litNow = '';
   setLight(project.lighting);
 }
@@ -1756,8 +1898,9 @@ async function exportVideo(format, all) {
       onProgress: (n, total) => { badge.textContent = `● ${label} 내보내는 중 ${Math.floor((n / total) * 100)}% · 클릭하면 취소`; },
     });
     if (!res) return toast('영상 내보내기를 취소했습니다');
-    saveBlob(res.blob, name);
+    const status = await saveBlob(res.blob, name);
     window.__previzLastExport = res;
+    if (status === 'declined') return toast('영상 저장을 취소했습니다');
     const note = res.audio === 'aac' ? ' · 음악 포함 (AAC)'
       : res.audio === 'unsupported' ? ' · 이 브라우저는 AAC 인코딩을 지원하지 않아 음악 없이 저장했습니다' : '';
     toast(`${label} (${window.__previzVideoCodec ? window.__previzVideoCodec.toUpperCase() : 'H.264'}, ${w}×${h}, ${fps}fps) 저장 완료${note}`, 5000);
@@ -1980,7 +2123,7 @@ function bindUI() {
     loadProject(SAMPLES[b.dataset.sample](), true);
     toast(`예제 "${project.name}" 을(를) 열었습니다 — Ctrl+Z 로 이전 작업 복구`);
   }));
-  $('btnSave').onclick = () => exportJSON(exportable());
+  $('btnSave').onclick = saveProject;
   $('btnOpen').onclick = () => $('fileInput').click();
   $('fileInput').addEventListener('change', async (e) => {
     const f = e.target.files[0];
@@ -1996,6 +2139,8 @@ function bindUI() {
   const menu = $('exportMenu');
   $('btnExport').onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
   document.addEventListener('click', () => { menu.hidden = true; });
+  // MOV only where it can be saved; inside claude.ai the menu offers MP4 alone
+  canSaveMov().then((ok) => { if (!ok) menu.querySelectorAll('[data-export^="mov-"]').forEach((b) => b.remove()); });
   menu.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', async () => {
     menu.hidden = true;
     const kind = b.dataset.export;
@@ -2003,20 +2148,26 @@ function bindUI() {
       if (kind === 'png') {
         const a = aspect();
         const w = a >= 1 ? 1920 : 1080;
-        exportPNG(shotRenderer, scene, shotCam, w, Math.round(w / a), setDirectorOnlyVisible, `${project.name}_shot${shotIdx + 1}_${timecode(time, project.fps).replace(/:/g, '-')}.png`);
+        const png = exportPNG(shotRenderer, scene, shotCam, w, Math.round(w / a), setDirectorOnlyVisible, `${project.name}_shot${shotIdx + 1}_${timecode(time, project.fps).replace(/:/g, '-')}.png`);
         resize();
-        toast('PNG 저장 완료');
+        toast((await png) === 'declined' ? 'PNG 저장을 취소했습니다' : 'PNG 저장 완료');
       } else if (/^(mp4|mov)-(shot|all)$/.test(kind)) {
         const [format, scope] = kind.split('-');
         await exportVideo(format, scope === 'all');
       }
       else if (kind === 'gltf') {
-        await exportGLB(project, meshes, sensorW());
-        toast('GLB 저장 완료 — 샷마다 카메라와 애니메이션 클립이 포함됩니다', 4000);
+        const st = await exportGLB(project, meshes, sensorW());
+        toast(st === 'declined' ? 'GLB 저장을 취소했습니다' : 'GLB 저장 완료 (.zip 안에 .glb) — 샷마다 카메라와 애니메이션 클립이 포함됩니다', 4000);
       } else if (kind === 'prompts') {
-        const text = exportPrompts(project, describeShot);
-        try { await navigator.clipboard.writeText(text); toast('샷리스트를 저장하고 클립보드에 복사했습니다'); } catch { toast('샷리스트를 저장했습니다'); }
-      } else if (kind === 'json') exportJSON(exportable());
+        const { text, saved } = exportPrompts(project, describeShot);
+        let copied = false;
+        try { await navigator.clipboard.writeText(text); copied = true; } catch { /* clipboard refused */ }
+        const st = await saved;
+        toast(st === 'declined' ? (copied ? '샷리스트를 클립보드에 복사했습니다 (파일 저장은 취소)' : '샷리스트 저장을 취소했습니다')
+          : copied ? '샷리스트를 저장하고 클립보드에 복사했습니다' : '샷리스트를 저장했습니다');
+      } else if (kind === 'json') {
+        toast((await exportJSON(exportable())) === 'declined' ? '프로젝트 JSON 저장을 취소했습니다' : '프로젝트 JSON 저장 완료');
+      }
     } catch (err) {
       console.error(err);
       toast(`내보내기 실패: ${err.message}`);
@@ -2359,7 +2510,7 @@ function onKey(e) {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
-  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); exportJSON(exportable()); return; }
+  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveProject(); return; }
   if (mod) return;
   switch (e.key) {
     case ' ': e.preventDefault(); setPlaying(!playing); break;

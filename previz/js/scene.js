@@ -186,6 +186,17 @@ const POSE_DEF = {
   run: { run: true, lean: 0.32, head: -0.2, stride: 4, phase: 1.2 },
   field_ready: { drop: -0.14, hip: [-0.5, -0.5], knee: [0.75, 0.75], lean: 0.5, head: -0.45, sh: [-0.55, 0.3, -0.55, -0.3], el: [-0.55, -0.55] },
   throw: { drop: -0.06, hip: [-0.85, 0.45], knee: [0.45, 0.35], lean: 0.18, head: -0.1, sh: [-1.25, 0.25, -2.7, -0.45], el: [-0.5, -1.45] },
+  // Head-first slide: the sprint cycle, then (blend window, fractions of the shot) a dive that pitches the whole
+  // body forward about the feet (pitch) along an airborne arc, into a prone belly slide with both arms reaching ahead.
+  slide: { run: true, lean: 0.32, head: -0.2, stride: 4, phase: 1.2, blend: [0.3, 0.55], arc: 0.42,
+    to: { drop: 0.03, pitch: 1.46, hip: [0.12, 0.02], knee: [0.45, 0.95], lean: -0.12, head: -1.05, sh: [-2.658, -0.25, -2.658, 0.25], el: [-0.12, -0.12] } },
+  // Feet-first (bent-leg) slide: the sprint cycle, then (blend window) the body drops back about the feet into a
+  // slide on the hip and back: lead (right) leg straight at the bag, trail leg tucked, left hand trailing in the dirt.
+  slide_feet: { run: true, lean: 0.32, head: -0.2, stride: 4, phase: 1.2, blend: [0.3, 0.5], arc: 0.12,
+    to: { drop: 0.02, pitch: -1.32, hip: [-0.85, 0.06], knee: [1.75, 0.05], lean: 0.8, head: 0.45, sh: [0.15, 0.75, -1.35, -0.35], el: [-0.3, -0.9] } },
+  // Base tag: waits on the bag with the glove up for the throw, then (blend window) sweeps it down to the bag.
+  tag: { drop: -0.1, hip: [-0.45, 0.3], knee: [0.6, 0.3], lean: 0.35, head: 0.05, sh: [-1.35, 0.3, -1.1, -0.3], el: [-0.55, -0.7], blend: [0.72, 0.9],
+    to: { drop: -0.3, hip: [-1.0, 0.35], knee: [1.2, 0.6], lean: 1.0, head: 0.25, sh: [-0.75, 0.05, -0.55, -0.25], el: [-0.15, -0.45] } },
   // Sprint, then (settle.at, seconds after local.freezeAt) ease out of the stride into a set stance.
   run_set: { run: true, lean: 0.32, head: -0.2, stride: 4, phase: 1.2, settle: { pose: 'field_ready', at: [0.6, 0.9] } },
   // Delivery frozen mid-throw; from the shot's freeze-break time it follows through, then settles to standing
@@ -403,6 +414,39 @@ function applyDissolve(group, r, spec, local) {
 }
 
 
+// The rig's joints as a flat pose (to blend from whatever the frame has posed so far).
+function readPose(r) {
+  return {
+    drop: r.root.position.y, pitch: r.root.rotation.x, lean: r.spine.rotation.x, head: r.headG.rotation.x,
+    hip: [r.hipL.rotation.x, r.hipR.rotation.x], knee: [r.kneeL.rotation.x, r.kneeR.rotation.x],
+    sh: [r.shL.rotation.x, r.shL.rotation.z, r.shR.rotation.x, r.shR.rotation.z], el: [r.elL.rotation.x, r.elR.rotation.x],
+  };
+}
+
+function mixPose(a, b, e) {
+  const L = (x, y) => x + (y - x) * e;
+  const arr = (k, def) => (a[k] || def).map((v, i) => L(v, (b[k] || def)[i]));
+  return {
+    drop: L(a.drop || 0, b.drop || 0), pitch: L(a.pitch || 0, b.pitch || 0), lean: L(a.lean || 0, b.lean || 0), head: L(a.head || 0, b.head || 0),
+    hip: arr('hip', [0, 0]), knee: arr('knee', [0, 0]), sh: arr('sh', [0, 0.08, 0, -0.08]), el: arr('el', [0, 0]),
+  };
+}
+
+function setPose(r, p) {
+  r.root.position.y = p.drop;
+  r.root.rotation.x = p.pitch;
+  r.spine.rotation.x = p.lean;
+  r.headG.rotation.set(p.head, 0, 0);
+  r.hipL.rotation.set(p.hip[0], 0, 0);
+  r.hipR.rotation.set(p.hip[1], 0, 0);
+  r.kneeL.rotation.set(p.knee[0], 0, 0);
+  r.kneeR.rotation.set(p.knee[1], 0, 0);
+  r.shL.rotation.set(p.sh[0], 0, p.sh[1]);
+  r.shR.rotation.set(p.sh[2], 0, p.sh[3]);
+  r.elL.rotation.set(p.el[0], 0, 0);
+  r.elR.rotation.set(p.el[1], 0, 0);
+}
+
 export function poseNames(type) {
   return Object.keys(POSE_SETS[type] || {});
 }
@@ -446,6 +490,7 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
     if (r.handL) { r.handL.scale.set(0.8, 1.1, 0.6); r.handR.scale.set(0.8, 1.1, 0.6); }
     const hip = d.hip || [0, 0], knee = d.knee || [0, 0], sh = d.sh || [0, 0.08, 0, -0.08], el = d.el || [0, 0];
     r.root.position.y = d.drop || 0;
+    r.root.rotation.x = d.pitch || 0;
     r.spine.rotation.x = d.lean || 0;
     r.headG.rotation.set(d.head || 0, d.turn || 0, 0);
     if (d.look && local) {
@@ -489,6 +534,14 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
       r.shR.rotation.set(-0.95 * sw, 0, -0.12);
       r.elL.rotation.x = -1.5;
       r.elR.rotation.x = -1.5;
+    }
+    if (d.to && local) {
+      // Shot-timed transition into d.to (d.blend = [start, end] as fractions of the shot)
+      const f = (local.t / Math.max(0.01, local.dur) - d.blend[0]) / (d.blend[1] - d.blend[0]);
+      const c = Math.max(0, Math.min(1, f));
+      const e = c * c * (3 - 2 * c);
+      if (e > 0) setPose(r, mixPose(d.run ? readPose(r) : d, d.to, e));
+      if (d.arc) r.root.position.y += d.arc * Math.sin(Math.PI * c);
     }
     if (d.settle && local) {
       const e = smooth((local.t - (local.freezeAt ?? 0) - d.settle.at[0]) / (d.settle.at[1] - d.settle.at[0]));
@@ -755,7 +808,9 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
   } else if (a.kind === 'dust') {
     // Settled dust on a slab. Pose 'burst': on beat burstBeat (counted from the first downbeat) it shoots
     // up fast, then decelerates and hangs in the air; any other pose keeps it lying on the slab.
-    const age = pose === 'burst' ? clock - a.burstBeat * beat : -1;
+    // 'spray' is the same burst played 8x slower (dust kicked up by a slide, in high-speed slow motion)
+    const slow = pose === 'spray' ? 8 : 1;
+    const age = pose === 'burst' || pose === 'spray' ? (clock - a.burstBeat * beat) / slow : -1;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3();
     a.items.forEach((it, i) => {
       const ag = age - it.lag;
@@ -764,6 +819,7 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
       e.set(it.rx + k * it.spin, it.ry + k * it.spin * 0.7, 0);
       q.setFromEuler(e);
       sc.set(it.s, it.s * (k > 0 ? 1 : it.sy), it.s);
+      if (slow > 1 && k <= 0) sc.setScalar(0.0001); // spray: nothing lies on the dirt before it is kicked up
       m.compose(p, q, sc);
       a.mesh.setMatrixAt(i, m);
     });
@@ -1532,10 +1588,11 @@ function outwardNormals(pts) {
 function buildBallpark(o) {
   const g = new THREE.Group();
   const rand = rng(o.id + 'park');
-  // --- playing field: one painted plane, lifted with a polygon offset over the app's ground
+  // --- playing field: one painted plane; the app drops its own ground well below it while a ballpark is in the
+  // scene (a polygon offset here blows up at grazing angles and lets that ground show through near a low lens)
   const field = new THREE.Mesh(
-    new THREE.PlaneGeometry(FIELD.w, FIELD.d),
-    new THREE.MeshStandardMaterial({ map: paintField(o.color || '#3d7a35'), roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 }),
+    new THREE.PlaneGeometry(FIELD.w, FIELD.d, 32, 32),
+    new THREE.MeshStandardMaterial({ map: paintField(o.color || '#3d7a35'), roughness: 0.95 }),
   );
   field.rotation.x = -Math.PI / 2;
   field.position.set(FIELD.x0 + FIELD.w / 2, 0.012, FIELD.z0 + FIELD.d / 2);
