@@ -5,7 +5,37 @@ import { resolveCamera, sampleObject, isAnimated } from './anim.js';
 
 const safe = (s) => (s || 'previz').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'previz';
 
-function download(blob, name) {
+// Inside claude.ai the page cannot start downloads itself; files go through the viewer's
+// `downloads` capability (a confirmation the viewer accepts). Elsewhere a plain <a download> works.
+let dlCap = null;
+const downloadsCap = () => (dlCap ??= (window.claude?.use ? window.claude.use('downloads').catch(() => null) : Promise.resolve(null)));
+downloadsCap();
+
+/** claude.ai's downloads capability refuses .mov files the page encodes itself (not_signed); a plain <a download> saves them. */
+export const canSaveMov = async () => !(await downloadsCap());
+
+const SAVE_ERRORS = {
+  rejected_extension: '이 형식의 파일은 여기서 저장할 수 없습니다',
+  too_large: '파일이 너무 커서 저장하지 못했습니다',
+  rate_limited: '이미 저장 확인 창이 열려 있습니다. 잠시 후 다시 시도하세요',
+  not_signed: 'MOV는 이 화면에서 저장할 수 없습니다. MP4로 내보내 주세요',
+};
+
+/** Hands a file to the viewer. Resolves 'saved' or 'declined'; rejects with a readable message otherwise. */
+async function download(blob, name) {
+  const dl = await downloadsCap();
+  if (dl) {
+    try {
+      await dl.save({ filename: name, data: blob });
+      return 'saved';
+    } catch (err) {
+      if (err?.code === 'declined') return 'declined';
+      if (SAVE_ERRORS[err?.code]) throw new Error(SAVE_ERRORS[err.code]);
+      if (!['unavailable', 'not_granted', 'capability_disabled', 'capability_removed'].includes(err?.code)) {
+        throw new Error(err?.message || '파일을 저장하지 못했습니다');
+      }
+    }
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -14,14 +44,15 @@ function download(blob, name) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return 'saved';
 }
 
 export function downloadText(text, name, type = 'text/plain') {
-  download(new Blob([text], { type: `${type};charset=utf-8` }), name);
+  return download(new Blob([text], { type: `${type};charset=utf-8` }), name);
 }
 
 export function exportJSON(project) {
-  downloadText(JSON.stringify(project, null, 2), `${safe(project.name)}.previz.json`, 'application/json');
+  return downloadText(JSON.stringify(project, null, 2), `${safe(project.name)}.previz.json`, 'application/json');
 }
 
 export function exportPNG(renderer, scene, camera, w, h, setDirectorOnlyVisible, name) {
@@ -29,7 +60,42 @@ export function exportPNG(renderer, scene, camera, w, h, setDirectorOnlyVisible,
   setDirectorOnlyVisible(false);
   renderer.render(scene, camera);
   setDirectorOnlyVisible(true);
-  renderer.domElement.toBlob((blob) => download(blob, safe(name)), 'image/png');
+  return new Promise((resolve, reject) => {
+    renderer.domElement.toBlob((blob) => (blob ? download(blob, safe(name)).then(resolve, reject) : reject(new Error('PNG를 만들지 못했습니다'))), 'image/png');
+  });
+}
+
+// CRC-32 and a stored (uncompressed) ZIP: .glb is not on the save allowlist, .zip is.
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function zipOne(name, bytes) {
+  const fname = new TextEncoder().encode(name);
+  const crc = crc32(bytes), size = bytes.length;
+  const local = new DataView(new ArrayBuffer(30));
+  local.setUint32(0, 0x04034b50, true); local.setUint16(4, 20, true); local.setUint16(6, 0x0800, true);
+  local.setUint32(14, crc, true); local.setUint32(18, size, true); local.setUint32(22, size, true);
+  local.setUint16(26, fname.length, true);
+  const central = new DataView(new ArrayBuffer(46));
+  central.setUint32(0, 0x02014b50, true); central.setUint16(4, 20, true); central.setUint16(6, 20, true); central.setUint16(8, 0x0800, true);
+  central.setUint32(16, crc, true); central.setUint32(20, size, true); central.setUint32(24, size, true);
+  central.setUint16(28, fname.length, true);
+  const end = new DataView(new ArrayBuffer(22));
+  const cdOffset = 30 + fname.length + size;
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, 1, true); end.setUint16(10, 1, true);
+  end.setUint32(12, 46 + fname.length, true); end.setUint32(16, cdOffset, true);
+  return new Blob([local, fname, bytes, central, fname, end], { type: 'application/zip' });
 }
 
 /**
@@ -77,7 +143,7 @@ export async function encodeVideo({ format, canvas, fps, frameCount, renderFrame
 }
 
 export function saveBlob(blob, name) {
-  download(blob, safe(name));
+  return download(blob, safe(name));
 }
 
 const nodeName = (s) => s.replace(/[^\w\-가-힣]+/g, '_');
@@ -154,7 +220,7 @@ export async function exportGLB(project, meshes, sensorW) {
 
   const exporter = new GLTFExporter();
   const glb = await exporter.parseAsync(root, { binary: true, animations: clips, onlyVisible: true });
-  download(new Blob([glb], { type: 'model/gltf-binary' }), `${safe(project.name)}.glb`);
+  return download(zipOne(`${safe(project.name)}.glb`, new Uint8Array(glb)), `${safe(project.name)}_glb.zip`);
 }
 
 const mmss = (t) => {
@@ -186,6 +252,5 @@ export function exportPrompts(project, describeShot) {
     lines.push(describeShot(s, project, i).en);
   });
   const text = lines.join('\n') + '\n';
-  downloadText(text, `${safe(project.name)}_shotlist.md`, 'text/markdown');
-  return text;
+  return { text, saved: downloadText(text, `${safe(project.name)}_shotlist.md`, 'text/markdown') };
 }
