@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>카메라 구도 실험실</title>
+<title>카메라 구도 실험실 · Video Skill</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -299,7 +299,7 @@ input[type="range"] { width: 100%; accent-color: var(--focus); margin: 0; height
       </div>
       <div class="prompt"><pre id="promptOut"></pre></div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button class="copy" id="copyBtn" type="button">프롬프트 복사</button><button class="send" id="sendBtn" type="button">프리비즈 샷으로 보내기</button><span class="copied" id="copied" hidden>복사됨</span></div>
-      <p class="note" id="sendNote">지금 구도(샷 크기·앵글·방향·무빙·이징·렌즈·시간·빛)를 프리비즈 스튜디오에 새 샷으로 추가하고 이동해요. 인물 묘사는 샷 설명으로 들어갑니다.</p>
+      <p class="note" id="sendNote">지금 구도(샷 크기·앵글·방향·무빙·이징·렌즈·시간·빛)를 프리비즈 탭에 새 샷으로 추가하고 이동해요. 인물 묘사는 샷 설명으로 들어갑니다.</p>
       <p class="note">미리보기는 이해를 돕는 단순화된 3D 장면입니다. 실제 영상 생성에는 위 프롬프트에 원하는 피사체·장소를 넣어 쓰세요.</p>
     </section>
   </section>
@@ -591,7 +591,7 @@ function writePrompt() {
 }
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 
-/* ================= hand-off to Previz Studio ================= */
+/* ================= hand-off to the previz tab ================= */
 function labToPreviz() {
   const s = state;
   const size = { ELS: "ews", LS: "fs", MS: "ms", CU: "cu", ECU: "ecu", OTS: "ms" }[s.shot];
