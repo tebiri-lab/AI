@@ -252,7 +252,8 @@ function build(s) {
     t(', with only a light glow on top. The softness comes from glow and diffusion, never from distorting, replacing, or inventing any '); v('shapes', true); t('.\n\n');
   }
 
-  t('Keep the original time of day, sky, and color identity of '); v(img, imgCh);
+  if (val('warm')) { t('Keep the original time of day and sky of '); v(img, imgCh); v(', and keep its color identity apart from the even warm cast', true); }
+  else { t('Keep the original time of day, sky, and color identity of '); v(img, imgCh); }
   // With warmth on, only sunset stays forbidden: golden hour and sepia would contradict the amber cast.
   if (val('warm')) { t(': do not shift it toward sunset'); v(' or monochrome', true); t(', and do not tint'); }
   else t(': do not shift it toward sunset, golden hour, sepia, or monochrome, and do not tint');
@@ -265,7 +266,7 @@ function build(s) {
 function warnings(s, bulletCount) {
   const w = [];
   if (bulletCount === 0) w.push('효과가 모두 꺼져 있어서 "Filter effects" 목록이 비어 있습니다. 모델이 아무것도 바꾸지 않을 가능성이 큽니다.');
-  if (s.warm > 0) w.push('따뜻함을 켜면 흰 옷이나 파란 하늘 같은 색이 변할 수 있습니다. 충돌을 막으려고 금지 목록에서 golden hour·sepia는 빼고, 저녁 노을(sunset)만 금지로 남깁니다.');
+  if (s.warm > 0) w.push('따뜻함을 켜면 흰 옷이나 파란 하늘 같은 색이 변할 수 있습니다. 충돌을 막으려고 금지 목록에서 golden hour·sepia는 빼고, 저녁 노을(sunset)만 금지로 남기고, 색 정체성 유지 문장도 따뜻한 캐스트는 허용하도록 약하게 바꿉니다.');
   if (s.text && s.blur >= 3) w.push('블러가 강하면 작은 글씨·로고가 뭉개지거나 다시 그려질 위험이 커집니다.');
   if (s.vis <= 1 && (s.bloom >= 3 || s.blur >= 3)) w.push('전체 체감 강도는 약하게, 개별 효과는 강하게 설정되어 있습니다. 서로 반대 신호라 결과가 들쭉날쭉할 수 있습니다.');
   return w;
