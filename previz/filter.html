@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>프롬프트 게이지</title>
+<meta name="description" content="노스탤지어 필터·자막 지우기 같은 범용 프롬프트를 게이지와 옵션으로 조절하면 영어 프롬프트 문장이 자동으로 바뀝니다.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: gauge column on the left, sticky prompt output on the right; stacks on phones. Same palette as lab.html. */
+:root {
+  --ink: #0e1013;
+  --panel: #16191e;
+  --raise: #1e2229;
+  --line: #2a2f37;
+  --text: #ebe7df;
+  --muted: #8e929b;
+  --focus: #f0b13a;
+  --warn-bg: #3a1f1c;
+  --warn-fg: #ffb3a8;
+  --warn-line: #5c2b26;
+  --mark-bg: #3b2f14;
+  --mark-fg: #ffd98a;
+  --font-ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { background: var(--ink); color: var(--text); margin: 0; }
+body {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 40px;
+}
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+button, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px; max-width: 1400px; margin: 0 auto 16px; }
+.top h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.top p { margin: 0; color: var(--muted); font-size: 13px; }
+.brandrow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.site-nav { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.site-nav a { padding: 4px 12px; color: var(--muted); text-decoration: none; font-size: 12.5px; }
+.site-nav a + a { border-left: 1px solid var(--line); }
+.site-nav a:hover { color: var(--text); background: var(--raise); }
+.site-nav a[aria-current="page"] { color: var(--text); background: var(--raise); }
+
+.app {
+  max-width: 1400px; margin: 0 auto;
+  display: grid; gap: 20px;
+  grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+  align-items: start;
+}
+.controls { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.output { display: flex; flex-direction: column; gap: 14px; min-width: 0; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; scrollbar-width: thin; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card h2 { font-size: 15px; font-weight: 700; display: flex; align-items: baseline; gap: 8px; }
+.card h2 small { font-family: var(--font-data); font-weight: 500; font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+.note { margin: 0; font-size: 12px; color: var(--muted); }
+
+.modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.modes button { background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: pointer; text-align: left; font-weight: 700; font-size: 13.5px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.modes button small { font-weight: 400; font-size: 11.5px; color: var(--muted); }
+.modes button:hover { border-color: #3d434d; }
+.modes button[aria-pressed="true"] { border-color: var(--focus); background: #2a2417; }
+.modes button[aria-pressed="true"] small { color: #e9cf96; }
+.choice-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.choice-row button { background: var(--raise); border: 1px solid var(--line); border-radius: 7px; padding: 5px 12px; cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.choice-row button:hover { color: var(--text); border-color: #3d434d; }
+.choice-row button[aria-pressed="true"] { color: var(--text); border-color: var(--focus); background: #2a2417; }
+.choice-row button.is-def::after { content: "•"; margin-left: 3px; color: #6b6f78; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.presets button { background: var(--raise); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.presets button:hover { color: var(--text); border-color: #3d434d; }
+
+.gauge { display: flex; flex-direction: column; gap: 4px; }
+.gauge-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.gauge-head label { font-size: 13px; font-weight: 500; }
+.gauge-head output { font-family: var(--font-data); font-size: 12px; color: var(--focus); white-space: nowrap; }
+.gauge-head output.def { color: var(--muted); }
+input[type="range"] { width: 100%; accent-color: var(--focus); margin: 0; height: 22px; }
+.ticks { display: flex; justify-content: space-between; gap: 2px; }
+.ticks button { background: none; border: 1px solid transparent; border-radius: 5px; padding: 1px 4px; cursor: pointer; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ticks button:hover { color: var(--text); border-color: var(--line); }
+.ticks button[aria-pressed="true"] { color: var(--focus); border-color: #5a4720; }
+.ticks button.is-def::after { content: "•"; margin-left: 2px; color: #6b6f78; }
+.phrase { font-family: var(--font-data); font-size: 11.5px; color: #b9b3a5; min-height: 1.5em; word-break: break-word; }
+
+.check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
+.check input { accent-color: var(--focus); width: 16px; height: 16px; margin-top: 2px; flex: none; }
+.check span small { display: block; color: var(--muted); font-size: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.field input { background: var(--raise); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; min-width: 0; font-family: var(--font-data); font-size: 13px; color: var(--text); }
+
+.out-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.out-head h2 { flex: 1 1 auto; }
+.copy { background: var(--focus); color: #1b1407; border: 0; border-radius: 7px; padding: 7px 14px; font-weight: 700; cursor: pointer; }
+.copy:hover { filter: brightness(1.08); }
+.ghost { background: var(--raise); border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; cursor: pointer; font-size: 12.5px; }
+.ghost:hover { border-color: #3d434d; }
+.copied { font-size: 12px; color: var(--focus); min-width: 4em; }
+pre.prompt { margin: 0; white-space: pre-wrap; word-break: break-word; background: #0a0c0f; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; font-family: var(--font-data); font-size: 12.5px; line-height: 1.65; color: #f1ebdc; }
+pre.prompt mark { background: var(--mark-bg); color: var(--mark-fg); border-radius: 3px; padding: 0 2px; }
+pre.prompt.plain mark { background: none; color: inherit; padding: 0; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-family: var(--font-data); font-size: 11.5px; color: var(--muted); }
+.legend mark { background: var(--mark-bg); color: var(--mark-fg); border-radius: 3px; padding: 0 4px; }
+
+.warns { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.warns li { font-size: 12.5px; padding: 7px 10px; border-radius: 7px; background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-line); }
+.tips { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.tips b { color: var(--text); font-weight: 500; }
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .output { position: static; max-height: none; overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brandrow">
+    <h1>프롬프트 게이지</h1>
+    <nav class="site-nav" aria-label="사이트"><a href="./">프리비즈</a><a href="lab.html">구도 실험실</a><a href="filter.html" aria-current="page">프롬프트 게이지</a></nav>
+  </div>
+  <p>범용 프롬프트를 게이지와 옵션으로 조절하면 영어 프롬프트가 자동으로 바뀝니다.</p>
+</header>
+
+<main class="app">
+  <section class="controls" aria-label="강도 조절">
+    <div class="card">
+      <h2>프롬프트 종류 <small>Prompt</small></h2>
+      <div class="modes" id="modes">
+        <button type="button" data-mode="filter">노스탤지어 필터<small>이미지 · 추억 필터</small></button>
+        <button type="button" data-mode="sub">자막 지우기<small>영상 · 하드 자막 제거</small></button>
+      </div>
+    </div>
+
+    <div class="card" data-for="filter">
+      <h2>프리셋 <small>Preset</small></h2>
+      <div class="presets" id="presets"></div>
+      <p class="note">● 표시가 원본 기본값입니다. 모든 게이지가 기본값이면 원본 프롬프트와 글자 하나까지 같습니다.</p>
+    </div>
+
+    <div class="card" data-for="filter">
+      <h2>효과 강도 <small>Gauges</small></h2>
+      <div id="gauges" style="display:flex;flex-direction:column;gap:16px"></div>
+    </div>
+
+    <div class="card" data-for="sub">
+      <h2>자막 옵션 <small>Subtitle</small></h2>
+      <div id="choices" style="display:flex;flex-direction:column;gap:16px"></div>
+      <p class="note">● 표시가 원본 기본값입니다. 모두 기본값이면 원본 프롬프트와 글자 하나까지 같습니다.</p>
+    </div>
+
+    <div class="card" data-for="filter">
+      <h2>옵션 <small>Options</small></h2>
+      <label class="field">이미지 참조 이름
+        <input id="imgRef" spellcheck="false" autocomplete="off">
+      </label>
+      <label class="check"><input type="checkbox" id="protectText">
+        <span>글씨·숫자·로고 보호 문장 포함<small>글씨가 없는 이미지는 꺼도 됩니다. 켜 둬도 부작용은 없어요.</small></span>
+      </label>
+    </div>
+  </section>
+
+  <section class="output" aria-label="프롬프트">
+    <div class="card">
+      <div class="out-head">
+        <h2>프롬프트 <small>English</small></h2>
+        <span class="copied" id="copied" aria-live="polite"></span>
+        <button class="ghost" id="toggleMark" aria-pressed="true">변경 표시 끄기</button>
+        <button class="copy" id="copyBtn">복사</button>
+      </div>
+      <pre class="prompt" id="prompt"></pre>
+      <div class="meta"><span class="legend"><mark>노란 글씨</mark> = 기본값에서 바뀐 부분</span><span id="count"></span></div>
+      <ul class="warns" id="warns"></ul>
+    </div>
+
+    <div class="card" data-for="filter">
+      <h2>알아둘 한계 <small>Notes</small></h2>
+      <ul class="tips">
+        <li>이 프롬프트는 <b>"이미지를 새로 그리지 말라"</b>는 지시에 의존합니다. 편집 모델이 이 지시를 완벽히 지키지 못할 수 있어요.</li>
+        <li>작은 글씨는 필터 단계에서도 틀어질 수 있습니다. 글씨가 중요하면 <b>글씨를 먼저 확정하고 필터를 마지막 단계</b>로 두세요.</li>
+        <li>그래도 내용이 바뀌면 Camera Raw나 DaVinci Resolve 같은 보정 도구로 블룸·그레인·비네트를 직접 입히는 편이 더 안정적입니다.</li>
+      </ul>
+    </div>
+
+    <div class="card" data-for="sub">
+      <h2>알아둘 한계 <small>Notes</small></h2>
+      <ul class="tips">
+        <li>"pixel-identical"은 목표를 강하게 거는 표현일 뿐, 영상 편집 모델은 다시 렌더링하면서 <b>얼굴·질감이 미세하게 바뀔 수 있습니다.</b> 결과를 원본과 나란히 놓고 확인하세요.</li>
+        <li>자막 바가 크거나 아래에 사람·제품이 가려져 있었다면 그 부분은 모델이 <b>새로 지어내서</b> 채웁니다.</li>
+        <li>얼굴이나 제품이 바뀌면 자막 영역만 마스크해서 After Effects 콘텐츠 인식 채우기 같은 보정 도구로 지우는 편이 더 안정적입니다.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<script>
+// Each gauge swaps one phrase in the base prompt. Index `def` reproduces the original text exactly.
+const GAUGES = [
+  { id: 'vis', name: '전체 체감 강도', def: 2, labels: ['아주 약하게', '약하게', '기본', '강하게'],
+    values: ['very subtle, just barely noticeable', 'subtle but noticeable', 'clearly visible at first glance', 'strong and unmistakable at first glance'] },
+  { id: 'bloom', name: '빛 번짐 (블룸·할레이션)', def: 2, labels: ['끔', '약', '기본', '강', '매우 강'],
+    values: [null, 'Subtle light bloom', 'Light bloom', 'Strong light bloom', 'Very strong light bloom'] },
+  { id: 'blur', name: '소프트 블러 · 비네트', def: 2, labels: ['끔', '약', '기본', '강', '매우 강'],
+    values: [null, 'Very slight soft blur', 'Soft, gentle blur', 'Strong soft-focus blur', 'Very strong soft-focus blur'] },
+  { id: 'fade', name: '색 바램 (물빠진 컬러)', def: 2, labels: ['끔', '약', '기본', '강', '매우 강'],
+    values: [null, 'Lightly faded memory color', 'Faded memory color', 'Heavily faded memory color', 'Very heavily faded memory color'] },
+  { id: 'grain', name: '필름 그레인', def: 2, labels: ['끔', '약', '기본', '강', '매우 강'],
+    values: [null, 'subtle, very fine,', 'visible, fine,', 'strong, clearly visible,', 'heavy, coarse,'] },
+  { id: 'warm', name: '따뜻함 (호박색 캐스트)', def: 0, labels: ['끔', '약', '중', '강'],
+    values: [null, 'a subtle warm golden-amber cast', 'a warm golden-amber cast', 'a strong warm golden-amber cast'] },
+];
+
+const PRESETS = [
+  { name: '원본 기본값', set: {} },
+  { name: '약하게', set: { vis: 1 } },
+  { name: '강하게', set: { bloom: 3, blur: 3 } },
+  { name: '따뜻한 추억', set: { warm: 2 } },
+  { name: '글씨 많은 이미지', set: { blur: 1 } },
+];
+
+// Subtitle-removal prompt: categorical choices. Index `def` reproduces the original text exactly.
+const SUB_CHOICES = [
+  { id: 'subPos', name: '자막 위치', def: 0, labels: ['하단', '상단', '상단 + 하단'],
+    values: ['the bottom of the frame', 'the top of the frame', 'the top and bottom of the frame'] },
+  { id: 'subBar', name: '자막 배경 바', def: 0, labels: ['있음', '없음 (글자만)'], values: [true, false] },
+];
+
+const DEFAULT_IMG = '@Image 1';
+const STORE_KEY = 'filter-gauge-v1';
+
+const state = { mode: 'filter', img: DEFAULT_IMG, text: true, marks: true };
+SUB_CHOICES.forEach(c => { state[c.id] = c.def; });
+GAUGES.forEach(g => { state[g.id] = g.def; });
+
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+  if (saved) for (const k of Object.keys(state)) if (k in saved) state[k] = saved[k];
+} catch (e) {}
+[...GAUGES, ...SUB_CHOICES].forEach(g => { const v = state[g.id]; if (!Number.isInteger(v) || v < 0 || v >= g.values.length) state[g.id] = g.def; });
+if (state.mode !== 'filter' && state.mode !== 'sub') state.mode = 'filter';
+
+const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} };
+
+// Builds the prompt as a list of [text, changed] parts so changed phrases can be highlighted.
+function build(s) {
+  const out = [];
+  const t = str => out.push([str, false]);
+  const v = (str, changed) => out.push([str, changed]);
+  const img = s.img.trim() || DEFAULT_IMG;
+  const imgCh = img !== DEFAULT_IMG;
+  const G = id => GAUGES.find(g => g.id === id);
+  const val = id => G(id).values[s[id]];
+  const ch = id => s[id] !== G(id).def;
+
+  t('Apply a nostalgic, dreamlike memory-style filter on top of '); v(img, imgCh);
+  t('. This is a post-processing filter pass, not a redraw: treat '); v(img, imgCh);
+  t(' as a finished photograph and add only optical and color effects over it. The effect must be '); v(val('vis'), ch('vis'));
+  t(', but the scene content must remain exactly identical to '); v(img, imgCh); t('.\n\n');
+
+  t('Content that must stay exactly as in '); v(img, imgCh);
+  t(', and changing any of it counts as failure: the composition, framing, camera angle, and perspective; every subject\'s pose, position, expression, and identity; all objects, backgrounds, crowds, and sky elements, with nothing added, removed, or moved; ');
+  if (s.text) {
+    t('the time of day and overall lighting direction; and all text, numbers, logos, and patches, with every letter and shape copied exactly as it appears and never redrawn, corrected, or replaced.\n\n');
+  } else {
+    v('and ', true); t('the time of day and overall lighting direction.\n\n');
+  }
+
+  const bullets = [];
+  if (val('bloom')) bullets.push(() => { v(val('bloom'), ch('bloom')); t(' and halation: a luminous Pro-Mist style glow bleeding from the brightest areas into their surroundings, a soft dreamy veil of light across the whole frame, and faint soft light flares near the frame edges.'); });
+  if (val('blur')) bullets.push(() => { v(val('blur'), ch('blur')); t(': lowered micro-contrast and slightly smeared fine detail like a vintage soft-focus lens. The background becomes noticeably softer and more diffused, and the corners fall off into a soft vignette with slight edge blur.'); });
+  if (val('fade')) bullets.push(() => { v(val('fade'), ch('fade')); t(': lifted, milky blacks, soft low contrast, smooth highlight roll-off where whites melt into the glow, and gently faded, slightly desaturated colors with a mild, even warmth across the whole frame.'); });
+  if (val('grain')) bullets.push(() => { t('Film texture: '); v(val('grain'), ch('grain')); t(' organic 35mm film grain across the whole image.'); });
+
+  t('Filter effects to add on top (these are the only changes):');
+  bullets.forEach(fn => { t('\n- '); fn(); });
+  t('\n\n');
+
+  if (s.text) {
+    t('Protect the key details inside the soft look: faces, eyes, and all lettering and logos stay sharp and legible, with only a light glow on top. The softness comes from glow and diffusion, never from distorting, replacing, or inventing any shapes or letters.\n\n');
+  } else {
+    t('Protect the key details inside the soft look: '); v('faces and eyes stay sharp and clear', true);
+    t(', with only a light glow on top. The softness comes from glow and diffusion, never from distorting, replacing, or inventing any '); v('shapes', true); t('.\n\n');
+  }
+
+  if (val('warm')) { t('Keep the original time of day and sky of '); v(img, imgCh); v(', and keep its color identity apart from the even warm cast', true); }
+  else { t('Keep the original time of day, sky, and color identity of '); v(img, imgCh); }
+  // With warmth on, only sunset stays forbidden: golden hour and sepia would contradict the amber cast.
+  if (val('warm')) { t(': do not shift it toward sunset'); v(' or monochrome', true); t(', and do not tint'); }
+  else t(': do not shift it toward sunset, golden hour, sepia, or monochrome, and do not tint');
+  t(' any subject or garment a new hue. Do not regenerate, reposition, re-pose, re-light, or re-frame anything. Keep the original aspect ratio and resolution.');
+  if (val('warm')) { v(' Add ' + val('warm') + ' spread evenly across the whole frame.', true); }
+
+  return { parts: out, bulletCount: bullets.length };
+}
+
+function buildSub(s) {
+  const out = [];
+  const t = str => out.push([str, false]);
+  const v = (str, changed) => out.push([str, changed]);
+  const C = id => SUB_CHOICES.find(c => c.id === id);
+  const val = id => C(id).values[s[id]];
+  const ch = id => s[id] !== C(id).def;
+
+  t('Remove the burned-in subtitle/caption text');
+  if (val('subBar')) t(' and its background bar');
+  t(' located at '); v(val('subPos'), ch('subPos')); t('.\n\n');
+  t('CRITICAL IDENTITY LOCK: every other element in the frame — background, character faces and expressions, poses, product details, colors, lighting, color grading, and camera framing — remains pixel-identical and completely unchanged throughout the entire clip.\n\n');
+  // Both positions means two regions, so the sentence switches to plural.
+  const two = s.subPos === 2;
+  t('The '); if (two) v('areas', true); else t('area'); t(' where the subtitle ');
+  if (val('subBar')) { if (two) v('text and bars were', true); else t('text and bar were'); } else v('text was', true);
+  if (two) v(' are', true); else t(' is'); t(' seamlessly reconstructed to match the original underlying scene: same color, texture, lighting, and film grain, as if no text overlay was ever present there.\n\n');
+  t('No new text, logo, watermark, or graphic element is added anywhere in the frame. Motion, timing, and duration remain exactly as in the source video.');
+  return { parts: out, bulletCount: 1 };
+}
+
+function warnings(s, bulletCount) {
+  if (s.mode === 'sub') return [];
+  const w = [];
+  if (bulletCount === 0) w.push('효과가 모두 꺼져 있어서 "Filter effects" 목록이 비어 있습니다. 모델이 아무것도 바꾸지 않을 가능성이 큽니다.');
+  if (s.warm > 0) w.push('따뜻함을 켜면 흰 옷이나 파란 하늘 같은 색이 변할 수 있습니다. 충돌을 막으려고 금지 목록에서 golden hour·sepia는 빼고, 저녁 노을(sunset)만 금지로 남기고, 색 정체성 유지 문장도 따뜻한 캐스트는 허용하도록 약하게 바꿉니다.');
+  if (s.text && s.blur >= 3) w.push('블러가 강하면 작은 글씨·로고가 뭉개지거나 다시 그려질 위험이 커집니다.');
+  if (s.vis <= 1 && (s.bloom >= 3 || s.blur >= 3)) w.push('전체 체감 강도는 약하게, 개별 효과는 강하게 설정되어 있습니다. 서로 반대 신호라 결과가 들쭉날쭉할 수 있습니다.');
+  return w;
+}
+
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const $ = id => document.getElementById(id);
+
+// --- UI ---
+const gaugesEl = $('gauges');
+GAUGES.forEach(g => {
+  const wrap = document.createElement('div');
+  wrap.className = 'gauge';
+  wrap.innerHTML = `
+    <div class="gauge-head"><label for="g-${g.id}">${g.name}</label><output id="o-${g.id}"></output></div>
+    <input type="range" id="g-${g.id}" min="0" max="${g.values.length - 1}" step="1">
+    <div class="ticks">${g.labels.map((l, i) => `<button type="button" data-i="${i}" class="${i === g.def ? 'is-def' : ''}">${l}</button>`).join('')}</div>
+    <div class="phrase" id="p-${g.id}"></div>`;
+  gaugesEl.appendChild(wrap);
+  wrap.querySelector('input').addEventListener('input', e => { state[g.id] = +e.target.value; render(); });
+  wrap.querySelectorAll('.ticks button').forEach(b => b.addEventListener('click', () => { state[g.id] = +b.dataset.i; render(); }));
+});
+
+const choicesEl = $('choices');
+SUB_CHOICES.forEach(c => {
+  const wrap = document.createElement('div');
+  wrap.className = 'gauge';
+  wrap.innerHTML = `
+    <div class="gauge-head"><label>${c.name}</label></div>
+    <div class="choice-row" id="c-${c.id}">${c.labels.map((l, i) => `<button type="button" data-i="${i}" class="${i === c.def ? 'is-def' : ''}">${l}</button>`).join('')}</div>`;
+  choicesEl.appendChild(wrap);
+  wrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state[c.id] = +b.dataset.i; render(); }));
+});
+
+document.querySelectorAll('#modes button').forEach(b => b.addEventListener('click', () => { state.mode = b.dataset.mode; render(); }));
+
+const presetsEl = $('presets');
+PRESETS.forEach(p => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = p.name;
+  b.addEventListener('click', () => {
+    GAUGES.forEach(g => { state[g.id] = g.def; });
+    Object.assign(state, p.set);
+    render();
+  });
+  presetsEl.appendChild(b);
+});
+
+$('imgRef').addEventListener('input', e => { state.img = e.target.value; render(); });
+$('protectText').addEventListener('change', e => { state.text = e.target.checked; render(); });
+$('toggleMark').addEventListener('click', () => { state.marks = !state.marks; render(); });
+
+let plainText = '';
+$('copyBtn').addEventListener('click', async () => {
+  let ok = false;
+  try { await navigator.clipboard.writeText(plainText); ok = true; } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = plainText; document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch (e2) {}
+    ta.remove();
+  }
+  $('copied').textContent = ok ? '복사됨' : '복사 실패';
+  setTimeout(() => { $('copied').textContent = ''; }, 1600);
+});
+
+function render() {
+  GAUGES.forEach(g => {
+    const i = state[g.id];
+    $('g-' + g.id).value = i;
+    const o = $('o-' + g.id);
+    o.textContent = g.labels[i];
+    o.classList.toggle('def', i === g.def);
+    document.querySelectorAll(`#g-${g.id} ~ .ticks button`).forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.i === i)));
+    const val = g.values[i];
+    $('p-' + g.id).textContent = val ? `“${val}”` : '— 문장에서 제외';
+  });
+  if ($('imgRef').value !== state.img) $('imgRef').value = state.img;
+  $('protectText').checked = state.text;
+
+  document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode)));
+  document.querySelectorAll('[data-for]').forEach(el => { el.hidden = el.dataset.for !== state.mode; });
+  SUB_CHOICES.forEach(c => document.querySelectorAll(`#c-${c.id} button`).forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.i === state[c.id]))));
+
+  const { parts, bulletCount } = state.mode === 'sub' ? buildSub(state) : build(state);
+  plainText = parts.map(p => p[0]).join('');
+  $('prompt').innerHTML = parts.map(([s, c]) => c ? `<mark>${esc(s)}</mark>` : esc(s)).join('');
+  $('prompt').classList.toggle('plain', !state.marks);
+  $('toggleMark').textContent = state.marks ? '변경 표시 끄기' : '변경 표시 켜기';
+  $('toggleMark').setAttribute('aria-pressed', String(state.marks));
+  const words = plainText.trim().split(/\s+/).length;
+  $('count').textContent = `${plainText.length.toLocaleString()}자 · ${words.toLocaleString()} words`;
+  $('warns').innerHTML = warnings(state, bulletCount).map(w => `<li>${esc(w)}</li>`).join('');
+  save();
+}
+
+render();
+</script>
+</body>
+</html>
