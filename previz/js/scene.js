@@ -1507,24 +1507,32 @@ const WALL_R = 97;
 // texture on a single plane: no stacked coplanar layers, so nothing can z-fight at any distance.
 const FIELD = { x0: -125, z0: -140, w: 250, d: 250, px: 4096 };
 
-function paintField(grassColor) {
+function paintField(grassColor, fence) {
   const c = document.createElement('canvas');
   c.width = c.height = FIELD.px;
   const ctx = c.getContext('2d');
   const k = FIELD.px / FIELD.w;
   ctx.setTransform(k, 0, 0, k, -FIELD.x0 * k, -FIELD.z0 * k); // draw in metres (x, z)
   const disc = (x, z, r, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, z, r, 0, Math.PI * 2); ctx.fill(); };
-  ctx.fillStyle = '#2f6a2b';
+  ctx.fillStyle = fence ? grassColor : '#2f6a2b';
   ctx.fillRect(FIELD.x0, FIELD.z0, FIELD.w, FIELD.d);
-  disc(WALL_C[0], WALL_C[1], WALL_R, grassColor);
+  if (!fence) disc(WALL_C[0], WALL_C[1], WALL_R, grassColor);
+  // A straight-sided fence: its line pulled toward home plate by d metres.
+  const inset = (d) => fence.map(([x, z]) => { const l = Math.hypot(x, z); return [x * (1 - d / l), z * (1 - d / l)]; });
   // mowing stripes, clipped to the fair/foul grass inside the wall
   ctx.save();
-  ctx.beginPath(); ctx.arc(WALL_C[0], WALL_C[1], WALL_R - 4.5, 0, Math.PI * 2); ctx.clip();
+  ctx.beginPath();
+  if (fence) { [...inset(4.5), [-90, 12], [90, 12]].forEach(([x, z], i) => (i ? ctx.lineTo(x, z) : ctx.moveTo(x, z))); ctx.closePath(); }
+  else ctx.arc(WALL_C[0], WALL_C[1], WALL_R - 4.5, 0, Math.PI * 2);
+  ctx.clip();
   ctx.fillStyle = 'rgba(255,255,255,0.07)';
   for (let x = -130; x < 130; x += 9) ctx.fillRect(x, -140, 4.5, 260);
   ctx.restore();
   ctx.strokeStyle = '#8a6a4a'; ctx.lineWidth = 4.5;
-  ctx.beginPath(); ctx.arc(WALL_C[0], WALL_C[1], WALL_R - 2.25, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  if (fence) inset(2.25).forEach(([x, z], i) => (i ? ctx.lineTo(x, z) : ctx.moveTo(x, z)));
+  else ctx.arc(WALL_C[0], WALL_C[1], WALL_R - 2.25, 0, Math.PI * 2);
+  ctx.stroke();
   disc(0, -18.44, 29, '#9a7454');
   ctx.save();
   ctx.translate(0, -BASE); ctx.rotate(Math.PI / 4);
@@ -1572,6 +1580,53 @@ function standOutline() {
   return pts;
 }
 
+// Daegu Samsung Lions Park: an octagonal field. Straight fence panels at 99.5 m down the lines, ~107 m in the
+// power alleys and 122.5 m to a flat centre-field section. Points run right-field pole -> left-field pole;
+// az is measured from centre field (-Z) toward right field (+X).
+const LIONS_FENCE = [[45, 99.5], [22, 110], [8, 122.5], [-8, 122.5], [-22, 110], [-45, 99.5]];
+function lionsFence() {
+  const pts = [];
+  const at = ([az, r]) => { const a = THREE.MathUtils.degToRad(az); return [Math.sin(a) * r, -Math.cos(a) * r]; };
+  for (let i = 0; i < LIONS_FENCE.length - 1; i++) {
+    const a = at(LIONS_FENCE[i]), b = at(LIONS_FENCE[i + 1]);
+    for (let j = 0; j < 4; j++) pts.push([a[0] + ((b[0] - a[0]) * j) / 4, a[1] + ((b[1] - a[1]) * j) / 4]);
+  }
+  pts.push(at(LIONS_FENCE[LIONS_FENCE.length - 1]));
+  return pts;
+}
+
+// Lions Park stands come in two pieces: a tall, roofed infield bowl (behind home and down both lines to the
+// poles) and lower outfield seating that follows the fence.
+function lionsStandParts(fence) {
+  const u1 = [Math.SQRT1_2, -Math.SQRT1_2], u3 = [-Math.SQRT1_2, -Math.SQRT1_2];
+  const n1 = [Math.SQRT1_2, Math.SQRT1_2], n3 = [-Math.SQRT1_2, Math.SQRT1_2];
+  const off = 18, poleS = 99.5;
+  const infield = [];
+  for (let s = poleS; s > 0; s -= 9.95) infield.push([u3[0] * s + n3[0] * off, u3[1] * s + n3[1] * off]);
+  const b0 = Math.atan2(n3[0], n3[1]), b1 = Math.atan2(n1[0], n1[1]);
+  for (let i = 0; i <= 10; i++) {
+    const b = b0 + ((b1 - b0) * i) / 10;
+    infield.push([Math.sin(b) * off, Math.cos(b) * off]);
+  }
+  for (let s = 9.95; s <= poleS + 1e-6; s += 9.95) infield.push([u1[0] * s + n1[0] * off, u1[1] * s + n1[1] * off]);
+  const outfield = fence.map(([x, z]) => { const l = Math.hypot(x, z); return [x * (1 + 2.5 / l), z * (1 + 2.5 / l)]; });
+  return [{ pts: infield, rows: 30, roof: true, infield: true }, { pts: outfield, rows: 14 }];
+}
+
+// Fan colours (body, cap) for Lions Park: Samsung Lions fans (royal blue / white) fill the 3rd-base side and the
+// outfield; NC Dinos fans (navy / gold) fill the visitors' 1st-base side of the infield bowl. White is kept
+// for Samsung only so the two crowds read apart by colour.
+const TEAM_KIT = {
+  samsung: { body: ['#1a5fd0', '#1a5fd0', '#1a5fd0', '#2f74e0', '#f3f5f9', '#f3f5f9'], cap: ['#1a5fd0', '#f3f5f9'] },
+  nc: { body: ['#1b2847', '#1b2847', '#22325a', '#c9a27a', '#c9a27a'], cap: ['#1b2847', '#c9a27a'] },
+};
+function lionsTeam(x, part, rand) {
+  if (!part.infield) return 'samsung';
+  // a few metres of mixed seats at the boundary just past home plate
+  const p = Math.max(0, Math.min(1, (x - 4) / 8));
+  return rand() < p ? 'nc' : 'samsung';
+}
+
 function outwardNormals(pts) {
   const F = [0, -35];
   return pts.map((p, i) => {
@@ -1588,11 +1643,13 @@ function outwardNormals(pts) {
 function buildBallpark(o) {
   const g = new THREE.Group();
   const rand = rng(o.id + 'park');
+  const lions = o.venue === 'lions';
+  const fence = lions ? lionsFence() : null;
   // --- playing field: one painted plane; the app drops its own ground well below it while a ballpark is in the
   // scene (a polygon offset here blows up at grazing angles and lets that ground show through near a low lens)
   const field = new THREE.Mesh(
     new THREE.PlaneGeometry(FIELD.w, FIELD.d, 32, 32),
-    new THREE.MeshStandardMaterial({ map: paintField(o.color || '#3d7a35'), roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ map: paintField(o.color || '#3d7a35', fence), roughness: 0.95 }),
   );
   field.rotation.x = -Math.PI / 2;
   field.position.set(FIELD.x0 + FIELD.w / 2, 0.012, FIELD.z0 + FIELD.d / 2);
@@ -1600,9 +1657,10 @@ function buildBallpark(o) {
   g.add(field);
   const bases = [[0, 0], [BASE, -BASE], [0, -2 * BASE], [-BASE, -BASE]];
   const white = std('#f2f0ea', { roughness: 0.6 });
+  const poleD = lions ? 99.5 : 113;
   for (const s of [-1, 1]) {
     const pole = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 22, 10), std('#f4c430')));
-    pole.position.set(s * 113 * Math.SQRT1_2, 11, -113 * Math.SQRT1_2);
+    pole.position.set(s * poleD * Math.SQRT1_2, 11, -poleD * Math.SQRT1_2);
     g.add(pole);
   }
   for (const [x, z] of bases.slice(1)) {
@@ -1623,32 +1681,50 @@ function buildBallpark(o) {
   rubber.position.set(0, 0.26, -18.44);
   g.add(rubber);
 
-  // --- outfield wall (padded, dark green)
-  const th = (x, z) => Math.atan2(x - WALL_C[0], z - WALL_C[1]);
-  const t0 = th(113 * Math.SQRT1_2, -113 * Math.SQRT1_2), t1 = th(-113 * Math.SQRT1_2, -113 * Math.SQRT1_2) + Math.PI * 2;
-  const wall = new THREE.Mesh(new THREE.CylinderGeometry(WALL_R, WALL_R, 3.2, 160, 1, true, t0, t1 - t0), std('#1f4a33', { side: THREE.DoubleSide }));
-  wall.position.set(WALL_C[0], 1.6, WALL_C[1]);
-  wall.receiveShadow = true;
-  g.add(wall);
+  // --- outfield wall (padded; dark green, or Lions blue panels on the octagonal fence)
+  if (fence) {
+    const arr = [];
+    for (let i = 0; i < fence.length - 1; i++) {
+      const [ax, az] = fence[i], [bx, bz] = fence[i + 1];
+      arr.push(ax, 0, az, bx, 0, bz, bx, 3.2, bz, ax, 0, az, bx, 3.2, bz, ax, 3.2, az);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+    geo.computeVertexNormals();
+    const wall = new THREE.Mesh(geo, std('#1b3f86', { side: THREE.DoubleSide }));
+    wall.receiveShadow = true;
+    g.add(wall);
+  } else {
+    const th = (x, z) => Math.atan2(x - WALL_C[0], z - WALL_C[1]);
+    const t0 = th(113 * Math.SQRT1_2, -113 * Math.SQRT1_2), t1 = th(-113 * Math.SQRT1_2, -113 * Math.SQRT1_2) + Math.PI * 2;
+    const wall = new THREE.Mesh(new THREE.CylinderGeometry(WALL_R, WALL_R, 3.2, 160, 1, true, t0, t1 - t0), std('#1f4a33', { side: THREE.DoubleSide }));
+    wall.position.set(WALL_C[0], 1.6, WALL_C[1]);
+    wall.receiveShadow = true;
+    g.add(wall);
+  }
 
-  // --- stepped stands
-  const ROWS = 24, DEPTH = 0.85, RISE = 0.46, Y0 = 1.3, SEAT = 0.62;
-  const base = standOutline();
-  const nrm = outwardNormals(base);
-  const ring = (k) => base.map((p, i) => [p[0] + nrm[i][0] * k * DEPTH, p[1] + nrm[i][1] * k * DEPTH]);
+  // --- stepped stands (one bowl, or Lions Park's roofed infield bowl + lower outfield seating)
+  const DEPTH = 0.85, RISE = 0.46, Y0 = 1.3, SEAT = 0.62;
+  const parts = lions ? lionsStandParts(fence) : [{ pts: standOutline(), rows: 24 }];
+  for (const part of parts) {
+    part.nrm = outwardNormals(part.pts);
+    part.ring = (k) => part.pts.map((p, i) => [p[0] + part.nrm[i][0] * k * DEPTH, p[1] + part.nrm[i][1] * k * DEPTH]);
+  }
   const tread = [], riser = [];
   const quad = (arr, a, b, c, d) => arr.push(...a, ...b, ...c, ...a, ...c, ...d);
-  for (let k = 0; k <= ROWS; k++) {
-    const inner = ring(k), outer = ring(k + 1);
-    const y = Y0 + k * RISE, yPrev = k === 0 ? 0 : Y0 + (k - 1) * RISE;
-    for (let i = 0; i < base.length - 1; i++) {
-      const a = inner[i], b = inner[i + 1], c = outer[i + 1], d = outer[i];
-      if (k < ROWS) quad(tread, [a[0], y, a[1]], [b[0], y, b[1]], [c[0], y, c[1]], [d[0], y, d[1]]);
-      quad(riser, [a[0], yPrev, a[1]], [b[0], yPrev, b[1]], [b[0], k === ROWS ? 0 : y, b[1]], [a[0], k === ROWS ? 0 : y, a[1]]);
-      if (k === ROWS) quad(riser, [a[0], yPrev, a[1]], [b[0], yPrev, b[1]], [b[0], yPrev + 7, b[1]], [a[0], yPrev + 7, a[1]]);
+  for (const { pts, rows: ROWS, ring } of parts) {
+    for (let k = 0; k <= ROWS; k++) {
+      const inner = ring(k), outer = ring(k + 1);
+      const y = Y0 + k * RISE, yPrev = k === 0 ? 0 : Y0 + (k - 1) * RISE;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = inner[i], b = inner[i + 1], c = outer[i + 1], d = outer[i];
+        if (k < ROWS) quad(tread, [a[0], y, a[1]], [b[0], y, b[1]], [c[0], y, c[1]], [d[0], y, d[1]]);
+        quad(riser, [a[0], yPrev, a[1]], [b[0], yPrev, b[1]], [b[0], k === ROWS ? 0 : y, b[1]], [a[0], k === ROWS ? 0 : y, a[1]]);
+        if (k === ROWS) quad(riser, [a[0], yPrev, a[1]], [b[0], yPrev, b[1]], [b[0], yPrev + 7, b[1]], [a[0], yPrev + 7, a[1]]);
+      }
     }
   }
-  for (const [arr, color] of [[tread, '#5b6068'], [riser, '#3e434b']]) {
+  for (const [arr, color] of [[tread, lions ? '#2a57a8' : '#5b6068'], [riser, lions ? '#1c2c4c' : '#3e434b']]) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
     geo.computeVertexNormals();
@@ -1659,18 +1735,21 @@ function buildBallpark(o) {
 
   // --- spectators: one instanced body + one instanced head per seat
   const seats = [];
-  for (let k = 0; k < ROWS; k++) {
-    const mid = ring(k + 0.45), y = Y0 + k * RISE;
-    let carry = rand() * SEAT;
-    for (let i = 0; i < mid.length - 1; i++) {
-      const a = mid[i], b = mid[i + 1];
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      const n = nrm[i];
-      for (let d = carry; d < len; d += SEAT) {
-        const f = d / len;
-        if (rand() < 0.97) seats.push([a[0] + (b[0] - a[0]) * f, y, a[1] + (b[1] - a[1]) * f, Math.atan2(-n[0], -n[1])]);
+  for (const part of parts) {
+    const { rows: ROWS, ring, nrm } = part;
+    for (let k = 0; k < ROWS; k++) {
+      const mid = ring(k + 0.45), y = Y0 + k * RISE;
+      let carry = rand() * SEAT;
+      for (let i = 0; i < mid.length - 1; i++) {
+        const a = mid[i], b = mid[i + 1];
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const n = nrm[i];
+        for (let d = carry; d < len; d += SEAT) {
+          const f = d / len;
+          if (rand() < 0.97) seats.push([a[0] + (b[0] - a[0]) * f, y, a[1] + (b[1] - a[1]) * f, Math.atan2(-n[0], -n[1]), part]);
+        }
+        carry = (carry - len % SEAT + SEAT) % SEAT;
       }
-      carry = (carry - len % SEAT + SEAT) % SEAT;
     }
   }
   const shirts = ['#2a4f9e', '#2a4f9e', '#f1f1ee', '#f1f1ee', '#c8323c', '#1c2333', '#1c2333', '#7b8794', '#e3b23c', '#2f6b4f'];
@@ -1679,7 +1758,9 @@ function buildBallpark(o) {
   const head = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.24, 0.22), std('#ffffff', { roughness: 0.8 }), seats.length);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3(1, 1, 1);
   const col = new THREE.Color();
-  seats.forEach(([x, y, z, yaw], i) => {
+  const pick = (arr) => arr[Math.floor(rand() * arr.length)];
+  const fans = { samsung: 0, nc: 0 };
+  seats.forEach(([x, y, z, yaw, part], i) => {
     const lean = (rand() - 0.5) * 0.3;
     q.setFromAxisAngle(up, yaw + lean);
     const s = 0.9 + rand() * 0.2;
@@ -1688,8 +1769,16 @@ function buildBallpark(o) {
     body.setMatrixAt(i, m4);
     m4.compose(new THREE.Vector3(x, y + 0.76 * s, z), q, sc);
     head.setMatrixAt(i, m4);
-    body.setColorAt(i, col.set(shirts[Math.floor(rand() * shirts.length)]));
-    head.setColorAt(i, col.set(rand() < 0.22 ? shirts[Math.floor(rand() * 3)] : skins[Math.floor(rand() * skins.length)]));
+    if (lions) {
+      const team = lionsTeam(x, part, rand);
+      fans[team]++;
+      const kit = TEAM_KIT[team];
+      body.setColorAt(i, col.set(pick(kit.body)));
+      head.setColorAt(i, col.set(rand() < 0.3 ? pick(kit.cap) : pick(skins)));
+    } else {
+      body.setColorAt(i, col.set(pick(shirts)));
+      head.setColorAt(i, col.set(rand() < 0.22 ? shirts[Math.floor(rand() * 3)] : pick(skins)));
+    }
   });
   for (const m of [body, head]) {
     m.instanceMatrix.needsUpdate = true;
@@ -1698,6 +1787,7 @@ function buildBallpark(o) {
     g.add(m);
   }
   g.userData.crowd = seats.length;
+  if (lions) g.userData.fans = fans;
   // Per-spectator bob (pose 'bob' / 'wake'): a small up-down bounce with its own rate and phase.
   g.userData.anim = {
     kind: 'crowd', body, head, live: false,
@@ -1706,12 +1796,9 @@ function buildBallpark(o) {
   };
 
   // --- light towers and scoreboard on the back rim
-  const rim = ring(ROWS + 2);
   const lampMat = new THREE.MeshBasicMaterial({ color: '#fbfcff' });
   const steel = std('#3a3e45', { metalness: 0.4, roughness: 0.5 });
-  for (const f of [0.08, 0.3, 0.5, 0.62, 0.78, 0.94]) {
-    const p = rim[Math.floor(f * (rim.length - 1))];
-    const hTop = Y0 + ROWS * RISE + 26;
+  const tower = (p, hTop) => {
     const mast = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, hTop, 10), steel));
     mast.position.set(p[0], hTop / 2, p[1]);
     g.add(mast);
@@ -1719,17 +1806,62 @@ function buildBallpark(o) {
     bank.position.set(p[0], hTop + 1.5, p[1]);
     bank.lookAt(0, 0, -30);
     g.add(bank);
+  };
+  if (!lions) {
+    const rim = parts[0].ring(parts[0].rows + 2);
+    for (const f of [0.08, 0.3, 0.5, 0.62, 0.78, 0.94]) tower(rim[Math.floor(f * (rim.length - 1))], Y0 + parts[0].rows * RISE + 26);
+    const back = rim[Math.floor(rim.length * 0.24)];
+    addScoreboard(g, [back[0] * 1.02, Y0 + parts[0].rows * RISE + 10, back[1] * 1.02], 34, 14);
+    return g;
   }
-  const back = rim[Math.floor(rim.length * 0.24)];
-  const board = shadowed(new THREE.Mesh(new THREE.BoxGeometry(34, 14, 1.5), std('#15181d')));
-  board.position.set(back[0] * 1.02, Y0 + ROWS * RISE + 10, back[1] * 1.02);
+
+  // Lions Park: a white canopy roof over the back of the infield bowl with floodlights along its front edge,
+  // light towers behind the outfield seats, and the big screen in left-centre.
+  const [inf, out] = parts;
+  const roofY = Y0 + inf.rows * RISE + 6;
+  const front = inf.ring(inf.rows - 9), backEdge = inf.ring(inf.rows + 1.5);
+  const roofArr = [];
+  for (let i = 0; i < inf.pts.length - 1; i++) {
+    const a = front[i], b = front[i + 1], c = backEdge[i + 1], d = backEdge[i];
+    quad(roofArr, [a[0], roofY, a[1]], [b[0], roofY, b[1]], [c[0], roofY + 1.5, c[1]], [d[0], roofY + 1.5, d[1]]);
+  }
+  const roofGeo = new THREE.BufferGeometry();
+  roofGeo.setAttribute('position', new THREE.Float32BufferAttribute(roofArr, 3));
+  roofGeo.computeVertexNormals();
+  g.add(new THREE.Mesh(roofGeo, std('#e4e8ee', { side: THREE.DoubleSide, roughness: 0.6 })));
+  for (let i = 0; i < backEdge.length; i += 4) {
+    const col = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, roofY, 8), steel));
+    col.position.set(backEdge[i][0], roofY / 2, backEdge[i][1]);
+    g.add(col);
+  }
+  for (const f of [0.06, 0.2, 0.36, 0.5, 0.64, 0.8, 0.94]) {
+    const p = front[Math.round(f * (front.length - 1))];
+    const bank = new THREE.Mesh(new THREE.BoxGeometry(7, 2.2, 0.5), lampMat);
+    bank.position.set(p[0], roofY + 2, p[1]);
+    bank.lookAt(0, 0, -40);
+    g.add(bank);
+  }
+  // The roof floodlights wrap the whole bowl: a light hung over the field lights every stand from the front, so
+  // the 1st-base side (backlit by the scene's key light) doesn't sink to black and NC navy / gold still reads.
+  const flood = new THREE.PointLight('#f3f6ff', 2.2, 0, 0);
+  flood.position.set(0, 45, -45);
+  g.add(flood);
+  const rim = out.ring(out.rows + 2);
+  for (const f of [0.04, 0.3, 0.96]) tower(rim[Math.floor(f * (rim.length - 1))], Y0 + out.rows * RISE + 30);
+  const sb = rim[Math.floor(rim.length * 0.66)];
+  addScoreboard(g, [sb[0] * 1.02, Y0 + out.rows * RISE + 13, sb[1] * 1.02], 44, 18);
+  return g;
+}
+
+function addScoreboard(g, pos, w, h) {
+  const board = shadowed(new THREE.Mesh(new THREE.BoxGeometry(w, h, 1.5), std('#15181d')));
+  board.position.set(...pos);
   board.lookAt(0, board.position.y, 0);
   g.add(board);
-  const screen = new THREE.Mesh(new THREE.PlaneGeometry(31, 11), new THREE.MeshBasicMaterial({ color: '#1d3f78' }));
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(w - 3, h - 3), new THREE.MeshBasicMaterial({ color: '#1d3f78' }));
   screen.position.copy(board.position).add(new THREE.Vector3(0, 0, 0.8).applyQuaternion(board.quaternion));
   screen.quaternion.copy(board.quaternion);
   g.add(screen);
-  return g;
 }
 
 function buildBaseball() {
@@ -1785,7 +1917,7 @@ export function buildObject(o) {
 
 // Rebuild is needed whenever any of these change.
 export function signature(o) {
-  return JSON.stringify([o.type, o.name, o.color, o.height, o.size, o.hold, o.tilt, o.burstBeat, o.text, o.textColor, o.vertical, o.flat, o.rotX, o.rotZ]);
+  return JSON.stringify([o.type, o.name, o.color, o.height, o.size, o.hold, o.tilt, o.burstBeat, o.text, o.textColor, o.vertical, o.flat, o.rotX, o.rotZ, o.venue]);
 }
 
 export function poseWalk(group, dist, speed) {
