@@ -60,7 +60,8 @@ function makeObject(type, overrides = {}) {
 function makeShot(gen, extra = {}) {
   return {
     id: uid(), name: gen.name, duration: gen.duration, desc: '', ease: gen.ease, shake: gen.shake,
-    keys: gen.keys, anim: gen.anim, genAnim: Object.keys(gen.anim), meta: gen.meta, ...extra,
+    keys: gen.keys, anim: gen.anim, genAnim: Object.keys(gen.anim), meta: gen.meta,
+    ...(gen.poses ? { poses: gen.poses, genPoses: Object.keys(gen.poses) } : {}), ...extra,
   };
 }
 
@@ -1835,6 +1836,9 @@ function applyGenToShot(shot, gen) {
   shot.keys = gen.keys;
   shot.anim = { ...shot.anim, ...gen.anim };
   shot.genAnim = Object.keys(gen.anim);
+  for (const id of shot.genPoses || []) delete shot.poses?.[id];
+  if (gen.poses) shot.poses = { ...shot.poses, ...gen.poses };
+  shot.genPoses = Object.keys(gen.poses || {});
   shot.duration = gen.duration;
   shot.ease = gen.ease;
   shot.shake = gen.shake;
