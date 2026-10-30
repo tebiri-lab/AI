@@ -55,6 +55,27 @@ export const defaultParams = () => ({
   speed: 'normal', lens: 50, duration: 4, ease: 'inout', handheld: false, dutch: false,
 });
 
+// Base path of a run. With a ballpark in the scene, the runner heads for p.run's base from the base before it
+// (1루 from home, 2루 from 1루, ...) at about 7.5 m/s and runs through the bag by 1 m; shorter shots start
+// partway down the line. Without a ballpark the actor runs straight ahead from where it stands.
+const SPRINT = 7.5;
+const BASES = { b1: 1, b2: 2, b3: 3, home: 0 };
+function runPath(run, project, start, facing, dur) {
+  const park = project.objects.find((o) => o.type === 'ballpark');
+  if (!park || !(run in BASES)) {
+    const from = start.pos.clone().setY(0);
+    return { from, to: from.clone().addScaledVector(facing, SPRINT * dur) };
+  }
+  const B = 27.43 / Math.SQRT2, o = new V(...park.pos);
+  const at = (i) => new V(...[[0, 0, 0], [B, 0, -B], [0, 0, -2 * B], [-B, 0, -B]][i]).add(o);
+  const bi = BASES[run];
+  const prev = at((bi + 3) % 4), base = at(bi);
+  const dir = base.clone().sub(prev).normalize();
+  const to = base.clone().addScaledVector(dir, 1);
+  const dist = Math.min(27.43 + 0.5, SPRINT * dur);
+  return { from: to.clone().addScaledVector(dir, -dist), to, inside: new V(0, 0, -35).add(o) };
+}
+
 /**
  * Build camera keys (and object animation where the move needs it).
  * @returns {{keys, anim, ease, shake, meta, duration, name}}
@@ -228,12 +249,41 @@ export function generateShot(p, project, prevShot) {
       keys.push(key(0, pos, target));
   }
 
-  const name = `${size.short} · ${(MOVES[p.move] || MOVES.static).ko}`;
+  let name = `${size.short} · ${(MOVES[p.move] || MOVES.static).ko}`;
+  let poses;
+  // Running (주루 / 질주): the actor sprints along a path (base to base when a ballpark is in the scene) and the
+  // camera tracks alongside it, or pans with it from a fixed spot when the line asked for a locked-off camera.
+  const path = p.run && subj && subj.type === 'actor' && !subj.parent ? runPath(p.run, project, start, facing, dur) : null;
+  if (path) {
+    const { from, to } = path;
+    const dir = to.clone().sub(from).normalize();
+    const rotY = round(Math.atan2(dir.x, dir.z) / D2R);
+    anim[subj.id] = [{ t: 0, pos: arr(from), rotY }, { t: round(dur), pos: arr(to), rotY }];
+    poses = { [subj.id]: 'run' };
+    let side = new V(-dir.z, 0, dir.x);
+    if (path.inside && side.dot(path.inside.clone().sub(from.clone().lerp(to, 0.5))) < 0) side.negate();
+    else if (!path.inside) side = side.multiplyScalar(-1); // no ballpark: camera on the runner's left
+    const e = ((ANGLES[p.angle] || ANGLES.eye).elev ?? -10) * D2R;
+    const aimY = aimOffset(subj, p.size);
+    const camAt = (c) => c.clone().addScaledVector(side, Math.cos(e) * d).setY(Math.max(c.y + 0.15, c.y + aimY + Math.sin(e) * d));
+    const aimAt = (c) => c.clone().setY(c.y + aimY);
+    keys.length = 0;
+    if (p.moveSet && p.move === 'static') {
+      const cam = camAt(from.clone().lerp(to, 0.5)).addScaledVector(side, d * 1.5);
+      for (let i = 0; i <= 8; i++) keys.push(key((dur * i) / 8, cam, aimAt(from.clone().lerp(to, i / 8))));
+      name = `${size.short} · 주루 · 고정 팬`;
+    } else {
+      keys.push(key(0, camAt(from), aimAt(from)), key(dur, camAt(to), aimAt(to)));
+      name = `${size.short} · 주루 · 측면 트래킹`;
+    }
+    ease = 'linear';
+  }
   return {
     name,
     duration: dur,
     keys,
     anim,
+    poses,
     ease,
     shake: p.handheld ? 0.6 : 0,
     meta: { ...p, lens: focal, duration: dur },
@@ -308,7 +358,16 @@ export function parseShotText(line, project, base) {
   let move = null;
   for (const [re, fn] of MOVE_RULES) if (re.test(s)) { move = fn(s); break; }
   p.move = move || 'static';
-  found.push(MOVES[p.move].ko);
+  p.moveSet = !!move;
+  // Running: 주루 / 질주 / 뛰다 / 달리다 (not 달리 인·아웃·줌, the dolly moves), with an optional base.
+  const runs = /주루|질주|도루|전력\s*(으로)?\s*달|뛰(어|는|다|고|기|며)|달려|달리(?!\s*(인|아웃|줌))|\brun|sprint/.test(s);
+  p.run = null;
+  if (runs) {
+    const b = s.match(/(1|2|3|일|이|삼)\s*루|홈/);
+    p.run = !b ? 'ahead' : b[0] === '홈' ? 'home' : `b${{ 1: 1, 2: 2, 3: 3, 일: 1, 이: 2, 삼: 3 }[b[1]]}`;
+    found.push(p.run === 'ahead' ? '달리기' : `${{ b1: '1루', b2: '2루', b3: '3루', home: '홈' }[p.run]} 주루`);
+  }
+  found.push(p.run && (!p.moveSet || p.move === 'track') ? '측면 트래킹' : MOVES[p.move].ko);
   if (/천천히|느리게|슬로우|살짝|slow|subtle|gentle/.test(s)) p.speed = 'slow';
   else if (/빠르게|빠른|급하게|fast|quick|rapid/.test(s)) p.speed = 'fast';
   else p.speed = 'normal';
@@ -334,9 +393,21 @@ export function parseShotText(line, project, base) {
       rest = rest.slice(0, idx) + ' '.repeat(n.length) + rest.slice(idx + n.length);
     }
   }
+  // No full name in the line: try the words of each name ("타자" finds "NC 타자"), actors first.
+  if (!hits.length) {
+    const words = (o) => o.name.toLowerCase().split(/[\s()·,/]+/).filter((w) => w.length >= 2);
+    const ranked = [...byName].sort((a, b) => (b.type === 'actor') - (a.type === 'actor'));
+    for (const o of ranked) {
+      const w = words(o).find((x) => rest.includes(x));
+      if (w) { hits.push({ o, idx: rest.indexOf(w) }); rest = rest.replace(w, ' '.repeat(w.length)); }
+    }
+  }
   hits.sort((a, b) => a.idx - b.idx);
   if (hits[0]) p.subject = hits[0].o.id;
   p.subject2 = hits[1] ? hits[1].o.id : null;
+  // Keep the builder's subject only if it exists and is something a shot can frame (not a whole venue).
+  const kept = project.objects.find((o) => o.id === p.subject);
+  if (!hits.length && kept && ['ballpark', 'clouds', 'crackfloor'].includes(kept.type)) p.subject = null;
   if (!project.objects.some((o) => o.id === p.subject)) {
     const actor = project.objects.find((o) => o.type === 'actor') || project.objects[0];
     p.subject = actor ? actor.id : null;
