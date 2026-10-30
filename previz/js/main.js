@@ -452,6 +452,7 @@ function lionsParkProject() {
   const yawTo = (from, to) => r3(THREE.MathUtils.radToDeg(Math.atan2(to[0] - from[0], to[2] - from[2])));
   const lions = '#f2f4f8', dinos = '#1b2847';
   const park = makeObject('ballpark', { name: '대구 삼성 라이온즈 파크', venue: 'lions' });
+  p.batting = 'nc';
   const fielder = (name, pos, pose = 'field_ready') => makeObject('actor', { name, color: lions, pose, pos, rotY: yawTo(pos, home) });
   p.objects.push(
     park,
@@ -1866,22 +1867,61 @@ function generateFromForm(asNew) {
   toast(asNew ? '새 샷을 생성했습니다' : '현재 샷에 적용했습니다');
 }
 
+// Scene commands typed into the shot text box instead of a shot description.
+// "<team> 공격 (차례)" / "<team> 수비": in a ballpark scene, the batter and runners take the batting team's
+// uniform colour and the nine fielders the other team's. Teams come from project.teams, or Samsung (home white) /
+// NC (navy) for the Lions Park. Returns a log line, or null when the line is not a scene command.
+const FIELD_ROLES = ['투수', '포수', '1루수', '2루수', '3루수', '유격수', '좌익수', '중견수', '우익수'];
+const LIONS_TEAMS = { samsung: { ko: '삼성', color: '#f2f4f8', re: /삼성|라이온즈|lions/ }, nc: { ko: 'NC', color: '#1b2847', re: /nc|엔씨|다이노스|dinos/ } };
+function sceneCommand(line) {
+  const s = line.toLowerCase();
+  const side = /공격|타격|공수\s*교대|공수\s*전환/.test(s) ? 'bat' : /수비/.test(s) ? 'field' : null;
+  const park = project.objects.find((o) => o.type === 'ballpark');
+  if (!side || !park) return null;
+  const teams = project.teams || (park.venue === 'lions' ? LIONS_TEAMS : null);
+  if (!teams) return null;
+  const named = Object.keys(teams).find((k) => (teams[k].re || new RegExp(teams[k].ko, 'i')).test(s));
+  const ids = Object.keys(teams);
+  // 공수 교대 without a team name flips whoever is batting now
+  const batting = named ? (side === 'bat' ? named : ids.find((k) => k !== named))
+    : /공수/.test(s) ? ids.find((k) => k !== (project.batting || ids[1])) : null;
+  if (!batting) return null;
+  const fielding = ids.find((k) => k !== batting);
+  const isBatter = (o) => /타자|주자/.test(o.name);
+  const isFielder = (o) => FIELD_ROLES.some((r) => o.name.endsWith(r));
+  let nb = 0, nf = 0;
+  for (const o of project.objects) {
+    if (o.type !== 'actor') continue;
+    if (isBatter(o)) {
+      o.color = teams[batting].color;
+      o.name = o.name.replace(new RegExp(`^(${ids.map((k) => teams[k].ko).join('|')})\\s*`, 'i'), '');
+      o.name = `${teams[batting].ko} ${o.name}`;
+      nb++;
+    } else if (isFielder(o)) { o.color = teams[fielding].color; nf++; }
+  }
+  if (!nb && !nf) return null;
+  project.batting = batting;
+  return `씬 변경: ${teams[batting].ko} 공격 — 타자·주자 ${nb}명 ${teams[batting].ko} 유니폼, 수비 ${nf}명 ${teams[fielding].ko} 유니폼`;
+}
+
 function generateFromText() {
   const lines = $('genText').value.split('\n').map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return toast('샷 설명을 입력하세요');
   if (!project.objects.length) return toast('씬에 오브젝트를 먼저 추가하세요');
   const replace = $('genReplace').checked;
   const log = [];
-  let lastParams;
+  let lastParams, commands = 0;
   mutate(() => {
     lines.forEach((line, i) => {
+      const cmd = sceneCommand(line);
+      if (cmd) { log.push(cmd); commands++; return; }
       const [camPart, ...actionParts] = line.split('|');
       const action = actionParts.join('|').trim();
       const { params, summary } = parseShotText(camPart, project, readGenParams());
       params.source = line;
       lastParams = params;
       log.push(summary);
-      if (replace && i === 0) {
+      if (replace && i === commands) { // the first shot line (scene commands before it don't count)
         const shot = cur();
         const tmp = clone(shot);
         for (const id of tmp.genAnim || []) delete tmp.anim[id];
@@ -1906,7 +1946,8 @@ function generateFromText() {
     $('genLog').appendChild(d);
   });
   queueThumbs(true);
-  toast(`${lines.length}개 샷을 생성했습니다`);
+  const made = lines.length - commands;
+  toast([commands && `씬을 ${commands}번 바꿨습니다`, made && `${made}개 샷을 생성했습니다`].filter(Boolean).join(' · '));
 }
 
 // ---------------------------------------------------------------------------
