@@ -342,6 +342,9 @@ const first = (rules, s) => {
   return null;
 };
 
+// Objects that are a whole setting rather than something a shot frames.
+const VENUES = ['ballpark', 'clouds', 'crackfloor'];
+
 /** Parse one line of shot description into generator params (unspecified fields fall back to `base`). */
 export function parseShotText(line, project, base) {
   const s = line.toLowerCase();
@@ -396,7 +399,8 @@ export function parseShotText(line, project, base) {
   // No full name in the line: try the words of each name ("타자" finds "NC 타자"), actors first.
   if (!hits.length) {
     const words = (o) => o.name.toLowerCase().split(/[\s()·,/]+/).filter((w) => w.length >= 2);
-    const ranked = [...byName].sort((a, b) => (b.type === 'actor') - (a.type === 'actor'));
+    // venue-type objects are matched only by their full name ("삼성" must not pick the Lions Park itself)
+    const ranked = byName.filter((o) => !VENUES.includes(o.type)).sort((a, b) => (b.type === 'actor') - (a.type === 'actor'));
     for (const o of ranked) {
       const w = words(o).find((x) => rest.includes(x));
       if (w) { hits.push({ o, idx: rest.indexOf(w) }); rest = rest.replace(w, ' '.repeat(w.length)); }
@@ -407,7 +411,7 @@ export function parseShotText(line, project, base) {
   p.subject2 = hits[1] ? hits[1].o.id : null;
   // Keep the builder's subject only if it exists and is something a shot can frame (not a whole venue).
   const kept = project.objects.find((o) => o.id === p.subject);
-  if (!hits.length && kept && ['ballpark', 'clouds', 'crackfloor'].includes(kept.type)) p.subject = null;
+  if (!hits.length && kept && VENUES.includes(kept.type)) p.subject = null;
   if (!project.objects.some((o) => o.id === p.subject)) {
     const actor = project.objects.find((o) => o.type === 'actor') || project.objects[0];
     p.subject = actor ? actor.id : null;
