@@ -482,6 +482,16 @@ function followPose(f, local) {
   return { ...blendPose(POSE_DEF[f.to], POSE_DEF.stand, u), walk: u >= 1 };
 }
 
+// Turn / nod / tilt the head on top of whatever the pose set (degrees; see sampleHead in anim.js).
+export function applyHead(group, head) {
+  const r = group.userData.rig;
+  if (!r || !head) return;
+  const D = Math.PI / 180;
+  r.headG.rotation.x -= head[1] * D;
+  r.headG.rotation.y -= head[0] * D;
+  r.headG.rotation.z += head[2] * D;
+}
+
 export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
   const r = group.userData.rig;
   if (r) {

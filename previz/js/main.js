@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS, POSE_SETS, HOLDS, BALLPARKS } from './constants.js';
-import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
+import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, sampleHead, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
 import { generateShot, parseShotText, describeShot, defaultParams, objectHeight, aimOffset } from './generator.js';
-import { buildObject, signature, applyPose, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
+import { buildObject, signature, applyPose, applyHead, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
 import { exportPNG, encodeVideo, saveBlob, canSaveMov, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 import { SongPlayer } from './audio.js';
 import { CymbalPhysics } from './physics.js';
@@ -828,6 +828,7 @@ function poseObjectsAt(shot, t) {
     g.position.set(...s.pos);
     g.rotation.set(0, THREE.MathUtils.degToRad(s.rotY), 0);
     applyPose(g, poseOf(o, shot), s.dist, s.speed, clock, beat, { t, dur: shot.duration, c0: clock - t, freezeAt: shot.freezeAt });
+    if (o.type === 'actor') applyHead(g, sampleHead(o, shot, t));
   }
   setLight(shot.light || project.lighting);
 }
@@ -1188,10 +1189,30 @@ function writeObject(o, pos, rotY) {
   const keys = shot.anim?.[o.id];
   if (keys && keys.length) {
     const s = sampleLocal(o, shot, time);
-    return upsertKey(keys, () => ({ pos: s.pos, rotY: s.rotY }), (k) => { k.pos = pos; k.rotY = rotY; });
+    return upsertKey(keys, () => withHead(o, shot, { pos: s.pos, rotY: s.rotY }), (k) => { k.pos = pos; k.rotY = rotY; });
   }
   o.pos = pos;
   o.rotY = rotY;
+  return true;
+}
+
+// A new key on an actor whose head has been turned keeps the head angle it has at that moment.
+function withHead(o, shot, k) {
+  const h = sampleHead(o, shot, time);
+  if (o.type === 'actor' && (o.head || h.some((v) => v))) k.head = h.map(r3);
+  return k;
+}
+
+// Head [turn, nod, tilt] in degrees: into this shot's keys when the actor has keys here, else the base head.
+function writeHead(o, head) {
+  const shot = cur();
+  const keys = shot.anim?.[o.id];
+  if (keys && keys.length) {
+    const s = sampleLocal(o, shot, time);
+    return upsertKey(keys, () => ({ pos: s.pos, rotY: s.rotY }), (k) => { k.head = head; });
+  }
+  if (head.every((v) => !v)) delete o.head;
+  else o.head = head;
   return true;
 }
 
@@ -1554,6 +1575,7 @@ function renderObjInspector() {
   $('oVenueWrap').hidden = o.type !== 'ballpark';
   if (o.type === 'ballpark') $('oVenue').value = o.venue || 'generic';
   $('oHoldWrap').hidden = o.type !== 'actor';
+  $('oHeadWrap').hidden = o.type !== 'actor';
   if (o.type === 'actor') $('oHold').value = o.hold || 'none';
   const poses = POSE_SETS[o.type];
   $('oPoseWrap').hidden = !poses;
@@ -1601,6 +1623,8 @@ function renderObjInspector() {
   });
 }
 
+const HEAD_IDS = ['oHTurn', 'oHNod', 'oHTilt'];
+
 // A gauge = range slider + number field sharing one value. Ids: `${id}` (number), `${id}R` (range).
 function buildGauge(container, id, axis, label, min, max, step, unit) {
   const row = document.createElement('div');
@@ -1647,6 +1671,7 @@ function renderObjInspectorValues(force = false) {
   const s = sampleLocal(o, cur(), time);
   setGauge('oX', s.pos[0], force); setGauge('oY', s.pos[1], force);
   setGauge('oZ', s.pos[2], force); setGauge('oRot', s.rotY, force);
+  if (o.type === 'actor') sampleHead(o, cur(), time).forEach((v, i) => setGauge(HEAD_IDS[i], v, force));
 }
 
 function renderCamGauges(force = false) {
@@ -2310,6 +2335,18 @@ function bindUI() {
     writeObject(o, pos.map(r3), r3(rot));
   };
   ['oX', 'oY', 'oZ', 'oRot'].forEach((id, i) => bindGauge(id, objAxis(i)));
+  buildGauge($('oHeadGauges'), 'oHTurn', 'y', '좌우', -80, 80, 1, '°');
+  buildGauge($('oHeadGauges'), 'oHNod', 'x', '위아래', -60, 60, 1, '°');
+  buildGauge($('oHeadGauges'), 'oHTilt', 'z', '기울기', -40, 40, 1, '°');
+  const headAxis = (i) => (v) => {
+    const o = selection?.kind === 'object' ? objById(selection.id) : null;
+    if (!o || o.type !== 'actor') return;
+    const h = sampleHead(o, cur(), time).map(r3);
+    h[i] = r3(v);
+    writeHead(o, h);
+  };
+  HEAD_IDS.forEach((id, i) => bindGauge(id, headAxis(i)));
+  $('btnHeadReset').onclick = () => objEdit((o) => { writeHead(o, [0, 0, 0]); });
 
   for (const [box, ids, kind] of [[$('cPosGauges'), ['cPX', 'cPY', 'cPZ'], 'pos'], [$('cTgtGauges'), ['cTX', 'cTY', 'cTZ'], 'target']]) {
     buildGauge(box, ids[0], 'x', 'X', -40, 40, 0.05, 'm');
@@ -2530,7 +2567,7 @@ function addObjKey() {
     shot.anim ||= {};
     const ks = (shot.anim[o.id] ||= []);
     const s = sampleLocal(o, shot, time);
-    ks.push({ t: r3(time), pos: s.pos, rotY: s.rotY });
+    ks.push(withHead(o, shot, { t: r3(time), pos: s.pos, rotY: s.rotY }));
     sortKeys(ks);
     shot.genAnim = (shot.genAnim || []).filter((id) => id !== o.id);
   });
