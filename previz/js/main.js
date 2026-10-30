@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS, POSE_SETS, HOLDS } from './constants.js';
-import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
+import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS, POSE_SETS, HOLDS, BALLPARKS } from './constants.js';
+import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, sampleHead, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
 import { generateShot, parseShotText, describeShot, defaultParams, objectHeight, aimOffset } from './generator.js';
-import { buildObject, signature, applyPose, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
+import { buildObject, signature, applyPose, applyHead, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
 import { exportPNG, encodeVideo, saveBlob, canSaveMov, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 import { SongPlayer } from './audio.js';
 import { CymbalPhysics } from './physics.js';
@@ -434,7 +434,71 @@ function tripleSideProject() {
   return p;
 }
 
-const SAMPLES = { alley: sampleProject, stadium: stadiumProject, slide: slideProject, triple: tripleSideProject, steal: tripleSideProject };
+// Daegu Samsung Lions Park on a sold-out night: Samsung Lions fans (blue / white) on the 3rd-base side and in the
+// outfield, NC Dinos fans (navy / gold) on the visitors' 1st-base side. Shot 1 is a high drone establishing shot
+// drifting in over the octagonal park (like a night aerial photo); shot 2 pans the packed infield stands from the
+// Samsung side across home plate to the NC side.
+const BASE_HALF = 27.43 / Math.SQRT2;
+function lionsParkProject() {
+  const p = baseProject('대구 삼성 라이온즈 파크 — 삼성 vs NC');
+  p.lighting = 'stadium';
+  p.style = 'Photorealistic live-action night KBO baseball game at Daegu Samsung Lions Park, octagonal ballpark with blue seats '
+    + 'and a white canopy roof, sold-out crowd under bright floodlights. Samsung Lions home fans in royal-blue and white jerseys fill '
+    + 'the third-base side and the outfield; NC Dinos away fans in navy and gold jerseys fill the first-base side. '
+    + 'Subtle film grain, natural night exposure, realistic crowd motion.';
+  const B = BASE_HALF;
+  const home = [0, 0, 0];
+  const yawTo = (from, to) => r3(THREE.MathUtils.radToDeg(Math.atan2(to[0] - from[0], to[2] - from[2])));
+  const lions = '#f2f4f8', dinos = '#1b2847';
+  const park = makeObject('ballpark', { name: '대구 삼성 라이온즈 파크', venue: 'lions' });
+  const fielder = (name, pos, pose = 'field_ready') => makeObject('actor', { name, color: lions, pose, pos, rotY: yawTo(pos, home) });
+  p.objects.push(
+    park,
+    fielder('투수', [0, 0.25, -18.2], 'stand'),
+    fielder('포수', [0, 0, 1.0], 'catcher'),
+    fielder('1루수', [B - 1.5, 0, -B - 2]),
+    fielder('2루수', [9.5, 0, -33]),
+    fielder('유격수', [-9.5, 0, -33]),
+    fielder('3루수', [-B + 1.5, 0, -B - 2]),
+    fielder('좌익수', [-30, 0, -72]),
+    fielder('중견수', [0, 0, -88]),
+    fielder('우익수', [30, 0, -72]),
+    makeObject('actor', { name: 'NC 타자', color: dinos, pose: 'field_ready', pos: [-0.9, 0, -0.1], rotY: 90 }),
+    makeObject('actor', { name: '주심', color: '#1d1f24', pose: 'field_ready', pos: [0, 0, 2.3], rotY: 180 }),
+  );
+
+  // Shot 1: aerial establishing shot. The drone drifts in and down from high behind centre field toward home plate.
+  const d1 = 8;
+  p.shots.push({
+    id: uid(), name: '항공 설정샷 — 야간 라이온즈 파크', duration: d1, ease: 'inout', shake: 0,
+    desc: '대구 삼성 라이온즈 파크의 야간 경기, 관중석이 꽉 찬 팔각형 구장을 드론이 중견수 뒤쪽 높은 곳에서 홈플레이트 방향으로 천천히 다가가며 내려다본다. 3루 쪽과 외야는 파란색·흰색 삼성 라이온즈 팬, 1루 쪽은 남색·금색 NC 다이노스 팬으로 관중석 색이 갈린다.',
+    keys: [
+      { t: 0, pos: [0, 200, -255], target: [0, 0, -35], focal: 24, roll: 0 },
+      { t: d1, pos: [0, 150, -205], target: [0, 0, -30], focal: 24, roll: 0 },
+    ],
+    anim: {}, genAnim: [],
+    poses: { [park.id]: 'bob' },
+    meta: { subject: park.id, size: 'ews', angle: 'overhead', dir: 'front', move: 'drone', speed: 'slow', lens: 24, duration: d1 },
+  });
+
+  // Shot 2: from beside the mound, a slow pan across the infield stands, 3rd-base side (Samsung) to 1st-base side (NC).
+  const d2 = 6, cam = [0, 1.7, -14];
+  p.shots.push({
+    id: uid(), name: '관중석 팬 — 삼성(3루) → NC(1루)', duration: d2, ease: 'inout', shake: 0,
+    desc: '마운드 옆 눈높이에서 관중석을 천천히 팬한다. 파란색·흰색 유니폼의 삼성 팬들이 꽉 찬 3루 쪽에서 시작해 홈플레이트 뒤를 지나, 남색·금색 유니폼의 NC 팬들이 응원하는 1루 쪽에서 끝난다. 관중은 들썩이며 응원한다.',
+    keys: [
+      { t: 0, pos: cam, target: [-60, 9, -14], focal: 35, roll: 0 },
+      { t: d2 / 2, pos: cam, target: [0, 9, 30], focal: 35, roll: 0 },
+      { t: d2, pos: cam, target: [60, 9, -14], focal: 35, roll: 0 },
+    ],
+    anim: {}, genAnim: [],
+    poses: { [park.id]: 'bob' },
+    meta: { subject: park.id, size: 'ws', angle: 'eye', dir: 'front', move: 'pan_r', speed: 'slow', lens: 35, duration: d2 },
+  });
+  return p;
+}
+
+const SAMPLES = { alley: sampleProject, stadium: stadiumProject, slide: slideProject, triple: tripleSideProject, steal: tripleSideProject, lionspark: lionsParkProject };
 
 function blankProject() {
   const p = baseProject('새 프리비즈');
@@ -764,6 +828,7 @@ function poseObjectsAt(shot, t) {
     g.position.set(...s.pos);
     g.rotation.set(0, THREE.MathUtils.degToRad(s.rotY), 0);
     applyPose(g, poseOf(o, shot), s.dist, s.speed, clock, beat, { t, dur: shot.duration, c0: clock - t, freezeAt: shot.freezeAt });
+    if (o.type === 'actor') applyHead(g, sampleHead(o, shot, t));
   }
   setLight(shot.light || project.lighting);
 }
@@ -1124,10 +1189,30 @@ function writeObject(o, pos, rotY) {
   const keys = shot.anim?.[o.id];
   if (keys && keys.length) {
     const s = sampleLocal(o, shot, time);
-    return upsertKey(keys, () => ({ pos: s.pos, rotY: s.rotY }), (k) => { k.pos = pos; k.rotY = rotY; });
+    return upsertKey(keys, () => withHead(o, shot, { pos: s.pos, rotY: s.rotY }), (k) => { k.pos = pos; k.rotY = rotY; });
   }
   o.pos = pos;
   o.rotY = rotY;
+  return true;
+}
+
+// A new key on an actor whose head has been turned keeps the head angle it has at that moment.
+function withHead(o, shot, k) {
+  const h = sampleHead(o, shot, time);
+  if (o.type === 'actor' && (o.head || h.some((v) => v))) k.head = h.map(r3);
+  return k;
+}
+
+// Head [turn, nod, tilt] in degrees: into this shot's keys when the actor has keys here, else the base head.
+function writeHead(o, head) {
+  const shot = cur();
+  const keys = shot.anim?.[o.id];
+  if (keys && keys.length) {
+    const s = sampleLocal(o, shot, time);
+    return upsertKey(keys, () => ({ pos: s.pos, rotY: s.rotY }), (k) => { k.head = head; });
+  }
+  if (head.every((v) => !v)) delete o.head;
+  else o.head = head;
   return true;
 }
 
@@ -1487,7 +1572,10 @@ function renderObjInspector() {
   if (hasH) { $('oH').value = o.height ?? def.height; $('oHLabel').textContent = def.hLabel; }
   $('oTiltWrap').hidden = !def.tilt;
   if (def.tilt) $('oTilt').value = o.tilt || 0;
+  $('oVenueWrap').hidden = o.type !== 'ballpark';
+  if (o.type === 'ballpark') $('oVenue').value = o.venue || 'generic';
   $('oHoldWrap').hidden = o.type !== 'actor';
+  $('oHeadWrap').hidden = o.type !== 'actor';
   if (o.type === 'actor') $('oHold').value = o.hold || 'none';
   const poses = POSE_SETS[o.type];
   $('oPoseWrap').hidden = !poses;
@@ -1535,6 +1623,8 @@ function renderObjInspector() {
   });
 }
 
+const HEAD_IDS = ['oHTurn', 'oHNod', 'oHTilt'];
+
 // A gauge = range slider + number field sharing one value. Ids: `${id}` (number), `${id}R` (range).
 function buildGauge(container, id, axis, label, min, max, step, unit) {
   const row = document.createElement('div');
@@ -1581,6 +1671,7 @@ function renderObjInspectorValues(force = false) {
   const s = sampleLocal(o, cur(), time);
   setGauge('oX', s.pos[0], force); setGauge('oY', s.pos[1], force);
   setGauge('oZ', s.pos[2], force); setGauge('oRot', s.rotY, force);
+  if (o.type === 'actor') sampleHead(o, cur(), time).forEach((v, i) => setGauge(HEAD_IDS[i], v, force));
 }
 
 function renderCamGauges(force = false) {
@@ -2102,6 +2193,7 @@ function bindUI() {
   fillSelect($('pLight'), Object.entries(LIGHTS));
   fillSelect($('sLight'), [['', '프로젝트 기본'], ...Object.entries(LIGHTS).map(([k, v]) => [k, v.ko])]);
   fillSelect($('oHold'), Object.entries(HOLDS), (v) => v);
+  fillSelect($('oVenue'), Object.entries(BALLPARKS), (v) => v);
   writeGenParams(defaultParams());
 
   // Tabs
@@ -2212,6 +2304,7 @@ function bindUI() {
   }));
   $('oTilt').addEventListener('change', (e) => objEdit((o) => { o.tilt = clamp(+e.target.value || 0, -60, 60); }));
   $('oHold').addEventListener('change', (e) => objEdit((o) => { o.hold = e.target.value; }));
+  $('oVenue').addEventListener('change', (e) => objEdit((o) => { o.venue = e.target.value; }));
   $('oPose').addEventListener('change', (e) => objEdit((o) => { o.pose = e.target.value; }));
   $('oPoseShot').addEventListener('change', (e) => objEdit((o) => {
     const s = cur();
@@ -2242,6 +2335,18 @@ function bindUI() {
     writeObject(o, pos.map(r3), r3(rot));
   };
   ['oX', 'oY', 'oZ', 'oRot'].forEach((id, i) => bindGauge(id, objAxis(i)));
+  buildGauge($('oHeadGauges'), 'oHTurn', 'y', '좌우', -80, 80, 1, '°');
+  buildGauge($('oHeadGauges'), 'oHNod', 'x', '위아래', -60, 60, 1, '°');
+  buildGauge($('oHeadGauges'), 'oHTilt', 'z', '기울기', -40, 40, 1, '°');
+  const headAxis = (i) => (v) => {
+    const o = selection?.kind === 'object' ? objById(selection.id) : null;
+    if (!o || o.type !== 'actor') return;
+    const h = sampleHead(o, cur(), time).map(r3);
+    h[i] = r3(v);
+    writeHead(o, h);
+  };
+  HEAD_IDS.forEach((id, i) => bindGauge(id, headAxis(i)));
+  $('btnHeadReset').onclick = () => objEdit((o) => { writeHead(o, [0, 0, 0]); });
 
   for (const [box, ids, kind] of [[$('cPosGauges'), ['cPX', 'cPY', 'cPZ'], 'pos'], [$('cTgtGauges'), ['cTX', 'cTY', 'cTZ'], 'target']]) {
     buildGauge(box, ids[0], 'x', 'X', -40, 40, 0.05, 'm');
@@ -2462,7 +2567,7 @@ function addObjKey() {
     shot.anim ||= {};
     const ks = (shot.anim[o.id] ||= []);
     const s = sampleLocal(o, shot, time);
-    ks.push({ t: r3(time), pos: s.pos, rotY: s.rotY });
+    ks.push(withHead(o, shot, { t: r3(time), pos: s.pos, rotY: s.rotY }));
     sortKeys(ks);
     shot.genAnim = (shot.genAnim || []).filter((id) => id !== o.id);
   });

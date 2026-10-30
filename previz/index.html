@@ -32,6 +32,7 @@
           <button data-sample="stadium">야구장 도루 — 불릿타임 오빗 (10초)</button>
           <button data-sample="slide">3루 슬라이딩 — 그라운드 로우앵글 슬로모션 (10초)</button>
           <button data-sample="triple">3루타 — 2루→3루 측면 트래킹 + 발 인서트 (2샷)</button>
+          <button data-sample="lionspark">대구 삼성 라이온즈 파크 — 만원 관중 (삼성 vs NC, 2샷)</button>
         </div>
       </div>
       <button id="btnOpen">열기</button>
@@ -164,7 +165,13 @@
             <label class="dims">깊이<input id="oSZ" type="number" step="0.1" min="0.05" /></label>
           </div>
           <div class="gauges" id="oGauges"></div>
+          <div id="oHeadWrap">
+            <div class="row"><label class="lbl grow">고개 (인물 기준)</label><button id="btnHeadReset">정면으로</button></div>
+            <div class="gauges" id="oHeadGauges"></div>
+            <p class="hint block">좌우 +는 인물의 오른쪽, 위아래 +는 위를 봄, 기울기 +는 오른쪽 어깨 쪽입니다. 포즈의 고개 각도 위에 더해집니다. 이 샷에 키가 있으면 키로 들어갑니다.</p>
+          </div>
           <div class="grid2">
+            <label id="oVenueWrap" class="span2">구장<select id="oVenue"></select></label>
             <label id="oHoldWrap" class="span2">들고 있는 것<select id="oHold"></select></label>
             <label id="oPoseWrap">기본 포즈<select id="oPose"></select></label>
             <label id="oPoseShotWrap">이 샷 포즈<select id="oPoseShot"></select></label>

@@ -149,6 +149,21 @@ export function sampleLocal(obj, shot, t) {
   return { pos, rotY: lerpAngle(a.rotY, b.rotY, u), dist, speed: moving && span > 0 ? segLen / span : 0 };
 }
 
+// Head angles [turn, nod, tilt] in degrees for an actor at time t: the shot's keys when any of them carries a
+// head (keys without one use the object's base head), else the base head. turn + = the actor's right,
+// nod + = looks up, tilt + = leans toward the right shoulder.
+export function sampleHead(obj, shot, t) {
+  const base = obj.head || [0, 0, 0];
+  const keys = shot && shot.anim && shot.anim[obj.id];
+  if (!keys || !keys.some((k) => k.head)) return base.slice();
+  const h = (k) => k.head || base;
+  if (keys.length === 1) return h(keys[0]).slice();
+  const { i, s } = locate(keys, t);
+  const a = keys[i], b = keys[i + 1];
+  const u = (EASE[a.ease] || EASE.linear)(s);
+  return [0, 1, 2].map((j) => h(a)[j] + (h(b)[j] - h(a)[j]) * u);
+}
+
 function compose(parentS, local) {
   const a = parentS.rotY * D2R, c = Math.cos(a), sn = Math.sin(a);
   const [x, y, z] = local.pos;

@@ -174,6 +174,9 @@ export const POSE_SETS = {
   ballpark: { still: '관중 정지', bob: '관중이 위아래로 조금씩 들썩임', wake: '관중 정지 → 프리즈가 깨지는 시점(샷의 프리즈 해제 초)부터 들썩임' },
 };
 
+// Ballpark venues (object field `venue`).
+export const BALLPARKS = { generic: '일반 구장', lions: '대구 삼성 라이온즈 파크 (삼성 vs NC 응원석)' };
+
 export const HOLDS = { none: '없음', guitar: '일렉 기타', bass: '베이스', sticks: '드럼 스틱' };
 
 export const ACTOR_COLORS = ['#d9a066', '#6fa8dc', '#e06666', '#93c47d', '#c27ba0', '#f6b26b'];
