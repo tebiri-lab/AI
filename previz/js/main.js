@@ -718,20 +718,25 @@ orbit.enableDamping = true;
 orbit.dampingFactor = 0.12;
 
 // OrbitControls dollies by scaling the distance to its target, so zooming in stalls just short of
-// the pivot. Near the pivot, the wheel instead flies camera and pivot forward together.
+// the pivot. Near the pivot, a zoom-in (wheel, middle-drag or pinch) instead flies camera and pivot
+// forward together, stopping at floor height.
 const DOLLY_THROUGH_DIST = 1.5;
-directorCanvas.addEventListener('wheel', (e) => {
-  if (!orbit.enabled || e.deltaY >= 0) return;
-  const dist = dirCam.position.distanceTo(orbit.target);
-  if (dist > DOLLY_THROUGH_DIST) return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
-  const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
-  const step = Math.min(-px / 100, 3) * 0.3;
-  const fwd = orbit.target.clone().sub(dirCam.position).normalize().multiplyScalar(step);
-  dirCam.position.add(fwd);
-  orbit.target.add(fwd);
-}, { passive: false, capture: true });
+const DOLLY_THROUGH_SPEED = 6; // metres per unit of (1 - scale); a 100px wheel tick moves 0.3 m
+const DIR_CAM_FLOOR = 0.1;
+function dollyThrough(scale) {
+  if (scale >= 1 || dirCam.position.distanceTo(orbit.target) > DOLLY_THROUGH_DIST) return false;
+  const dir = orbit.target.clone().sub(dirCam.position).normalize();
+  let step = (1 - scale) * DOLLY_THROUGH_SPEED;
+  if (dir.y < 0) step = Math.min(step, Math.max(0, (dirCam.position.y - DIR_CAM_FLOOR) / -dir.y));
+  dir.multiplyScalar(step);
+  dirCam.position.add(dir);
+  orbit.target.add(dir);
+  return true;
+}
+const orbitDollyIn = orbit._dollyIn.bind(orbit);
+const orbitDollyOut = orbit._dollyOut.bind(orbit);
+orbit._dollyIn = (s) => { if (!dollyThrough(s)) orbitDollyIn(s); };
+orbit._dollyOut = (s) => { if (!dollyThrough(1 / s)) orbitDollyOut(s); };
 
 const shotCam = new THREE.PerspectiveCamera(40, 2.39, 0.03, 2000);
 const helperCam = new THREE.PerspectiveCamera(40, 2.39, 0.1, 2.2);
