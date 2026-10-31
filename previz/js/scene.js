@@ -308,6 +308,9 @@ const POSE_DEF = {
   },
   hold: { head: 0.1, sh: [-1.05, -0.3, -1.05, 0.3], el: [-1.65, -1.65] },
   hug: { head: 0.25, lean: 0.12, sh: [-0.85, -0.45, -0.85, 0.45], el: [-1.35, -1.35] },
+  // Forearms crossed in an X at the wrists in front of the chest; shY = upper-arm roll [L, R] (negative L / positive R
+  // turns the forearm in across the body). The left arm sits a little further forward so the forearms don't intersect.
+  arms_x: { head: 0.1, sh: [-1.0, 0.15, -0.85, -0.15], el: [-2.1, -2.1], shY: [-1.0, 1.0] },
   reach_up: { head: -0.45, sh: [-2.6, 0.2, 0, -0.08], el: [-0.2, 0] },
   // One arm pulled up by the balloon string over the shot: armL / armR = [[shX, shZ, el] from, to],
   // in that arm's own convention (positive shZ swings the left arm outward, negative the right).
@@ -543,6 +546,7 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
     r.shR.rotation.set(sh[2], 0, sh[3]);
     r.elL.rotation.set(el[0], 0, 0);
     r.elR.rotation.set(el[1], 0, 0);
+    if (d.shY) { r.shL.rotation.y = d.shY[0]; r.shR.rotation.y = d.shY[1]; }
     setStickAngle(r.elL, 60); setStickAngle(r.elR, 60);
     if (d.walk && speed > 0) {
       const amp = Math.min(1, speed / 1.3) * 0.55;
