@@ -311,6 +311,8 @@ const POSE_DEF = {
   // Forearms crossed in an X at the wrists in front of the chest; shY = upper-arm roll [L, R] (negative L / positive R
   // turns the forearm in across the body). The left arm sits a little further forward so the forearms don't intersect.
   arms_x: { head: 0.1, sh: [-1.0, 0.15, -0.85, -0.15], el: [-2.1, -2.1], shY: [-1.0, 1.0] },
+  // Straight arms raised overhead, crossed in an X at the wrists just above the head (left arm a touch further forward).
+  arms_x_up: { sh: [-3.14, -0.48, -3.08, 0.48], el: [0, 0] },
   reach_up: { head: -0.45, sh: [-2.6, 0.2, 0, -0.08], el: [-0.2, 0] },
   // One arm pulled up by the balloon string over the shot: armL / armR = [[shX, shZ, el] from, to],
   // in that arm's own convention (positive shZ swings the left arm outward, negative the right).
