@@ -169,6 +169,27 @@ input[type="range"] { width: 100%; accent-color: var(--focus); margin: 0; height
 .easeinfo b { color: var(--text); font-weight: 500; }
 .easeinfo code { font-family: var(--font-data); font-size: 11.5px; color: var(--focus); }
 .seg.four.tight button { padding: 5px 4px; }
+.sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.seg button:disabled { opacity: 0.4; cursor: not-allowed; }
+select { font: inherit; color: var(--text); background: var(--raise); border: 1px solid var(--line); border-radius: 7px; padding: 5px 6px; min-width: 0; }
+.extras { display: flex; flex-direction: column; gap: 8px; }
+.extra { background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.extra input[type="text"] { grid-column: 1 / -1; background: #0a0c0f; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font-size: 12.5px; min-width: 0; }
+.extra .sec { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.extra .sec input { width: 100%; min-width: 0; background: #0a0c0f; border: 1px solid var(--line); border-radius: 7px; padding: 5px 6px; font-family: var(--font-data); font-size: 12px; }
+.extra .rm { grid-column: 3; justify-self: end; background: none; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); padding: 3px 9px; cursor: pointer; font-size: 12px; }
+.extra .rm:hover { color: var(--text); border-color: #3d434d; }
+.ghost { align-self: flex-start; background: var(--raise); border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; cursor: pointer; font-size: 12.5px; }
+.ghost:hover { border-color: #3d434d; }
+.cutbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cutbar input { flex: 1 1 120px; min-width: 0; background: var(--raise); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; }
+.cutlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cutlist li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+.cutlist li.on { border-color: var(--focus); }
+.cutlist b { font-family: var(--font-data); font-size: 12.5px; }
+.cutlist span { flex: 1 1 160px; min-width: 0; font-size: 12px; color: var(--muted); }
+.cutlist button { background: none; border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: pointer; color: var(--muted); }
+.cutlist button:hover { color: var(--text); border-color: #3d434d; }
 .seg.four.tight button .k { font-size: 11px; }
 @media (max-width: 960px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "view" "panel" "notes"; }
@@ -219,9 +240,21 @@ input[type="range"] { width: 100%; accent-color: var(--focus); margin: 0; height
       <p class="note">영문·한글 모두 읽어요. 성별, 머리 모양과 색, 코트·재킷·원피스·치마·바지·청바지, 신발·부츠, 모자, 목도리, 백팩, 가방과 색 이름을 바꿔 보세요.</p>
     </section>
     <section class="card">
+      <h2>인물 속도 · 다른 인물 <small>Speed &amp; extras</small></h2>
+      <div class="sub">주인공 속도</div>
+      <div class="seg" id="speeds"></div>
+      <div class="extras" id="extras"></div>
+      <button class="ghost" id="addExtra" type="button">+ 다른 인물 추가</button>
+      <p class="note">행인처럼 화면을 지나가는 인물을 넣고, 화면 가로 전체를 몇 초 만에 지나가는지 정해요. 미리보기에서도 그 속도로 지나갑니다.</p>
+    </section>
+    <section class="card">
       <h2>카메라 구도 <small>Shot size</small></h2>
       <div class="seg" id="shots"></div>
       <p class="desc" id="shotDesc"></p>
+      <div class="sub">피사체 부위 (MS·CU·ECU)</div>
+      <div class="seg" id="bodyParts"></div>
+      <div class="slider"><label for="facePct">얼굴 크기</label><input type="range" id="facePct" min="0" max="90" step="1"><output id="facePctOut"></output></div>
+      <p class="note" id="partNote"></p>
     </section>
 
     <section class="card">
@@ -295,12 +328,21 @@ input[type="range"] { width: 100%; accent-color: var(--focus); margin: 0; height
     <section class="card">
       <h2>영상 프롬프트 <small>English</small></h2>
       <div class="fields">
-        <label for="place">장소 (영문)<input id="place" value="on a rooftop ledge overlooking a city skyline"></label>
+        <label for="place">장소 (영문 · 비우면 문장에서 빠져요)<input id="place" value="" placeholder="예: at a busy crosswalk in bright daylight"></label>
       </div>
+      <div class="sub">빛 문장</div>
+      <div class="seg" id="lightModes"></div>
       <div class="prompt"><pre id="promptOut"></pre></div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button class="copy" id="copyBtn" type="button">프롬프트 복사</button><button class="send" id="sendBtn" type="button">프리비즈 샷으로 보내기</button><span class="copied" id="copied" hidden>복사됨</span></div>
       <p class="note" id="sendNote">지금 구도(샷 크기·앵글·방향·무빙·이징·렌즈·시간·빛)를 프리비즈 탭에 새 샷으로 추가하고 이동해요. 인물 묘사는 샷 설명으로 들어갑니다.</p>
       <p class="note">미리보기는 이해를 돕는 단순화된 3D 장면입니다. 실제 영상 생성에는 위 프롬프트에 원하는 피사체·장소를 넣어 쓰세요.</p>
+    </section>
+    <section class="card">
+      <h2>컷 저장 · 불러오기 <small>Cuts</small></h2>
+      <div class="cutbar"><input id="cutName" placeholder="컷 번호 (예: #5)" aria-label="컷 번호"><button class="ghost" id="cutSave" type="button">지금 값 저장</button></div>
+      <ul class="cutlist" id="cutList"></ul>
+      <div class="cutbar"><button class="ghost" id="cutCopyAll" type="button">전체 프롬프트 복사</button><button class="ghost" id="cutExportMd" type="button">.md 내보내기</button><button class="ghost" id="cutExportJson" type="button">JSON 저장</button><button class="ghost" id="cutImport" type="button">JSON 불러오기</button><input type="file" id="cutFile" accept="application/json,.json" hidden></div>
+      <p class="note" id="cutNote">같은 컷 번호로 저장하면 덮어써요. 값은 이 브라우저에 저장되고, JSON 저장으로 다른 기기에 옮길 수 있어요.</p>
     </section>
   </section>
 </main>
@@ -315,22 +357,22 @@ const $ = (id) => document.getElementById(id);
 const SHOTS = {
   ELS: { ko: "익스트림 롱샷", H: 16, lift: 0.3, az: 0,
     desc: "<b>넓은 배경을 보여줘요.</b> 피사체는 아주 작고 장소와 분위기를 설명할 때(오프닝, 설정 샷) 씁니다.",
-    en: "extreme long shot (extreme wide establishing shot), the subject is tiny in the frame" },
+    nm: "extreme long shot (extreme wide establishing shot)", dt: "the subject tiny in the frame" },
   LS: { ko: "롱샷", H: 2.35, lift: 0.04, az: -15,
     desc: "<b>인물과 배경을 함께 보여줘요.</b> 전신과 주변 공간이 모두 보여 상황을 이해시키기 좋습니다.",
-    en: "long shot (wide shot), full body visible with the surrounding environment" },
+    nm: "long shot (wide shot)", dt: "full body visible with the surrounding environment" },
   MS: { ko: "미디엄 샷", H: 0.95, lift: 0.05, az: 40,
     desc: "<b>인물의 움직임을 보여줄 때.</b> 상반신 위주로 표정과 몸짓이 함께 읽힙니다.",
-    en: "medium shot, framed from the waist up" },
+    nm: "medium shot", dt: "framed from the waist up" },
   CU: { ko: "클로즈업", H: 0.42, lift: 0.03, az: 120,
     desc: "<b>감정과 표정을 강조할 때.</b> 얼굴이 화면을 채워 관객이 인물의 감정에 집중합니다.",
-    en: "close-up on the face, emphasizing emotion and expression" },
+    nm: "close-up", dt: "framed on the face, emphasizing emotion and expression" },
   ECU: { ko: "익스트림 클로즈업", H: 0.075, lift: 0, az: 135,
     desc: "<b>세부를 강조할 때.</b> 눈, 손끝처럼 아주 작은 디테일 하나만 화면에 남깁니다.",
-    en: "extreme close-up on the eye, macro-level detail" },
+    nm: "extreme close-up", dt: "framed on the eye, macro-level detail" },
   OTS: { ko: "오버숄더 샷", H: 0, lift: 0, az: 0,
     desc: "<b>대상을 바라보는 시선을 보여줄 때.</b> 어깨 너머로 인물이 보고 있는 것을 함께 담습니다. (높이각·방향 슬라이더는 이 샷에서 쓰지 않아요)",
-    en: "over-the-shoulder shot from just behind the subject, looking out at what they see" },
+    nm: "over-the-shoulder shot", dt: "from just behind the subject, looking out at what they see" },
 };
 const ANGLES = [
   { id: "eye", ko: "아이 레벨", k: "EYE", el: 0, roll: 0 },
@@ -345,9 +387,13 @@ const MOVES = [
   { id: "pan", ko: "패닝", k: "PAN",
     desc: "<b>움직임을 따라가며 보여줘요.</b> 카메라 위치는 그대로, 좌우로 고개를 돌려 걷는 피사체를 따라갑니다.", en: "smooth horizontal camera pan following the subject as they walk" },
   { id: "tilt", ko: "틸트", k: "TILT",
-    desc: "카메라 위치는 그대로, <b>위아래로 고개를 들어</b> 피사체에서 하늘·건물로 시선을 옮깁니다. 규모와 높이를 드러낼 때.", en: "slow vertical tilt up from the subject to the skyline" },
+    desc: "카메라 위치는 그대로, <b>위아래로 고개를 들어</b> 피사체에서 위쪽으로 시선을 옮깁니다. 규모와 높이를 드러낼 때.", en: "slow vertical tilt up from the subject, revealing what is above" },
   { id: "dolly", ko: "돌리 인", k: "DOLLY",
     desc: "카메라 자체가 <b>앞으로 다가갑니다.</b> 긴장감이 쌓이거나 감정에 몰입시키는 효과.", en: "slow dolly-in pushing toward the subject" },
+  { id: "dollyout", ko: "돌리 백", k: "PULL",
+    desc: "카메라 자체가 <b>뒤로 물러나며</b> 피사체에서 멀어집니다. 주변 공간을 드러내거나 고립감, 장면의 마무리에.", en: "slow dolly-back (pull-out), the camera physically moving backward away from the subject, revealing more of the surroundings" },
+  { id: "track", ko: "옆 트래킹", k: "TRACK",
+    desc: "<b>걷는 피사체와 나란히</b> 카메라가 옆으로 같이 이동합니다. 피사체는 화면 안 같은 자리에 머물고 배경이 흘러갑니다.", en: "lateral tracking shot, the camera traveling sideways alongside the walking subject at the same speed, keeping them in the same place in frame while the background slides past" },
   { id: "arc", ko: "아크", k: "ARC",
     desc: "피사체를 중심으로 <b>원을 그리며 돕니다.</b> 인물이 특별한 순간에 있음을 강조할 때.", en: "slow arc shot orbiting around the subject" },
   { id: "zoom", ko: "돌리 줌", k: "VERTIGO",
@@ -410,7 +456,43 @@ const RATIOS = [
 const FOCAL_TICKS = [14, 24, 35, 50, 85, 135, 200];
 const F_MIN = 14, F_MAX = 200;
 
-const state = { ease: "inout", moveDur: 3, laneDur: 1.4, shot: "LS", el: 2, az: -15, roll: 0, move: "static", focal: 35, stop: 2, K: 3000, ratio: "16:9", guides: true, hud: true };
+// Body part the MS/CU/ECU frames on. y = local height on the figure (m); hideFace = the face is out of frame.
+const BODY_PARTS = [
+  { id: "auto", ko: "샷 기본", en: "" },
+  { id: "face", ko: "얼굴", en: "the face", y: 1.62 },
+  { id: "upper", ko: "상반신", en: "the upper body", y: 1.3 },
+  { id: "hands", ko: "손", en: "the hands", y: 0.81, hideFace: true },
+  { id: "lower", ko: "하체·밑단", en: "the lower body and the hem of the clothes", y: 0.5, hideFace: true },
+  { id: "feet", ko: "발", en: "the feet and shoes", y: 0.07, hideFace: true },
+];
+const FACE_H = 0.235;   // chin to crown of the figure, m: the face-size slider frames on this
+const SPEEDS = [
+  { id: "none", ko: "미지정", en: "", mps: 1.4 },
+  { id: "still", ko: "정지", en: "The subject stays still in place.", mps: 1.4 },
+  { id: "normal", ko: "정속 걷기", en: "The subject walks at a normal real-time pace, not in slow motion.", mps: 1.4 },
+  { id: "slow", ko: "천천히 걷기", en: "The subject walks slowly at a relaxed pace, in real time (not slow motion).", mps: 0.8 },
+  { id: "run", ko: "달리기", en: "The subject runs at full real-time speed.", mps: 4 },
+  { id: "slowmo", ko: "슬로모션", en: "The subject moves in slow motion.", mps: 0.5 },
+];
+const PLANES = [
+  { id: "fg", ko: "전경", en: "in the foreground, between the camera and the subject" },
+  { id: "mg", ko: "중경", en: "at the same distance as the subject" },
+  { id: "bg", ko: "배경", en: "in the background behind the subject" },
+];
+const XDIRS = [
+  { id: "lr", ko: "좌→우", en: "from frame left to frame right" },
+  { id: "rl", ko: "우→좌", en: "from frame right to frame left" },
+  { id: "still", ko: "제자리", en: "" },
+];
+const LIGHT_MODES = [
+  { id: "off", ko: "넣지 않음" },
+  { id: "kelvin", ko: "색온도만" },
+  { id: "scene", ko: "시간대 묘사" },
+];
+const SUBJECT_FACING = 151;   // azimuth (°) of the figure's front in this scene
+const DEFAULT_STATE = { ease: "inout", moveDur: 3, laneDur: 1.4, shot: "LS", el: 2, az: -15, roll: 0, move: "static", focal: 35, stop: 2, K: 3000, ratio: "16:9", guides: true, hud: true,
+  part: "auto", facePct: 0, speed: "none", extras: [], light: "kelvin" };
+const state = JSON.parse(JSON.stringify(DEFAULT_STATE));
 
 /* ================= helpers ================= */
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -434,11 +516,11 @@ function lensInfo(f) {
 }
 function angleLabel(el, roll) {
   let a;
-  if (el >= 70) a = { k: "TOP", ko: "탑 뷰", desc: "<b>바로 위에서 내려다봐요.</b> 상황을 한눈에 보여줄 때, 지도처럼 객관적인 느낌.", en: "top-down bird's-eye view, overhead shot" };
-  else if (el >= 12) a = { k: "HIGH", ko: "하이 앵글", desc: "<b>위에서 내려다보는 구도.</b> 피사체가 작고 귀엽게, 혹은 약하고 외로워 보입니다.", en: "high angle, camera looking down at the subject" };
+  if (el >= 70) a = { k: "TOP", ko: "탑 뷰", desc: "<b>바로 위에서 내려다봐요.</b> 상황을 한눈에 보여줄 때, 지도처럼 객관적인 느낌.", en: "top-down bird's-eye view" };
+  else if (el >= 12) a = { k: "HIGH", ko: "하이 앵글", desc: "<b>위에서 내려다보는 구도.</b> 피사체가 작고 귀엽게, 혹은 약하고 외로워 보입니다.", en: "high angle" };
   else if (el > -8) a = { k: "EYE", ko: "아이 레벨", desc: "<b>눈높이에서 바라보는 기본 구도.</b> 가장 자연스럽고 중립적인 느낌.", en: "eye-level angle" };
-  else a = { k: "LOW", ko: "로우 앵글", desc: "<b>아래에서 올려다보는 구도.</b> 강한 인상, 웅장하고 위압적인 느낌.", en: "low angle, camera looking up at the subject, heroic and imposing" };
-  if (Math.abs(roll) >= 5) a = { k: a.k + "+DUTCH", ko: a.ko + " + 더치", desc: a.desc + " 여기에 <b>화면을 기울여(더치 앵글)</b> 긴장감과 불안정하고 역동적인 느낌을 더합니다.", en: a.en + `, Dutch angle tilted ${Math.abs(roll)} degrees` };
+  else a = { k: "LOW", ko: "로우 앵글", desc: "<b>아래에서 올려다보는 구도.</b> 강한 인상, 웅장하고 위압적인 느낌.", en: "low angle, heroic and imposing" };
+  if (Math.abs(roll) >= 5) a = { k: a.k + "+DUTCH", ko: a.ko + " + 더치", desc: a.desc + " 여기에 <b>화면을 기울여(더치 앵글)</b> 긴장감과 불안정하고 역동적인 느낌을 더합니다.", en: a.en };
   return a;
 }
 function dofRange(fmm, N, Sm) {
@@ -476,13 +558,43 @@ tickRow($("stopTicks"), STOPS.map((s, i) => ({ label: s, v: i })), (v) => { stat
 tickRow($("kTicks"), K_INFO.map((k) => ({ label: (k.k / 1000) + "K", v: k.k })), (v) => { state.K = +v; sync(); });
 
 $("el").addEventListener("input", (e) => { state.el = +e.target.value; if (state.shot === "OTS") state.shot = "LS"; sync(); });
-$("az").addEventListener("input", (e) => { state.az = +e.target.value; if (state.shot === "OTS") state.shot = "LS"; sync(); });
+$("az").addEventListener("input", (e) => { state.az = wrap180(+e.target.value + SUBJECT_FACING); if (state.shot === "OTS") state.shot = "LS"; sync(); });
 $("roll").addEventListener("input", (e) => { state.roll = +e.target.value; sync(); });
 $("focal").addEventListener("input", (e) => { state.focal = sliderToFocal(+e.target.value); sync(); });
 $("stop").addEventListener("input", (e) => { state.stop = +e.target.value; sync(); });
 $("kelvin").addEventListener("input", (e) => { state.K = +e.target.value; sync(); });
 $("guidesOn").addEventListener("change", (e) => { state.guides = e.target.checked; sync(); });
 $("hudOn").addEventListener("change", (e) => { state.hud = e.target.checked; sync(); });
+BODY_PARTS.forEach((b) => segButton($("bodyParts"), { id: "part-" + b.id, k: b.ko, n: b.id === "auto" ? "얼굴 기준" : "", onClick: () => { state.part = b.id; sync(); } }));
+$("facePct").addEventListener("input", (e) => { state.facePct = +e.target.value; sync(); });
+SPEEDS.forEach((v) => segButton($("speeds"), { id: "speed-" + v.id, k: v.ko, n: v.id === "none" ? "문장 없음" : v.mps && v.id !== "still" ? `약 ${v.mps}m/s` : "", onClick: () => { state.speed = v.id; moveT = 0; sync(); } }));
+LIGHT_MODES.forEach((m) => segButton($("lightModes"), { id: "light-" + m.id, k: m.ko, n: { off: "빛 문장 없음", kelvin: "예: 5000K", scene: "노을·밤하늘 포함" }[m.id], onClick: () => { state.light = m.id; sync(); } }));
+
+/* extra figures (passers-by) */
+let extrasTimer = 0;
+function renderExtras() {
+  const box = $("extras"); box.innerHTML = "";
+  const opts = (list, cur) => list.map((o) => `<option value="${o.id}"${o.id === cur ? " selected" : ""}>${o.ko}</option>`).join("");
+  state.extras.forEach((x, i) => {
+    const row = document.createElement("div"); row.className = "extra";
+    row.innerHTML = `<input type="text" aria-label="인물 ${i + 1} 묘사" spellcheck="false">` +
+      `<select aria-label="거리">${opts(PLANES, x.plane)}</select><select aria-label="방향">${opts(XDIRS, x.dir)}</select>` +
+      `<label class="sec"><input type="number" min="0.2" max="20" step="0.1" aria-label="화면을 지나가는 시간(초)">초</label>` +
+      `<button class="rm" type="button">삭제</button>`;
+    const [desc, num] = row.querySelectorAll("input"); const [plane, dir] = row.querySelectorAll("select");
+    desc.value = x.desc; num.value = x.sec; num.disabled = x.dir === "still";
+    desc.addEventListener("input", () => { x.desc = desc.value; writePrompt(); saveCurrent(); clearTimeout(extrasTimer); extrasTimer = setTimeout(syncExtraMeshes, 250); });
+    plane.addEventListener("change", () => { x.plane = plane.value; sync(); });
+    dir.addEventListener("change", () => { x.dir = dir.value; num.disabled = x.dir === "still"; sync(); });
+    num.addEventListener("input", () => { const v = parseFloat(num.value); if (isFinite(v) && v > 0) { x.sec = clamp(v, 0.2, 20); sync(); } });
+    row.querySelector(".rm").addEventListener("click", () => { state.extras.splice(i, 1); renderExtras(); sync(); });
+    box.appendChild(row);
+  });
+}
+$("addExtra").addEventListener("click", () => {
+  state.extras.push({ desc: "a passerby in a gray suit", plane: "fg", dir: "lr", sec: 0.5 });
+  renderExtras(); sync();
+});
 const SUBJECT_PRESETS = [
   ["트렌치코트", "a young woman with long black hair in a beige trench coat, dark jeans and white sneakers"],
   ["빨간 원피스", "a woman with a blonde ponytail in a red dress and black boots"],
@@ -493,9 +605,9 @@ const SUBJECT_PRESETS = [
 SUBJECT_PRESETS.forEach(([ko, en]) => { const b = document.createElement("button"); b.type = "button"; b.textContent = ko; b.title = en;
   b.addEventListener("click", () => { $("subject").value = en; onSubject(); }); $("subjectPresets").appendChild(b); });
 let subjectTimer = 0;
-function onSubject() { writePrompt(); clearTimeout(subjectTimer); subjectTimer = setTimeout(() => { if (ready) setPerson($("subject").value); }, 200); }
+function onSubject() { writePrompt(); saveCurrent(); clearTimeout(subjectTimer); subjectTimer = setTimeout(() => { if (ready) setPerson($("subject").value); }, 200); }
 $("subject").addEventListener("input", onSubject);
-$("place").addEventListener("input", () => writePrompt());
+$("place").addEventListener("input", () => { writePrompt(); saveCurrent(); });
 $("copyBtn").addEventListener("click", () => {
   const text = $("promptOut").textContent;
   const done = () => { $("copied").hidden = false; setTimeout(() => ($("copied").hidden = true), 1600); };
@@ -514,9 +626,20 @@ function sync() {
   });
   document.querySelectorAll("#moves button").forEach((b) => b.setAttribute("aria-pressed", b.id === "mv-" + s.move));
   document.querySelectorAll("#ratios button").forEach((b) => b.setAttribute("aria-pressed", b.id === "ratio-" + s.ratio.replace(/[:.]/g, "-")));
-  $("el").value = s.el; $("az").value = s.az; $("roll").value = s.roll;
-  $("elOut").textContent = s.el + "°"; $("azOut").textContent = s.az + "°"; $("rollOut").textContent = s.roll + "°";
+  const rel = relAz();
+  $("el").value = s.el; $("az").value = rel; $("roll").value = s.roll;
+  $("elOut").textContent = s.el + "°"; $("azOut").textContent = rel === 0 ? "정면 0°" : Math.abs(rel) === 180 ? "뒤 180°" : `${rel > 0 ? "좌" : "우"} ${Math.abs(rel)}°`; $("rollOut").textContent = s.roll + "°";
   $("shotDesc").innerHTML = shot.desc;
+  const partOk = ["MS", "CU", "ECU"].includes(s.shot);
+  document.querySelectorAll("#bodyParts button").forEach((b) => { b.disabled = !partOk && b.id !== "part-auto"; b.setAttribute("aria-pressed", b.id === "part-" + (partOk ? s.part : "auto")); });
+  $("facePct").value = s.facePct; $("facePctOut").textContent = s.facePct ? s.facePct + "%" : "끔";
+  const fp = effPart();
+  $("facePct").disabled = !partOk || !!(BODY_PARTS.find((b) => b.id === fp) || {}).hideFace;
+  $("partNote").textContent = !partOk ? "부위와 얼굴 크기는 MS·CU·ECU에서 쓸 수 있어요." : $("facePct").disabled ? "얼굴이 화면 밖인 부위라서 얼굴 크기는 쓰지 않아요." :
+    s.facePct ? `얼굴(턱~정수리)이 화면 높이의 ${s.facePct}%가 되도록 거리를 맞췄어요. 샷 크기 버튼보다 이 값이 우선이에요.` : "얼굴 크기를 0보다 크게 하면 얼굴이 화면 높이의 몇 %인지로 거리를 맞춰요.";
+  document.querySelectorAll("#speeds button").forEach((b) => b.setAttribute("aria-pressed", b.id === "speed-" + s.speed));
+  document.querySelectorAll("#lightModes button").forEach((b) => b.setAttribute("aria-pressed", b.id === "light-" + s.light));
+  syncExtraMeshes();
   const ang = s.shot === "OTS" ? { ko: "오버숄더", desc: "피사체 어깨 뒤, 눈높이에서 피사체가 보는 방향을 바라봅니다.", en: "" } : angleLabel(s.el, s.roll);
   $("angleDesc").innerHTML = ang.desc + (s.shot === "OTS" && Math.abs(s.roll) >= 5 ? " 화면 기울기(더치)가 더해졌어요." : "");
   const mv = MOVES.find((m) => m.id === s.move); $("moveDesc").innerHTML = mv.desc;
@@ -545,7 +668,7 @@ function sync() {
   document.querySelector(".hud").hidden = !s.hud;
   $("guidesOn").checked = s.guides; $("hudOn").checked = s.hud;
   applyLook(); dirty = true;
-  writeSummary(); writePrompt();
+  writeSummary(); writePrompt(); saveCurrent();
 }
 function updateHud() {
   const s = state, N = STOPS[s.stop];
@@ -568,7 +691,8 @@ function writeSummary() {
   const ang = s.shot === "OTS" ? { ko: "오버숄더(눈높이)" } : angleLabel(s.el, s.roll);
   const rows = [
     ["Shot", `${shot.ko} (${s.shot})`],
-    ["Angle", ang.ko],
+    ["Angle", s.shot === "OTS" ? ang.ko : `${ang.ko} · 높이 ${s.el}° · 방향 ${relAz() === 0 ? "정면" : (relAz() > 0 ? "좌 " : "우 ") + Math.abs(relAz()) + "°"}${s.roll ? ` · 기울기 ${s.roll}°` : ""}`],
+    ["Subject", `${(BODY_PARTS.find((b) => b.id === effPart()) || BODY_PARTS[0]).ko}${faceOn() ? ` · 얼굴 ${s.facePct}%` : ""} · ${SPEEDS.find((v) => v.id === s.speed).ko}${s.extras.length ? ` · 다른 인물 ${s.extras.length}명` : ""}`],
     ["Move", MOVES.find((m) => m.id === s.move).ko + (s.move === "static" ? "" : ` · ${easeById(s.ease).name} ${s.moveDur.toFixed(1)}s`)],
     ["Lens", `${s.focal}mm · ${lensInfo(s.focal).ko}`],
     ["Aperture", `f/${N} · ${stopInfo(N).ko}`],
@@ -576,19 +700,61 @@ function writeSummary() {
   ];
   $("summary").innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
 }
-function writePrompt() {
-  const s = state, shot = SHOTS[s.shot], N = STOPS[s.stop];
+function wrap180(a) { return ((((a + 180) % 360) + 360) % 360) - 180; }
+function relAz() { return Math.round(wrap180(state.az - SUBJECT_FACING)); }   // + = toward the subject's left
+function effPart() { return ["MS", "CU", "ECU"].includes(state.shot) ? state.part : "auto"; }
+function faceOn() { const b = BODY_PARTS.find((x) => x.id === effPart()); return state.facePct > 0 && ["MS", "CU", "ECU"].includes(state.shot) && !(b && b.hideFace); }
+function shotSentence(subj, place) {
+  const s = state, shot = SHOTS[s.shot], b = BODY_PARTS.find((x) => x.id === effPart());
+  let dt = shot.dt;
+  if (b && b.id !== "auto") dt = s.shot === "ECU" && b.id === "face" ? "framed tightly on the eye, macro-level detail" : `framed on ${b.en}` + (b.hideFace ? ", the face out of frame" : "");
+  if (faceOn()) dt += `, the face (chin to top of head) filling about ${s.facePct}% of the frame height`;
+  return `${cap(shot.nm)} of ${subj}${place ? " " + place : ""}, ${dt}.`;
+}
+function angleSentence() {
+  const s = state, el = s.el, r = relAz(), a = Math.abs(r);
+  const vert = el >= 85 ? `camera directly overhead looking straight down (${el}° elevation)`
+    : el > 0 ? `camera ${el}° above the subject, looking down at a ${el}° angle`
+    : el < 0 ? `camera ${-el}° below the subject, looking up at a ${-el}° angle`
+    : "camera level with the subject (0° elevation)";
+  const view = a < 20 ? "frontal view" : a < 60 ? "three-quarter front view" : a < 120 ? "profile view" : a < 160 ? "three-quarter back view" : "back view";
+  const horiz = a === 0 ? `directly in front of the subject (0°, ${view})` : a === 180 ? `directly behind the subject (180°, ${view})`
+    : `${a}° around to the subject's ${r > 0 ? "left" : "right"} from straight-on front (${view})`;
+  return `${cap(angleLabel(el, 0).en)}, ${vert}; ${horiz}.`;
+}
+function rollSentence() {
+  const r = state.roll; if (!r) return "";
+  return `${Math.abs(r) >= 5 ? "Dutch angle" : "Slight camera roll"}: the frame is tilted ${Math.abs(r)}°, horizon ${r > 0 ? "rising toward frame right" : "rising toward frame left"}.`;
+}
+function extrasSentences() {
+  return state.extras.filter((x) => x.desc.trim()).map((x) => {
+    const d = cap(x.desc.trim()), pl = (PLANES.find((p) => p.id === x.plane) || PLANES[0]).en;
+    if (x.dir === "still") return `${d} stands still ${pl}.`;
+    const dir = XDIRS.find((v) => v.id === x.dir).en, sec = +(+x.sec).toFixed(1);
+    return `${d} ${sec <= 1.2 ? "passes quickly" : "walks"} across the frame ${pl}, ${dir}, entering and leaving the frame within about ${sec} second${sec === 1 ? "" : "s"}${sec <= 1 ? ", slightly motion-blurred" : ""}.`;
+  });
+}
+function lightSentence() {
+  const s = state;
+  if (s.light === "off") return "";
+  if (s.light === "scene") return cap(nearestK(s.K).en) + ".";
+  return `${s.K < 4500 ? "Warm" : s.K <= 5500 ? "Neutral" : "Cool"} color temperature around ${s.K}K.`;
+}
+function buildPrompt() {
+  const s = state, N = STOPS[s.stop];
   const subj = $("subject").value.trim() || "the subject", place = $("place").value.trim();
-  const parts = [];
-  parts.push(`${cap(shot.en)} of ${subj}${place ? " " + place : ""}.`);
-  if (s.shot !== "OTS") parts.push(cap(angleLabel(s.el, s.roll).en) + ".");
-  else if (Math.abs(s.roll) >= 5) parts.push(`Dutch angle tilted ${Math.abs(s.roll)} degrees.`);
+  const parts = [shotSentence(subj, place)];
+  if (s.shot !== "OTS") parts.push(angleSentence());
+  parts.push(rollSentence());
+  parts.push((SPEEDS.find((v) => v.id === s.speed) || SPEEDS[0]).en);
+  parts.push(...extrasSentences());
   parts.push(cap(MOVES.find((m) => m.id === s.move).en) + (s.move === "static" ? "." : `, ${easeById(s.ease).en}, over about ${s.moveDur.toFixed(1)} seconds.`));
   parts.push(`Shot on a ${s.focal}mm ${lensInfo(s.focal).en} at f/${N}, ${stopInfo(N).en}.`);
-  parts.push(cap(nearestK(s.K).en) + ".");
+  parts.push(lightSentence());
   parts.push(`Photorealistic, cinematic, natural film grain, aspect ratio ${s.ratio}.`);
-  $("promptOut").textContent = parts.join(" ");
+  return parts.filter(Boolean).join(" ");
 }
+function writePrompt() { $("promptOut").textContent = buildPrompt(); }
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 
 /* ================= hand-off to the previz tab ================= */
@@ -596,9 +762,9 @@ function labToPreviz() {
   const s = state;
   const size = { ELS: "ews", LS: "fs", MS: "ms", CU: "cu", ECU: "ecu", OTS: "ms" }[s.shot];
   const angle = s.shot === "OTS" ? "eye" : s.el >= 70 ? "overhead" : s.el >= 12 ? "high" : s.el > -8 ? "eye" : "low";
-  const rel = (((s.az - 151) % 360) + 540) % 360 - 180, a = Math.abs(rel); // 151° = the figure's facing in this scene
+  const rel = relAz(), a = Math.abs(rel);
   const dir = s.shot === "OTS" ? "ots" : a < 20 ? "front" : a < 60 ? (rel > 0 ? "ql" : "qr") : a < 120 ? "side" : "back";
-  const move = { static: "static", pan: "pan_r", tilt: "tilt_up", dolly: "push", arc: "orbit_r", zoom: "dolly_zoom" }[s.move];
+  const move = { static: "static", pan: "pan_r", tilt: "tilt_up", dolly: "push", dollyout: "pull", track: "truck_r", arc: "orbit_r", zoom: "dolly_zoom" }[s.move];
   const light = s.K <= 4500 ? "golden" : s.K <= 6500 ? "day" : "night";
   const subj = $("subject").value.trim(), place = $("place").value.trim();
   return {
@@ -1094,8 +1260,10 @@ function placeCamera(t) {
   // subject motion
   person.position.copy(CHAR_HOME); person.rotation.set(0, CHAR_YAW, 0);
   for (const k of ["legL", "legR", "armL", "armR"]) parts[k].rotation.x = 0;
-  if (s.move === "pan") {
-    const x = lerp(-3, 3, pp), speed = Math.abs(x - lerp(-3, 3, movePhase(t - 1 / 60))) * 60;
+  const walking = s.move === "pan" || s.move === "track";
+  if (walking) {
+    const half = clamp((SPEEDS.find((v) => v.id === s.speed) || SPEEDS[0]).mps * s.moveDur, 1.5, 12) / 2;
+    const x = lerp(-half, half, pp), speed = Math.abs(x - lerp(-half, half, movePhase(t - 1 / 60))) * 60;
     walkPhase += speed / 60 * 5.5;
     const amp = clamp(speed / 1.4, 0, 1), sw = Math.sin(walkPhase) * amp;
     person.position.x = x; person.position.y += Math.abs(Math.cos(walkPhase)) * 0.025 * amp;
@@ -1115,22 +1283,32 @@ function placeCamera(t) {
     const right = new THREE.Vector3(-f.z, 0, f.x);
     camPos = CHAR_HOME.clone().addScaledVector(f, -0.8).addScaledVector(right, 0.36).add(v3.set(0, 1.6, 0));
     if (s.move === "dolly") camPos.addScaledVector(f, lerp(-0.6, 0.35, pp));
+    if (s.move === "dollyout") camPos.addScaledVector(f, lerp(0.35, -0.6, pp));
+    if (s.move === "track") camPos.add(tmp.copy(person.position).sub(CHAR_HOME).setY(0));
     if (s.move === "arc") { const a = lerp(-0.5, 0.5, pp); camPos.sub(CHAR_HOME).applyAxisAngle(v3.set(0, 1, 0), a).add(CHAR_HOME); }
     lookTarget = person.position.clone().addScaledVector(f, 90).addScaledVector(right, -12).add(v3.set(0, -4, 0));
     focusPoint = lookTarget.clone();
     if (s.move === "zoom") { focal = s.focal * lerp(0.6, 1.6, pp); vfov = 2 * Math.atan(sensorH / 2 / focal); }
   } else {
     let target;
-    if (s.shot === "ECU") {
+    const fp = effPart(), bp = BODY_PARTS.find((b) => b.id === fp);
+    if (faceOn()) target = person.localToWorld(new THREE.Vector3(0, 1.64, 0));
+    else if (fp === "hands") {
+      const camDir = new THREE.Vector3(Math.sin(THREE.MathUtils.degToRad(az)), 0, Math.cos(THREE.MathUtils.degToRad(az)));
+      target = [parts.armL, parts.armR].map((a) => a.localToWorld(new THREE.Vector3(0, -0.6, 0)))
+        .sort((a, b) => b.clone().sub(person.position).dot(camDir) - a.clone().sub(person.position).dot(camDir))[0];
+    } else if (bp && bp.y !== undefined && !(s.shot === "ECU" && fp === "face")) target = person.localToWorld(new THREE.Vector3(0, bp.y, 0));
+    else if (s.shot === "ECU") {
       const eyes = [parts.eyeL, parts.eyeR].map((e) => e.getWorldPosition(new THREE.Vector3()));
       const camDir = new THREE.Vector3(Math.sin(THREE.MathUtils.degToRad(az)), 0, Math.cos(THREE.MathUtils.degToRad(az)));
       target = eyes.sort((a, b) => b.clone().sub(person.position).dot(camDir) - a.clone().sub(person.position).dot(camDir))[0];
     } else {
       target = person.position.clone().add(v3.set(0, s.shot === "CU" ? 1.62 : s.shot === "MS" ? 1.3 : 0.9, 0));
     }
-    let H = shot.H;
+    let H = faceOn() ? FACE_H / (s.facePct / 100) : shot.H;
     let d = (H / 2) / Math.tan(vfov / 2);
     if (s.move === "dolly") d *= lerp(1.7, 0.55, pp);
+    if (s.move === "dollyout") d *= lerp(0.55, 1.7, pp);
     if (s.move === "zoom") { const m = lerp(0.5, 1.9, pp); focal = s.focal * m; vfov = 2 * Math.atan(sensorH / 2 / focal); d *= m; }
     if (s.move === "arc") az += lerp(-35, 35, pp);
     const pivot = s.move === "pan" ? homeTarget.clone().add(v3.set(0, target.y - person.position.y, 0)) : target.clone();
@@ -1140,7 +1318,7 @@ function placeCamera(t) {
     const onRoof = Math.abs(camPos.x) < 15 && camPos.z < 24;
     const minY = onRoof && camPos.z > 0.6 ? -1.5 : onRoof && camPos.z > -1.0 ? 0.05 : -138;
     if (camPos.y < minY) camPos.y = minY;
-    lookTarget = target.clone().add(v3.set(0, H * shot.lift, 0));
+    lookTarget = target.clone().add(v3.set(0, faceOn() ? -H * 0.16 : bp && bp.id !== "auto" ? 0 : H * shot.lift, 0));
     if (el > 60) lookTarget = target.clone();
     focusPoint = target.clone();
   }
@@ -1154,6 +1332,7 @@ function placeCamera(t) {
 
   const flat = Math.hypot(focusPoint.x - camPos.x, focusPoint.z - camPos.z);
   live.el = s.shot === "OTS" ? 0 : THREE.MathUtils.radToDeg(Math.atan2(camPos.y - focusPoint.y, flat));
+  live.flat = flat;
   live.focal = focal; live.focusM = camPos.distanceTo(focusPoint);
 
   const pu = post.uniforms;
@@ -1166,15 +1345,57 @@ function placeCamera(t) {
   scene.userData.sky.position.copy(camera.position);
 }
 
+/* extra figures: rebuilt when their descriptions change, placed every frame relative to the camera */
+let extraMeshes = [], extrasKey = null;
+function syncExtraMeshes() {
+  if (!ready) return;
+  const key = state.extras.map((x) => x.desc).join("\n");
+  if (key === extrasKey) return;
+  extrasKey = key;
+  extraMeshes.forEach((m) => { scene.remove(m); m.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } }); });
+  extraMeshes = state.extras.map((x) => { const m = buildPerson(parseSubject(x.desc || "a person")); scene.add(m); return m; });
+  dirty = true;
+}
+const extrasMoving = () => state.extras.some((x) => x.dir !== "still");
+function placeExtras(tsec) {
+  if (!extraMeshes.length) return;
+  const fwd = camera.getWorldDirection(new THREE.Vector3()); fwd.y = 0;
+  if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
+  fwd.normalize();
+  const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+  const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect;
+  const base = live.flat || 3;
+  state.extras.forEach((x, i) => {
+    const m = extraMeshes[i]; if (!m) return;
+    const depth = x.plane === "fg" ? Math.max(0.5, base * 0.45) : x.plane === "mg" ? base + 0.5 : base + 4;
+    const half = depth * tanH + 0.45;   // a little past the frame edge so the figure fully enters and leaves
+    let u, sgn = x.dir === "rl" ? -1 : 1, moving = x.dir !== "still";
+    if (moving) {
+      const sec = Math.max(0.2, +x.sec || 1), per = sec + 0.8, ph = ((tsec + i * 0.37) % per) / sec;
+      m.visible = ph <= 1; if (!m.visible) return;
+      u = ph;
+    } else { m.visible = true; u = i % 2 ? 0.82 : 0.18; sgn = 1; }
+    const along = sgn * lerp(-half, half, u);
+    const pos = camera.position.clone().setY(0).addScaledVector(fwd, depth).addScaledVector(right, along);
+    pos.y = pos.z > 0.6 && Math.abs(pos.x) < 15 ? -1.72 : 0;   // the rooftop floor sits lower behind the deck
+    m.position.copy(pos);
+    const face = moving ? right.clone().multiplyScalar(sgn) : fwd.clone().negate();
+    m.rotation.set(0, Math.atan2(-face.x, -face.z), 0);
+    const p = m.userData.parts, stride = moving ? Math.sin(Math.abs(along) * 5.5) * clamp(2 * half / Math.max(0.2, +x.sec || 1) / 1.4, 0, 1.3) : 0;
+    p.legL.rotation.x = stride * 0.42; p.legR.rotation.x = -stride * 0.42; p.armL.rotation.x = -stride * 0.32; p.armR.rotation.x = stride * 0.32;
+  });
+}
+
 let lastHud = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   if (!ready) return;
-  const moving = state.move !== "static";
-  if (moving) moveT += 1 / 60;
+  const camMoving = state.move !== "static", moving = camMoving || extrasMoving();
+  if (camMoving) moveT += 1 / 60;
   if (!dirty && !moving) return;
   dirty = false;
   placeCamera(moveT);
+  placeExtras(now / 1000);
   post.uniforms.uTime.value = (now % 1000) / 1000;
   renderer.setRenderTarget(rt); renderer.render(scene, camera);
   renderer.setRenderTarget(null); renderer.render(post.scene, post.cam);
@@ -1251,7 +1472,102 @@ sizeLanes();
 if (matchMedia("(prefers-reduced-motion: reduce)").matches) { lanePlaying = false; laneT = 0.35 + 1.4 * 0.6; $("lanePlay").textContent = "재생"; }
 requestAnimationFrame(laneLoop);
 
+/* ================= cuts: save / load / export ================= */
+const CUTS_KEY = "lab.cuts.v1", CUR_KEY = "lab.current.v1";
+let restoring = false, currentCut = "";
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (_) { return false; } },
+};
+function snapshot() { return { state: JSON.parse(JSON.stringify(state)), subject: $("subject").value, place: $("place").value }; }
+function cleanExtras(list) {
+  return (Array.isArray(list) ? list : []).filter((x) => x && typeof x === "object").map((x) => ({
+    desc: String(x.desc || ""), plane: PLANES.some((p) => p.id === x.plane) ? x.plane : "fg",
+    dir: XDIRS.some((d) => d.id === x.dir) ? x.dir : "lr", sec: clamp(+x.sec || 1, 0.2, 20) }));
+}
+function applySnapshot(sn) {
+  if (!sn || typeof sn !== "object") return;
+  const st = sn.state || {};
+  for (const k of Object.keys(DEFAULT_STATE)) {
+    if (k === "extras") continue;
+    if (k in st && typeof st[k] === typeof DEFAULT_STATE[k]) state[k] = st[k];
+  }
+  state.extras = cleanExtras(st.extras);
+  if (!SHOTS[state.shot]) state.shot = "LS";
+  if (!MOVES.some((m) => m.id === state.move)) state.move = "static";
+  if (typeof sn.subject === "string") $("subject").value = sn.subject;
+  if (typeof sn.place === "string") $("place").value = sn.place;
+}
+function saveCurrent() { if (!restoring) store.set(CUR_KEY, snapshot()); }
+function loadCuts() { const c = store.get(CUTS_KEY); return Array.isArray(c) ? c.filter((x) => x && typeof x.name === "string") : []; }
+function sortCuts(list) { return list.sort((a, b) => a.name.localeCompare(b.name, "ko", { numeric: true })); }
+function cutSummary(c) {
+  const st = c.state || {}, mv = MOVES.find((m) => m.id === st.move);
+  return [st.shot, mv ? mv.ko : "", st.focal ? st.focal + "mm" : "", (st.extras || []).length ? `인물 +${st.extras.length}` : ""].filter(Boolean).join(" · ");
+}
+function renderCuts() {
+  const ul = $("cutList"), cuts = loadCuts();
+  ul.innerHTML = cuts.length ? "" : `<li><span>저장된 컷이 없어요.</span></li>`;
+  cuts.forEach((c) => {
+    const li = document.createElement("li"); if (c.name === currentCut) li.className = "on";
+    li.innerHTML = `<b></b><span></span><button type="button" data-a="load">불러오기</button><button type="button" data-a="del">삭제</button>`;
+    li.querySelector("b").textContent = c.name; li.querySelector("span").textContent = cutSummary(c);
+    li.querySelector('[data-a="load"]').addEventListener("click", () => openCut(c));
+    li.querySelector('[data-a="del"]').addEventListener("click", () => {
+      store.set(CUTS_KEY, loadCuts().filter((x) => x.name !== c.name)); if (currentCut === c.name) currentCut = ""; renderCuts(); cutMsg(`${c.name} 삭제했어요.`);
+    });
+    ul.appendChild(li);
+  });
+}
+function openCut(c) {
+  restoring = true; applySnapshot(c); restoring = false;
+  currentCut = c.name; $("cutName").value = c.name; moveT = 0;
+  renderExtras(); layout(); sync(); if (ready) setPerson($("subject").value);
+  renderCuts(); cutMsg(`${c.name} 값을 불러왔어요.`);
+}
+function cutMsg(t) { $("cutNote").textContent = t; }
+$("cutSave").addEventListener("click", () => {
+  const cuts = loadCuts();
+  const name = $("cutName").value.trim() || `컷 ${cuts.length + 1}`;
+  const entry = Object.assign({ name, savedAt: new Date().toISOString(), prompt: buildPrompt() }, snapshot());
+  const next = sortCuts(cuts.filter((x) => x.name !== name).concat(entry));
+  if (!store.set(CUTS_KEY, next)) { cutMsg("이 브라우저에서 저장소를 쓸 수 없어 저장하지 못했어요. JSON 저장을 이용해 주세요."); return; }
+  currentCut = name; $("cutName").value = name; renderCuts();
+  cutMsg(`${name} 저장했어요${cuts.some((x) => x.name === name) ? " (덮어씀)" : ""}.`);
+});
+function cutsMarkdown() {
+  return loadCuts().map((c) => `## ${c.name}\n\n${c.prompt || ""}\n`).join("\n");
+}
+function download(name, text, type) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+$("cutCopyAll").addEventListener("click", () => {
+  const md = cutsMarkdown(); if (!md) { cutMsg("저장된 컷이 없어요."); return; }
+  try { navigator.clipboard.writeText(md).then(() => cutMsg(`컷 ${loadCuts().length}개 프롬프트를 복사했어요.`), () => cutMsg("복사하지 못했어요. .md 내보내기를 이용해 주세요.")); }
+  catch (_) { cutMsg("복사하지 못했어요. .md 내보내기를 이용해 주세요."); }
+});
+$("cutExportMd").addEventListener("click", () => { const md = cutsMarkdown(); if (!md) { cutMsg("저장된 컷이 없어요."); return; } download("cuts-prompts.md", "# 구도 실험실 컷 프롬프트\n\n" + md, "text/markdown"); });
+$("cutExportJson").addEventListener("click", () => {
+  const cuts = loadCuts(); if (!cuts.length) { cutMsg("저장된 컷이 없어요."); return; }
+  download("cuts.json", JSON.stringify({ app: "lab", version: 1, cuts }, null, 2), "application/json");
+});
+$("cutImport").addEventListener("click", () => $("cutFile").click());
+$("cutFile").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    const incoming = (Array.isArray(data) ? data : data.cuts || []).filter((c) => c && typeof c.name === "string" && c.state);
+    if (!incoming.length) { cutMsg("불러올 컷이 없는 파일이에요."); return; }
+    const names = new Set(incoming.map((c) => c.name));
+    store.set(CUTS_KEY, sortCuts(loadCuts().filter((c) => !names.has(c.name)).concat(incoming)));
+    renderCuts(); cutMsg(`컷 ${incoming.length}개를 불러왔어요 (같은 번호는 덮어씀).`);
+  } catch (_) { cutMsg("JSON 파일을 읽지 못했어요."); }
+});
+
 /* ================= boot ================= */
+restoring = true; applySnapshot(store.get(CUR_KEY)); restoring = false;
+renderExtras(); renderCuts();
 try {
   buildScene();
   setPerson($("subject").value);
