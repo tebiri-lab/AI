@@ -146,6 +146,7 @@ input[type=range] { padding: 0; border: 0; background: none; accent-color: var(-
 .key-list .kt { width: 50px; }
 .key-list .kf { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .key-list button { padding: 1px 6px; font-size: 11px; }
+.key-list .kp { width: 92px; flex: none; padding: 1px 2px; font-size: 11px; }
 .shortcuts li { color: var(--muted); }
 kbd { font-family: var(--mono); font-size: 11px; background: var(--panel-2); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; color: var(--text); }
 

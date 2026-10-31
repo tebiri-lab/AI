@@ -492,6 +492,28 @@ export function applyHead(group, head) {
   r.headG.rotation.z += head[2] * D;
 }
 
+// Joints a pose blend interpolates (rotations slerped; the root's height lerped too).
+const BLEND_JOINTS = ['root', 'spine', 'headG', 'hipL', 'hipR', 'kneeL', 'kneeR', 'shL', 'shR', 'elL', 'elR'];
+function snapPose(r) {
+  return { y: r.root.position.y, q: BLEND_JOINTS.map((k) => r[k].quaternion.clone()) };
+}
+
+/** Pose an actor part-way (u = 0..1, already eased) from pose a to pose b: each pose is evaluated in full
+ *  (sprint cycle and all), then joint rotations are slerped and the root (pelvis) height lerped. A keyed pose
+ *  (keyedA / keyedB) with its own shot-timed transition shows that transition's end state. */
+export function applyPoseBlend(group, a, b, u, keyedA, keyedB, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
+  const r = group.userData.rig;
+  const loc = (keyed) => (keyed && local ? { ...local, settled: true } : local);
+  if (!r || u <= 0 || (a === b && keyedA === keyedB)) return applyPose(group, a, dist, speed, clock, beat, loc(keyedA));
+  if (u >= 1) return applyPose(group, b, dist, speed, clock, beat, loc(keyedB));
+  applyPose(group, a, dist, speed, clock, beat, loc(keyedA));
+  const pa = snapPose(r);
+  applyPose(group, b, dist, speed, clock, beat, loc(keyedB));
+  const pb = snapPose(r);
+  r.root.position.y = pa.y + (pb.y - pa.y) * u;
+  BLEND_JOINTS.forEach((k, i) => r[k].quaternion.slerpQuaternions(pa.q[i], pb.q[i], u));
+}
+
 export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
   const r = group.userData.rig;
   if (r) {
@@ -548,7 +570,7 @@ export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.
     if (d.to && local) {
       // Shot-timed transition into d.to (d.blend = [start, end] as fractions of the shot)
       const f = (local.t / Math.max(0.01, local.dur) - d.blend[0]) / (d.blend[1] - d.blend[0]);
-      const c = Math.max(0, Math.min(1, f));
+      const c = local.settled ? 1 : Math.max(0, Math.min(1, f)); // settled: a keyed pose shows its end state
       const e = c * c * (3 - 2 * c);
       if (e > 0) setPose(r, mixPose(d.run ? readPose(r) : d, d.to, e));
       if (d.arc) r.root.position.y += d.arc * Math.sin(Math.PI * c);

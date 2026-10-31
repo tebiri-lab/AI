@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS, POSE_SETS, HOLDS, BALLPARKS } from './constants.js';
-import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, sampleHead, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
+import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, sampleHead, samplePose, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
 import { generateShot, parseShotText, describeShot, defaultParams, objectHeight, aimOffset } from './generator.js';
-import { buildObject, signature, applyPose, applyHead, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
+import { buildObject, signature, applyPose, applyPoseBlend, applyHead, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
 import { exportPNG, encodeVideo, saveBlob, canSaveMov, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 import { SongPlayer } from './audio.js';
 import { CymbalPhysics } from './physics.js';
@@ -850,7 +850,10 @@ function poseObjectsAt(shot, t) {
     const s = sampleObject(o, shot, t);
     g.position.set(...s.pos);
     g.rotation.set(0, THREE.MathUtils.degToRad(s.rotY), 0);
-    applyPose(g, poseOf(o, shot), s.dist, s.speed, clock, beat, { t, dur: shot.duration, c0: clock - t, freezeAt: shot.freezeAt });
+    const local = { t, dur: shot.duration, c0: clock - t, freezeAt: shot.freezeAt };
+    const pk = samplePose(o, shot, t, poseOf(o, shot));
+    if (pk) applyPoseBlend(g, pk.a, pk.b, pk.u, pk.keyedA, pk.keyedB, s.dist, s.speed, clock, beat, local);
+    else applyPose(g, poseOf(o, shot), s.dist, s.speed, clock, beat, local);
     if (o.type === 'actor') applyHead(g, sampleHead(o, shot, t));
   }
   setLight(shot.light || project.lighting);
@@ -1631,6 +1634,21 @@ function renderObjInspector() {
     const li = document.createElement('li');
     li.className = Math.abs(k.t - time) <= frameTol() ? 'on' : '';
     li.innerHTML = `<span class="kd">◆</span><span class="kt">${k.t.toFixed(2)}s</span><span class="kf">${k.pos.map((v) => v.toFixed(1)).join(', ')}</span>`;
+    const poses = POSE_SETS[o.type];
+    if (poses) {
+      // Pose from this key on (blended over the key gap); blank keeps the previous key's pose.
+      const ps = document.createElement('select');
+      ps.className = 'kp';
+      ps.title = '이 키의 자세 (키 사이에서 보간)';
+      ps.append(new Option(i ? '이전 자세 유지' : '샷 자세', ''));
+      for (const [pk, label] of Object.entries(poses)) ps.append(new Option(label, pk));
+      ps.value = k.pose || '';
+      ps.onchange = () => mutate(() => {
+        if (ps.value) k.pose = ps.value;
+        else delete k.pose;
+      });
+      li.append(ps);
+    }
     const go = document.createElement('button');
     go.textContent = '이동';
     go.onclick = () => setTime(k.t);
