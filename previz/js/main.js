@@ -717,6 +717,22 @@ orbit.target.set(0, 1, 0);
 orbit.enableDamping = true;
 orbit.dampingFactor = 0.12;
 
+// OrbitControls dollies by scaling the distance to its target, so zooming in stalls just short of
+// the pivot. Near the pivot, the wheel instead flies camera and pivot forward together.
+const DOLLY_THROUGH_DIST = 1.5;
+directorCanvas.addEventListener('wheel', (e) => {
+  if (!orbit.enabled || e.deltaY >= 0) return;
+  const dist = dirCam.position.distanceTo(orbit.target);
+  if (dist > DOLLY_THROUGH_DIST) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+  const step = Math.min(-px / 100, 3) * 0.3;
+  const fwd = orbit.target.clone().sub(dirCam.position).normalize().multiplyScalar(step);
+  dirCam.position.add(fwd);
+  orbit.target.add(fwd);
+}, { passive: false, capture: true });
+
 const shotCam = new THREE.PerspectiveCamera(40, 2.39, 0.03, 2000);
 const helperCam = new THREE.PerspectiveCamera(40, 2.39, 0.1, 2.2);
 const camHelper = new THREE.CameraHelper(helperCam);
