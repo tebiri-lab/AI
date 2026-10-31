@@ -498,10 +498,12 @@ function snapPose(r) {
   return { y: r.root.position.y, q: BLEND_JOINTS.map((k) => r[k].quaternion.clone()) };
 }
 
-/** Pose an actor part-way (u = 0..1, already eased) from pose a to pose b: each pose is evaluated in full
- *  (sprint cycle and all), then joint rotations are slerped and the root (pelvis) height lerped. A keyed pose
- *  (keyedA / keyedB) with its own shot-timed transition shows that transition's end state. */
-export function applyPoseBlend(group, a, b, u, keyedA, keyedB, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
+/** Pose an actor part-way from pose a to pose b (pk from samplePose: u = eased 0..1, s = linear progress):
+ *  each pose is evaluated in full (sprint cycle and all), then joint rotations are slerped and the root (pelvis)
+ *  height lerped. A keyed pose (keyedA / keyedB) with its own shot-timed transition shows that transition's end
+ *  state, and entering a pose with an arc (the slides) lifts the body along that arc over the key gap. */
+export function applyPoseBlend(group, pk, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
+  const { a, b, u, s, keyedA, keyedB } = pk;
   const r = group.userData.rig;
   const loc = (keyed) => (keyed && local ? { ...local, settled: true } : local);
   if (!r || u <= 0 || (a === b && keyedA === keyedB)) return applyPose(group, a, dist, speed, clock, beat, loc(keyedA));
@@ -512,6 +514,8 @@ export function applyPoseBlend(group, a, b, u, keyedA, keyedB, dist = 0, speed =
   const pb = snapPose(r);
   r.root.position.y = pa.y + (pb.y - pa.y) * u;
   BLEND_JOINTS.forEach((k, i) => r[k].quaternion.slerpQuaternions(pa.q[i], pb.q[i], u));
+  const arc = a !== b && POSE_DEF[b]?.arc;
+  if (arc) r.root.position.y += arc * Math.sin(Math.PI * s);
 }
 
 export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {

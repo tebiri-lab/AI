@@ -852,7 +852,7 @@ function poseObjectsAt(shot, t) {
     g.rotation.set(0, THREE.MathUtils.degToRad(s.rotY), 0);
     const local = { t, dur: shot.duration, c0: clock - t, freezeAt: shot.freezeAt };
     const pk = samplePose(o, shot, t, poseOf(o, shot));
-    if (pk) applyPoseBlend(g, pk.a, pk.b, pk.u, pk.keyedA, pk.keyedB, s.dist, s.speed, clock, beat, local);
+    if (pk) applyPoseBlend(g, pk, s.dist, s.speed, clock, beat, local);
     else applyPose(g, poseOf(o, shot), s.dist, s.speed, clock, beat, local);
     if (o.type === 'actor') applyHead(g, sampleHead(o, shot, t));
   }

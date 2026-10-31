@@ -164,7 +164,8 @@ export function sampleHead(obj, shot, t) {
   return [0, 1, 2].map((j) => h(a)[j] + (h(b)[j] - h(a)[j]) * u);
 }
 
-// Pose blend for an actor at time t from per-key poses: { a, b, u, keyedA, keyedB } (u = eased 0..1 from a to b),
+// Pose blend for an actor at time t from per-key poses: { a, b, s, u, keyedA, keyedB } (s = linear 0..1 progress
+// over the key gap, u = s eased),
 // or null when no key carries a pose. A key without a pose keeps the previous key's; before the first keyed
 // pose the base pose (shot.poses / object pose) holds. keyed = the pose came from a key, not the base.
 export function samplePose(obj, shot, t, base) {
@@ -175,10 +176,10 @@ export function samplePose(obj, shot, t, base) {
     if (k.pose) { pose = k.pose; keyed = true; }
     return { pose, keyed };
   });
-  if (keys.length === 1) return { a: at[0].pose, b: at[0].pose, u: 0, keyedA: at[0].keyed, keyedB: at[0].keyed };
+  if (keys.length === 1) return { a: at[0].pose, b: at[0].pose, s: 0, u: 0, keyedA: at[0].keyed, keyedB: at[0].keyed };
   const { i, s } = locate(keys, t);
   const u = (EASE[keys[i].ease] || EASE.linear)(s);
-  return { a: at[i].pose, b: at[i + 1].pose, u, keyedA: at[i].keyed, keyedB: at[i + 1].keyed };
+  return { a: at[i].pose, b: at[i + 1].pose, s, u, keyedA: at[i].keyed, keyedB: at[i + 1].keyed };
 }
 
 function compose(parentS, local) {
