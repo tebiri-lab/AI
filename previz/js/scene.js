@@ -1914,9 +1914,56 @@ function buildBaseball() {
   return g;
 }
 
+// Imported glTF/GLB models, keyed by asset id. Each entry holds the parsed scene normalised so its
+// footprint is centred on the origin with the lowest point at y = 0, plus its native height (m).
+export const modelCache = new Map();
+
+function buildModel(o) {
+  const g = new THREE.Group();
+  const m = modelCache.get(o.asset);
+  if (!m) {
+    // Not loaded (yet, or the file stayed in another browser): a wireframe stand-in of the right height.
+    const h = o.height || 1;
+    const box = new THREE.Mesh(new THREE.BoxGeometry(h * 0.6, h, h * 0.6), new THREE.MeshBasicMaterial({ color: o.color || '#c08cf0', wireframe: true }));
+    box.position.y = h / 2;
+    g.add(box);
+    return g;
+  }
+  const inst = m.root.clone(true);
+  // Geometry and materials are shared with the cache; flag them so removing the object leaves them alone.
+  inst.traverse((c) => {
+    c.userData.sharedAsset = true;
+    if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
+  });
+  const k = (o.height || m.height) / (m.height || 1);
+  inst.scale.setScalar(k);
+  g.add(inst);
+  return g;
+}
+
+/** Parse GLB/glTF bytes into a cache entry (normalised root + native height). */
+export async function loadModelBytes(id, buffer) {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const gltf = await new GLTFLoader().parseAsync(buffer, '');
+  const root = gltf.scene || gltf.scenes?.[0];
+  if (!root) throw new Error('모델에 씬이 없습니다');
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) throw new Error('모델에 메시가 없습니다');
+  const c = box.getCenter(new THREE.Vector3());
+  const wrap = new THREE.Group();
+  root.position.sub(new THREE.Vector3(c.x, box.min.y, c.z));
+  wrap.add(root);
+  const size = box.getSize(new THREE.Vector3());
+  const entry = { root: wrap, height: size.y, size: [size.x, size.y, size.z] };
+  modelCache.set(id, entry);
+  return entry;
+}
+
 export function buildObject(o) {
   let g;
   switch (o.type) {
+    case 'model': g = buildModel(o); break;
     case 'ballpark': g = buildBallpark(o); break;
     case 'baseball': g = buildBaseball(o); break;
     case 'mballoon': g = buildBalloon(o, true); break;
@@ -1959,7 +2006,7 @@ export function buildObject(o) {
 
 // Rebuild is needed whenever any of these change.
 export function signature(o) {
-  return JSON.stringify([o.type, o.name, o.color, o.height, o.size, o.hold, o.tilt, o.burstBeat, o.text, o.textColor, o.vertical, o.flat, o.rotX, o.rotZ, o.venue]);
+  return JSON.stringify([o.type, o.name, o.color, o.height, o.asset, o.type === 'model' && modelCache.has(o.asset), o.size, o.hold, o.tilt, o.burstBeat, o.text, o.textColor, o.vertical, o.flat, o.rotX, o.rotZ, o.venue]);
 }
 
 export function poseWalk(group, dist, speed) {

@@ -23,6 +23,7 @@ export function objectHeight(o) {
     case 'mark': return 0.05;
     case 'drums': return 1.3;
     case 'micstand': return o.height || 1.5;
+    case 'model': return o.height || 1;
     case 'metronome': return 0.26;
     case 'balloon': case 'mballoon': return (o.size && o.size[1]) || 0.36;
     default: return (o.size && o.size[1]) || 1;

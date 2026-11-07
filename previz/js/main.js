@@ -4,11 +4,12 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS, POSE_SETS, HOLDS, BALLPARKS } from './constants.js';
 import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, sampleHead, samplePose, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
 import { generateShot, parseShotText, describeShot, defaultParams, objectHeight, aimOffset } from './generator.js';
-import { buildObject, signature, applyPose, applyPoseBlend, applyHead, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors } from './scene.js';
+import { buildObject, signature, applyPose, applyPoseBlend, applyHead, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors, modelCache, loadModelBytes } from './scene.js';
 import { exportPNG, encodeVideo, saveBlob, canSaveMov, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 import { SongPlayer } from './audio.js';
 import { CymbalPhysics } from './physics.js';
 import { idbGet, idbSet, idbDel } from './store.js';
+import { copyPrompt, parseReply, planWithApi } from './claude.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -647,7 +648,89 @@ function exportable() {
   const used = new Set(project.shots.map((s) => s.ref).filter(Boolean));
   const assets = {};
   for (const k of used) if (project.assets?.[k]) assets[k] = project.assets[k];
-  return { ...project, assets };
+  // Imported GLB files ride along (base64) so the .previz.json reopens with its models in any browser.
+  const models = {};
+  let total = 0;
+  for (const o of project.objects) {
+    const b = o.type === 'model' && modelBytes.get(o.asset);
+    if (!b || models[o.asset]) continue;
+    total += b.buf.byteLength;
+    if (total > MODEL_EMBED_MAX) break;
+    models[o.asset] = { name: b.name, b64: bufToB64(b.buf) };
+  }
+  return { ...project, assets, ...(Object.keys(models).length ? { models } : {}) };
+}
+
+// ---------------------------------------------------------------------------
+// Imported 3D models (.glb / self-contained .gltf). Bytes live in IndexedDB under "model:<asset>".
+
+const modelBytes = new Map(); // asset id -> { buf: ArrayBuffer, name }
+const MODEL_EMBED_MAX = 60 * 1024 * 1024;
+
+function bufToB64(buf) {
+  const u = new Uint8Array(buf);
+  let out = '';
+  for (let i = 0; i < u.length; i += 0x8000) out += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+function b64ToBuf(b64) {
+  const bin = atob(b64);
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u.buffer;
+}
+
+// Load every model the project uses (from embedded data, memory or IndexedDB) and rebuild those objects.
+async function ensureModels(embedded) {
+  for (const [id, m] of Object.entries(embedded || {})) {
+    try {
+      const buf = b64ToBuf(m.b64);
+      modelBytes.set(id, { buf, name: m.name });
+      idbSet(`model:${id}`, { buf, name: m.name });
+    } catch { /* corrupt entry: the object keeps its stand-in */ }
+  }
+  const need = [...new Set(project.objects.filter((o) => o.type === 'model' && o.asset && !modelCache.has(o.asset)).map((o) => o.asset))];
+  let missing = 0;
+  for (const id of need) {
+    let b = modelBytes.get(id);
+    if (!b) {
+      const st = await idbGet(`model:${id}`);
+      if (st?.buf) { b = st; modelBytes.set(id, st); }
+    }
+    if (!b) { missing++; continue; }
+    try { await loadModelBytes(id, b.buf.slice(0)); } catch { missing++; }
+  }
+  if (need.length) refresh();
+  if (missing) toast(`3D 모델 ${missing}개를 찾지 못해 상자로 표시합니다 — 씬 탭의 "GLB 불러오기"로 다시 넣어 주세요`, 5000);
+}
+
+async function importModelFile(f) {
+  if (/\.gltf$/i.test(f.name)) {
+    const txt = await f.text();
+    if (/"uri"\s*:\s*"(?!data:)/.test(txt)) throw new Error('외부 .bin·텍스처를 참조하는 .gltf입니다 — Blender 등에서 .glb(바이너리 하나)로 내보내 주세요');
+  }
+  const buf = await f.arrayBuffer();
+  const id = `m${uid()}`;
+  let entry;
+  try {
+    entry = await loadModelBytes(id, buf.slice(0));
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (/draco|meshopt|KHR_draco|EXT_meshopt/i.test(msg)) throw new Error('Draco/Meshopt 압축 GLB는 지원하지 않습니다 — 압축 없이 다시 내보내 주세요');
+    throw err;
+  }
+  const name = f.name.replace(/\.(glb|gltf)$/i, '');
+  modelBytes.set(id, { buf, name });
+  idbSet(`model:${id}`, { buf, name });
+  const fwd = orbit.target.clone();
+  const h = Math.round(entry.height * 1000) / 1000;
+  const o = makeObject('model', { name, asset: id, height: h, pos: [r3(fwd.x), 0, r3(fwd.z)] });
+  mutate(() => project.objects.push(o));
+  select({ kind: 'object', id: o.id });
+  document.querySelector('.tab[data-tab="scene"]').click();
+  const [w, , d] = entry.size.map((v) => Math.round(v * 100) / 100);
+  const odd = h > 50 || h < 0.05 ? ' — 단위가 cm·mm로 저장된 파일일 수 있으니 인스펙터의 높이를 고쳐 주세요' : '';
+  toast(`"${name}" 불러옴: 높이 ${h}m · 폭 ${w}m · 깊이 ${d}m${odd}`, odd ? 6000 : 3500);
 }
 
 // ---------------------------------------------------------------------------
@@ -862,6 +945,7 @@ function poseObjectsAt(shot, t) {
 function disposeTree(g) {
   g.userData.mirror?.rt.dispose();
   g.traverse((m) => {
+    if (m.userData.sharedAsset) return; // imported model meshes live in the model cache
     m.geometry?.dispose();
     if (m.material) {
       m.material.map?.dispose();
@@ -1990,6 +2074,157 @@ function generateFromText() {
 }
 
 // ---------------------------------------------------------------------------
+// Claude shot planning: Claude reads the shot text and the scene and answers with shot plans
+// (vocabulary for the framing maths, plus explicit camera keys / object moves when needed).
+
+const finite = (v, d) => (Number.isFinite(+v) ? +v : d);
+const vec = (a, d) => (Array.isArray(a) && a.length === 3 && a.every((x) => Number.isFinite(+x)) ? a.map((x) => r3(+x)) : d);
+
+function findObj(ref) {
+  if (!ref) return null;
+  const s = String(ref).trim();
+  return objById(s) || project.objects.find((o) => o.name === s) || project.objects.find((o) => o.name.toLowerCase() === s.toLowerCase()) || null;
+}
+
+function applyClaudePlan(data) {
+  const shots = Array.isArray(data?.shots) ? data.shots : [];
+  if (!shots.length) throw new Error('샷이 없습니다');
+  if (!project.objects.length) throw new Error('씬에 오브젝트를 먼저 추가하세요');
+  const replace = $('genReplace').checked;
+  const log = [];
+  let lastParams;
+  mutate(() => {
+    shots.forEach((c, i) => {
+      const subj = findObj(c.subject) || project.objects.find((o) => o.type === 'actor') || project.objects[0];
+      const sec = findObj(c.subject2);
+      const params = {
+        ...defaultParams(),
+        subject: subj.id,
+        subject2: sec && sec.id !== subj.id ? sec.id : null,
+        size: SIZES[c.size] ? c.size : 'ms',
+        angle: ANGLES[c.angle] ? c.angle : 'eye',
+        dir: DIRS[c.dir] ? c.dir : 'ql',
+        move: MOVES[c.move] ? c.move : 'static',
+        speed: ['slow', 'normal', 'fast'].includes(c.speed) ? c.speed : 'normal',
+        lens: clamp(finite(c.lens, 35), 8, 400),
+        duration: clamp(finite(c.duration, 4), 0.5, 60),
+        ease: c.ease || 'inout',
+        handheld: !!c.handheld,
+        dutch: !!c.dutch,
+        run: c.run && c.run !== 'none' ? c.run : null,
+        moveSet: true,
+      };
+      const source = String(c.source || '').trim();
+      params.source = source;
+      lastParams = params;
+      const prev = replace && i === 0 ? (() => { const t = clone(cur()); for (const id of t.genAnim || []) delete t.anim[id]; return t; })() : null;
+      const gen = generateShot(params, project, prev);
+      // Explicit camera keys from Claude replace the vocabulary path when it gave at least two valid ones.
+      const ck = (Array.isArray(c.camera_keys) ? c.camera_keys : [])
+        .map((k) => ({ t: r3(clamp(finite(k.t, 0), 0, params.duration)), pos: vec(k.pos, null), target: vec(k.target, null), focal: clamp(finite(k.focal, params.lens), 8, 400), roll: finite(k.roll, 0) }))
+        .filter((k) => k.pos && k.target)
+        .sort((a, b) => a.t - b.t);
+      let custom = false;
+      if (ck.length >= 2) { gen.keys = ck; custom = true; }
+      for (const m of Array.isArray(c.object_moves) ? c.object_moves : []) {
+        const o = findObj(m.object);
+        const keys = (Array.isArray(m.keys) ? m.keys : [])
+          .map((k) => ({ t: r3(clamp(finite(k.t, 0), 0, params.duration)), pos: vec(k.pos, null), rotY: finite(k.rotY, o?.rotY || 0) }))
+          .filter((k) => k.pos)
+          .sort((a, b) => a.t - b.t);
+        if (o && keys.length) gen.anim[o.id] = keys;
+      }
+      for (const ps of Array.isArray(c.poses) ? c.poses : []) {
+        const o = findObj(ps.object);
+        if (o && POSE_SETS[o.type]?.[ps.pose]) (gen.poses ||= {})[o.id] = ps.pose;
+      }
+      if (c.name) gen.name = String(c.name).slice(0, 60);
+      gen.meta.source = source;
+      const desc = String(c.desc || '').trim();
+      if (replace && i === 0) {
+        const shot = cur();
+        applyGenToShot(shot, gen);
+        shot.meta.source = source;
+        if (desc) shot.desc = desc;
+      } else {
+        const at = replace ? shotIdx + 1 : project.shots.length;
+        project.shots.splice(at, 0, makeShot(gen, { desc }));
+        shotIdx = at;
+      }
+      log.push([subj.name, SIZES[params.size].ko, ANGLES[params.angle].ko, DIRS[params.dir].ko,
+        custom ? '커스텀 카메라 키' : MOVES[params.move].ko, `${params.lens}mm`, `${params.duration}초`, desc && `— ${desc}`].filter(Boolean).join(' · '));
+    });
+    time = 0;
+  });
+  if (lastParams) writeGenParams(lastParams);
+  $('genLog').innerHTML = '';
+  log.forEach((t, i) => {
+    const d = document.createElement('div');
+    d.textContent = `${i + 1}. ${t}`;
+    $('genLog').appendChild(d);
+  });
+  if (data.notes) {
+    const d = document.createElement('div');
+    d.className = 'gen-note';
+    d.textContent = `Claude: ${data.notes}`;
+    $('genLog').appendChild(d);
+  }
+  queueThumbs(true);
+  toast(`Claude 계획으로 ${shots.length}개 샷을 만들었습니다`);
+}
+
+const claudeText = () => $('genText').value.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+
+async function copyClaudePrompt() {
+  const text = claudeText();
+  if (!text) return toast('샷 설명을 입력하세요');
+  if (!project.objects.length) return toast('씬에 오브젝트를 먼저 추가하세요');
+  const prompt = copyPrompt(project, text);
+  try {
+    await navigator.clipboard.writeText(prompt);
+    toast('Claude용 프롬프트를 복사했습니다 — claude.ai 새 채팅에 붙여넣고, 답변(JSON)을 아래 칸에 붙여넣으세요', 6000);
+  } catch {
+    $('claudeReply').value = prompt;
+    toast('클립보드 복사가 막혀 아래 칸에 프롬프트를 넣었습니다 — 직접 복사해 주세요', 6000);
+  }
+}
+
+function applyClaudeReply() {
+  const raw = $('claudeReply').value;
+  if (!raw.trim()) return toast('Claude 답변(JSON)을 붙여넣으세요');
+  try { applyClaudePlan(parseReply(raw)); } catch (err) { toast(`적용 실패: ${err.message}`, 5000); }
+}
+
+const KEY_STORE = 'previz.claudeKey';
+let claudeBusy = null;
+async function generateWithClaudeApi() {
+  if (claudeBusy) { claudeBusy.abort(); return; }
+  const text = claudeText();
+  if (!text) return toast('샷 설명을 입력하세요');
+  if (!project.objects.length) return toast('씬에 오브젝트를 먼저 추가하세요');
+  const key = $('claudeKey').value.trim();
+  if (!key) { $('claudeKeyBox').open = true; return toast('Anthropic API 키를 넣어 주세요 (claude.ai 구독과는 별도로 결제됩니다)', 5000); }
+  try { $('claudeKeySave').checked ? localStorage.setItem(KEY_STORE, key) : localStorage.removeItem(KEY_STORE); } catch { /* storage unavailable */ }
+  const btn = $('btnClaudeApi');
+  claudeBusy = new AbortController();
+  btn.textContent = 'Claude 생각 중… (누르면 취소)';
+  try {
+    const plan = await planWithApi(key, project, text, claudeBusy.signal);
+    $('claudeReply').value = JSON.stringify(plan, null, 2);
+    applyClaudePlan(plan);
+  } catch (err) {
+    const msg = err?.name === 'AbortError' || /abort/i.test(err?.message || '') ? '취소했습니다'
+      : err?.status === 401 ? 'API 키가 올바르지 않습니다'
+      : err?.status === 429 ? '요청 한도에 걸렸습니다 — 잠시 뒤 다시 시도하세요'
+      : `Claude 호출 실패: ${err?.message || err}`;
+    toast(msg, 6000);
+  } finally {
+    claudeBusy = null;
+    btn.textContent = 'API 키로 바로 생성';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Recording
 
 let exportRenderer = null;
@@ -2352,6 +2587,13 @@ function bindUI() {
 
   // Generator
   $('btnGenText').onclick = generateFromText;
+  $('btnClaudeCopy').onclick = copyClaudePrompt;
+  $('btnClaudeApply').onclick = applyClaudeReply;
+  $('btnClaudeApi').onclick = generateWithClaudeApi;
+  try {
+    const k = localStorage.getItem(KEY_STORE);
+    if (k) { $('claudeKey').value = k; $('claudeKeySave').checked = true; }
+  } catch { /* storage unavailable */ }
   $('btnGenApply').onclick = () => generateFromForm(false);
   $('btnGenNew').onclick = () => generateFromForm(true);
   $('gSize').addEventListener('change', () => { $('gLens').value = SIZES[$('gSize').value].lens; });
@@ -2373,6 +2615,15 @@ function bindUI() {
     document.querySelector('.tab[data-tab="scene"]').click();
   }));
 
+  $('btnAddModel').onclick = () => $('modelInput').click();
+  $('modelInput').addEventListener('change', async (e) => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    for (const f of files) {
+      try { await importModelFile(f); } catch (err) { toast(`"${f.name}" 불러오기 실패: ${err.message}`, 6000); }
+    }
+  });
+
   const objEdit = (fn) => {
     const o = selection?.kind === 'object' ? objById(selection.id) : null;
     if (o) mutate(() => fn(o));
@@ -2384,7 +2635,7 @@ function bindUI() {
   $('oVert').addEventListener('change', (e) => objEdit((o) => { o.vertical = e.target.checked; }));
   $('oH').addEventListener('change', (e) => objEdit((o) => {
     const v = +e.target.value;
-    o.height = clamp(Number.isFinite(v) ? v : (OBJ_TYPES[o.type]?.height || 1.75), (o.type === 'balloon' || o.type === 'mballoon') ? 0 : 0.3, 80);
+    o.height = clamp(Number.isFinite(v) ? v : (OBJ_TYPES[o.type]?.height || 1.75), (o.type === 'balloon' || o.type === 'mballoon') ? 0 : o.type === 'model' ? 0.01 : 0.3, o.type === 'model' ? 1000 : 80);
   }));
   $('oTilt').addEventListener('change', (e) => objEdit((o) => { o.tilt = clamp(+e.target.value || 0, -60, 60); }));
   $('oHold').addEventListener('change', (e) => objEdit((o) => { o.hold = e.target.value; }));
@@ -2726,6 +2977,8 @@ function onKey(e) {
 
 function loadProject(p, undoable) {
   if (undoable && project) pushUndo();
+  const embedded = p.models;
+  delete p.models;
   project = p;
   project.assets ||= {};
   assetsDirty = true;
@@ -2735,6 +2988,7 @@ function loadProject(p, undoable) {
   select(null);
   refresh();
   queueThumbs(true);
+  ensureModels(embedded);
 }
 
 // ---------------------------------------------------------------------------
