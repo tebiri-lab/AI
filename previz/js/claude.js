@@ -1,11 +1,10 @@
 // Shot planning with Claude: the free-text shot description plus the scene goes to Claude, which answers
 // with structured shot plans (shot vocabulary, optional explicit camera keys, object moves, poses).
-// Two routes: copy a prompt into the person's own Claude chat (subscription) and paste the JSON back,
-// or call the API directly with the person's own API key.
+// Both routes run on the person's own claude.ai subscription: inside the claude.ai artifact the page asks
+// Claude directly (`sample` capability); anywhere else the prompt is copied into a Claude chat and the JSON pasted back.
 import { SIZES, ANGLES, DIRS, MOVES, SPEED, POSE_SETS, OBJ_TYPES, SENSORS } from './constants.js';
 import { objectHeight } from './generator.js';
 
-export const CLAUDE_MODEL = 'claude-opus-5-5';
 const EASES = ['inout', 'linear', 'in', 'out', 'back', 'elastic', 'bounce', 'steps'];
 const RUNS = ['none', 'ahead', 'b1', 'b2', 'b3', 'home'];
 
@@ -146,22 +145,36 @@ export function parseReply(raw) {
   return data;
 }
 
-let sdk = null;
-/** Ask Claude through the API with the viewer's own key (kept only in this browser). */
-export async function planWithApi(apiKey, project, text, signal) {
-  if (!sdk) sdk = (await import('../vendor/anthropic/sdk.min.mjs')).default;
-  const client = new sdk({ apiKey, dangerouslyAllowBrowser: true });
-  const res = await client.beta.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 16000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'medium', format: { type: 'json_schema', schema: SHOT_SCHEMA } },
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userPrompt(project, text) }],
-  }, { signal });
-  if (res.stop_reason === 'refusal') throw new Error(`Claude가 요청을 거절했습니다${res.stop_details?.explanation ? `: ${res.stop_details.explanation}` : ''}`);
-  if (res.stop_reason === 'max_tokens') throw new Error('응답이 너무 길어 잘렸습니다 — 샷 수를 줄여 다시 시도하세요');
-  const out = res.content.filter((c) => c.type === 'text').map((c) => c.text).join('');
-  return parseReply(out);
+// The viewer's own Claude (subscription) through the claude.ai artifact runtime's `sample` capability.
+// Resolves the sample function, or null outside claude.ai (then the copy/paste route is the way).
+let samplePromise = null;
+export function claudeSample() {
+  if (!samplePromise) {
+    samplePromise = window.claude?.use ? window.claude.use('sample').catch(() => null) : Promise.resolve(null);
+  }
+  return samplePromise;
+}
+
+const SAMPLE_ERRORS = {
+  not_granted: 'Claude 사용을 허용하지 않아 생성할 수 없습니다 — 페이지를 새로 열면 다시 물어봅니다',
+  sampling_disabled: '이 계정에서는 Claude를 쓸 수 없습니다',
+  not_declared: '이 페이지에 Claude 사용 권한이 없습니다',
+  capability_disabled: '이 화면에서는 Claude를 쓸 수 없습니다',
+  capability_removed: '이 앱 버전에서는 Claude를 쓸 수 없습니다 — Claude 앱·브라우저를 업데이트해 주세요',
+  rate_limited: '사용 한도에 걸렸습니다 — 잠시 뒤 다시 눌러 주세요',
+  session_expired: 'claude.ai에 다시 로그인해 주세요',
+  refused: 'Claude가 이 요청을 거절했습니다 — 샷 설명을 바꿔 보세요',
+  empty_completion: 'Claude가 빈 답을 냈습니다 — 샷 수를 줄여 다시 시도하세요',
+  invalid_json: 'Claude 답을 JSON으로 읽지 못했습니다 — 다시 눌러 주세요',
+  prompt_too_large: '씬이나 샷 설명이 너무 깁니다 — 나눠서 생성하세요',
+};
+export const sampleErrorText = (e) => SAMPLE_ERRORS[e?.code] || `Claude 호출 실패 (${e?.code || 'error'}) — 다시 눌러 주세요`;
+
+/** Plan shots with the viewer's own Claude. Rejects with the sample error shape ({code, message, text?}). */
+export async function planWithSubscription(project, text, { signal, onText } = {}) {
+  const sample = await claudeSample();
+  if (!sample) throw { code: 'capability_disabled', message: 'sample unavailable' };
+  const data = await sample.json(copyPrompt(project, text), { modelTier: 'complex', cache: false, signal, onText });
+  if (!data || !Array.isArray(data.shots)) throw { code: 'invalid_json', message: 'no shots array', text: JSON.stringify(data) };
+  return data;
 }

@@ -9,7 +9,7 @@ import { exportPNG, encodeVideo, saveBlob, canSaveMov, exportGLB, exportPrompts,
 import { SongPlayer } from './audio.js';
 import { CymbalPhysics } from './physics.js';
 import { idbGet, idbSet, idbDel } from './store.js';
-import { copyPrompt, parseReply, planWithApi } from './claude.js';
+import { copyPrompt, parseReply, claudeSample, planWithSubscription, sampleErrorText } from './claude.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2195,32 +2195,35 @@ function applyClaudeReply() {
   try { applyClaudePlan(parseReply(raw)); } catch (err) { toast(`적용 실패: ${err.message}`, 5000); }
 }
 
-const KEY_STORE = 'previz.claudeKey';
+// The viewer's own Claude (claude.ai subscription) via the artifact runtime: one click, no copy/paste.
 let claudeBusy = null;
-async function generateWithClaudeApi() {
+async function generateWithMyClaude() {
   if (claudeBusy) { claudeBusy.abort(); return; }
   const text = claudeText();
   if (!text) return toast('샷 설명을 입력하세요');
   if (!project.objects.length) return toast('씬에 오브젝트를 먼저 추가하세요');
-  const key = $('claudeKey').value.trim();
-  if (!key) { $('claudeKeyBox').open = true; return toast('Anthropic API 키를 넣어 주세요 (claude.ai 구독과는 별도로 결제됩니다)', 5000); }
-  try { $('claudeKeySave').checked ? localStorage.setItem(KEY_STORE, key) : localStorage.removeItem(KEY_STORE); } catch { /* storage unavailable */ }
-  const btn = $('btnClaudeApi');
+  const btn = $('btnClaudeRun');
+  const status = $('claudeStatus');
   claudeBusy = new AbortController();
-  btn.textContent = 'Claude 생각 중… (누르면 취소)';
+  btn.textContent = '■ 멈추기';
+  status.hidden = false;
+  status.textContent = 'Claude가 샷을 설계하는 중… (처음 한 번은 사용 허용 창이 뜹니다, 보통 30초~2분)';
   try {
-    const plan = await planWithApi(key, project, text, claudeBusy.signal);
+    const plan = await planWithSubscription(project, text, {
+      signal: claudeBusy.signal,
+      onText: ({ text: t }) => { status.textContent = `Claude 답변 받는 중… ${t.length.toLocaleString()}자`; },
+    });
     $('claudeReply').value = JSON.stringify(plan, null, 2);
+    status.hidden = true;
     applyClaudePlan(plan);
   } catch (err) {
-    const msg = err?.name === 'AbortError' || /abort/i.test(err?.message || '') ? '취소했습니다'
-      : err?.status === 401 ? 'API 키가 올바르지 않습니다'
-      : err?.status === 429 ? '요청 한도에 걸렸습니다 — 잠시 뒤 다시 시도하세요'
-      : `Claude 호출 실패: ${err?.message || err}`;
-    toast(msg, 6000);
+    if (err?.code === 'cancelled') { status.textContent = '멈췄습니다'; }
+    else if (err?.code) { status.textContent = sampleErrorText(err); toast(sampleErrorText(err), 6000); }
+    else { status.textContent = `적용 실패: ${err?.message || err}`; toast(status.textContent, 6000); }
+    if (err?.code === 'invalid_json' && err.text) $('claudeReply').value = err.text;
   } finally {
     claudeBusy = null;
-    btn.textContent = 'API 키로 바로 생성';
+    btn.textContent = '내 Claude로 샷 생성';
   }
 }
 
@@ -2589,11 +2592,13 @@ function bindUI() {
   $('btnGenText').onclick = generateFromText;
   $('btnClaudeCopy').onclick = copyClaudePrompt;
   $('btnClaudeApply').onclick = applyClaudeReply;
-  $('btnClaudeApi').onclick = generateWithClaudeApi;
-  try {
-    const k = localStorage.getItem(KEY_STORE);
-    if (k) { $('claudeKey').value = k; $('claudeKeySave').checked = true; }
-  } catch { /* storage unavailable */ }
+  $('btnClaudeRun').onclick = generateWithMyClaude;
+  // Inside claude.ai the page can ask the viewer's own Claude directly; elsewhere only copy/paste works.
+  claudeSample().then((sample) => {
+    $('claudeDirect').hidden = !sample;
+    $('claudeManual').open = !sample;
+    $('claudeManualHint').textContent = sample ? '바로 생성이 안 될 때 쓰는 방법입니다.' : 'claude.ai 밖에서 열려 있어 바로 생성은 쓸 수 없습니다. 아래 순서로 claude.ai 채팅을 거쳐 주세요.';
+  });
   $('btnGenApply').onclick = () => generateFromForm(false);
   $('btnGenNew').onclick = () => generateFromForm(true);
   $('gSize').addEventListener('change', () => { $('gLens').value = SIZES[$('gSize').value].lens; });

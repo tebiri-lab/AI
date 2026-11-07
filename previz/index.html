@@ -79,21 +79,19 @@
         </div>
 
         <div class="group">
-          <label class="lbl">Claude로 생성 <span class="hint">위 샷 설명 사용</span></label>
-          <div class="row">
-            <button id="btnClaudeCopy" class="primary grow">① Claude용 프롬프트 복사</button>
+          <label class="lbl">Claude로 생성 <span class="hint">위 샷 설명 사용 · 내 구독</span></label>
+          <div id="claudeDirect" hidden>
+            <div class="row"><button id="btnClaudeRun" class="primary grow">내 Claude로 샷 생성</button></div>
+            <p class="hint block">claude.ai 구독 사용량에서 처리됩니다. 처음 누를 때 이 페이지가 Claude를 써도 되는지 묻습니다.</p>
+            <p id="claudeStatus" class="hint block" hidden></p>
           </div>
-          <p class="hint block">claude.ai(내 구독) 새 채팅에 붙여넣고, Claude가 준 JSON 답변을 아래에 붙여넣으세요.</p>
-          <textarea id="claudeReply" rows="4" spellcheck="false" placeholder="② Claude 답변(JSON)을 여기에 붙여넣기"></textarea>
-          <div class="row">
-            <button id="btnClaudeApply" class="grow">③ 붙여넣은 결과로 샷 생성</button>
-          </div>
-          <details id="claudeKeyBox">
-            <summary>API 키로 바로 생성 (선택)</summary>
-            <p class="hint block">Anthropic API 키(console.anthropic.com)가 있으면 복사·붙여넣기 없이 바로 만듭니다. API 사용료는 claude.ai 구독과 별도로 결제됩니다. 키는 이 브라우저에만 저장되고 Anthropic API로만 보냅니다.</p>
-            <label>API 키<input id="claudeKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-..." /></label>
-            <label class="chk"><input type="checkbox" id="claudeKeySave" /> 이 브라우저에 키 기억</label>
-            <div class="row"><button id="btnClaudeApi" class="grow">API 키로 바로 생성</button></div>
+          <details id="claudeManual">
+            <summary>복사 · 붙여넣기로 생성</summary>
+            <p id="claudeManualHint" class="hint block"></p>
+            <div class="row"><button id="btnClaudeCopy" class="grow">① Claude용 프롬프트 복사</button></div>
+            <p class="hint block">claude.ai 새 채팅에 붙여넣고, Claude가 준 JSON 답변을 아래에 붙여넣으세요.</p>
+            <textarea id="claudeReply" rows="4" spellcheck="false" placeholder="② Claude 답변(JSON)을 여기에 붙여넣기"></textarea>
+            <div class="row"><button id="btnClaudeApply" class="grow">③ 붙여넣은 결과로 샷 생성</button></div>
           </details>
         </div>
 

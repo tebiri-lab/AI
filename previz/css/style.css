@@ -323,7 +323,9 @@ button:disabled:active { transform: none; }
 .rec.export { animation: none; background: #1d4ed8; pointer-events: auto; cursor: pointer; }
 .gen-log .gen-note { color: var(--text, #ddd); font-family: inherit; white-space: pre-wrap; }
 .gen-log .gen-note::before { content: "✎ "; color: #d9a066; }
-#claudeKeyBox { font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
-#claudeKeyBox summary { cursor: pointer; color: var(--muted); }
-#claudeKeyBox[open] { display: flex; }
-#claudeKeyBox label:not(.chk) { display: flex; flex-direction: column; gap: 3px; }
+#claudeManual { font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+#claudeManual summary { cursor: pointer; color: var(--muted); }
+#claudeManual[open] { display: flex; }
+#claudeDirect { display: flex; flex-direction: column; gap: 6px; }
+#claudeDirect[hidden] { display: none; }
+#claudeStatus { color: var(--text, #ddd); }
