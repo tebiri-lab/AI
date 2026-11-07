@@ -5,19 +5,52 @@
 import { SIZES, ANGLES, DIRS, MOVES, SPEED, POSE_SETS, OBJ_TYPES, SENSORS } from './constants.js';
 import { objectHeight } from './generator.js';
 
+// Object types Claude may add to the scene (whole venues and imported models are left to the person).
+export const ADDABLE = Object.keys(OBJ_TYPES).filter((k) => !['ballpark', 'model', 'dust'].includes(k));
 const EASES = ['inout', 'linear', 'in', 'out', 'back', 'elastic', 'bounce', 'steps'];
 const RUNS = ['none', 'ahead', 'b1', 'b2', 'b3', 'home'];
 
 const num = { type: 'number' };
 const vec3 = { type: 'array', items: num };
+const POSE_KEYS = { drop: num, pitch: num, lean: num, head: num, turn: num, hip: { type: 'array', items: num }, knee: { type: 'array', items: num }, sh: { type: 'array', items: num }, el: { type: 'array', items: num } };
 
 // JSON Schema for the answer (strict structured output: every field required, empty array = not used).
 export const SHOT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['shots', 'notes'],
+  required: ['new_objects', 'new_poses', 'shots', 'notes'],
   properties: {
     notes: { type: 'string' },
+    new_objects: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['ref', 'type', 'name', 'pos', 'rotY', 'color', 'height', 'size'],
+        properties: {
+          ref: { type: 'string' },
+          type: { type: 'string', enum: ADDABLE },
+          name: { type: 'string' },
+          pos: vec3,
+          rotY: num,
+          color: { type: 'string' },
+          height: num,
+          size: { type: 'array', items: num },
+        },
+      },
+    },
+    new_poses: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['name', 'label', 'walk', 'angles'],
+        properties: {
+          name: { type: 'string' },
+          label: { type: 'string' },
+          walk: { type: 'boolean' },
+          angles: { type: 'object', additionalProperties: false, required: Object.keys(POSE_KEYS), properties: POSE_KEYS },
+        },
+      },
+    },
     shots: {
       type: 'array',
       items: {
@@ -82,10 +115,12 @@ const list = (o) => Object.entries(o).map(([k, v]) => `${k} (${v.ko}${v.en ? ` /
 const r2 = (n) => Math.round(n * 100) / 100;
 
 function sceneBlock(project) {
+  const custom = Object.keys(project.customPoses || {});
   const lines = project.objects.map((o) => {
     const yaw = (o.rotY || 0) * Math.PI / 180;
     const face = [r2(Math.sin(yaw)), 0, r2(Math.cos(yaw))];
-    const poses = POSE_SETS[o.type] ? ` | poses: ${Object.keys(POSE_SETS[o.type]).join(', ')}` : '';
+    const names = POSE_SETS[o.type] ? [...Object.keys(POSE_SETS[o.type]), ...(o.type === 'actor' ? custom : [])] : null;
+    const poses = names ? ` | poses: ${names.join(', ')}` : '';
     return `- id "${o.id}" | name "${o.name}" | type ${o.type} (${OBJ_TYPES[o.type]?.ko || o.type}) | pos [${o.pos.map(r2).join(', ')}] | rotY ${r2(o.rotY || 0)}° (faces ${JSON.stringify(face)}) | height ${r2(objectHeight(o))} m${o.parent ? ` | attached to "${o.parent}"` : ''}${poses}`;
   });
   const sensor = SENSORS[project.sensor] || SENSORS.s35;
@@ -102,7 +137,7 @@ export const SYSTEM_PROMPT = `You are the previs camera operator inside a three.
 World: right-handed, Y up, metres. The ground is y = 0. An object with rotY = 0° faces +Z; rotY turns it counter-clockwise seen from above, so it faces [sin(rotY), 0, cos(rotY)]. Actor height is about 1.75 m (eyes ≈ 1.63 m).
 
 For every shot, fill the shot vocabulary; the tool computes a correctly framed camera from it using real lens maths:
-- subject / subject2: object id from the scene list ("" for none). subject2 is the foreground shoulder for an over-the-shoulder, or the second person in a two-shot.
+- subject / subject2: object id from the scene list or a new_objects ref ("" for none). subject2 is the foreground shoulder for an over-the-shoulder, or the second person in a two-shot.
 - size: ${list(SIZES)}
 - angle: ${list(ANGLES)}
 - dir (camera side relative to where the subject faces): ${list(DIRS)}
@@ -115,9 +150,19 @@ For every shot, fill the shot vocabulary; the tool computes a correctly framed c
 Only when the vocabulary cannot express the move (e.g. a camera that starts behind and swings to the front, a move between two people, a reveal past an object), give camera_keys: at least 2 keys {t (s, 0..duration), pos [x,y,z], target [x,y,z], focal (mm), roll (deg)} in world coordinates. Check each key frames what the shot asks for: distance ≈ (frame height / 2) / tan(vfov / 2), with vfov from the focal length, sensor width and aspect. Otherwise leave camera_keys empty.
 
 object_moves: only if something must move during the shot (walking to a spot, a car driving past). Keys {t, pos, rotY} in world coordinates; actors walk ≈1.4 m/s, run ≈7.5 m/s. Keep the first key at the object's current position unless the shot says otherwise.
-poses: only with pose names listed for that object.
+poses: [{object, pose}] with a pose name listed for that object, or one you define in new_poses.
 
-Stay inside the scene: use ids that exist; never invent objects. If the text asks for something the scene cannot show, plan the closest shot and say so in notes (Korean). notes: one or two Korean sentences about choices you made, empty if none.`;
+MISSING OBJECTS — add them, do not skip them. When a shot names a person or thing that is not in the scene list, add it to new_objects and use its "ref" (a short unique string such as "new1") wherever an object id goes (subject, subject2, object_moves, poses). Fields: type (${ADDABLE.map((k) => `${k} = ${OBJ_TYPES[k].ko}`).join(', ')}; a person is always "actor"; pick the closest type for anything else, e.g. a door or building is "wall"/"box", a lamp post "cylinder", a bench "table"), name (in the director's language, as they wrote it), pos and rotY placed sensibly relative to the existing scene and the action (people face whom they talk to; keep 1-2 m between people in conversation; nothing inside another object), color ("#rrggbb", give actors distinct colours; "" for the default), height in m (0 = default; actors ≈ 1.6-1.85), size [w, h, d] in m for box-like types ([] = default). Reuse an existing object whenever one fits.
+
+MISSING POSES — define them. When the action needs an actor posture the listed poses do not have (pointing, crouching, hands on hips, lying down, kneeling with both knees...), add it to new_poses and use its name in poses. name: lowercase ascii id (e.g. "point_right"); label: short Korean description; walk: true only for an upright pose the actor may walk in. angles (radians unless noted; all 9 keys required, 0 or [] = neutral):
+- drop: pelvis height change in m (sit ≈ -0.4, deep squat ≈ -0.5); pitch: whole-body tilt about the feet (+ falls forward/prone ≈ 1.5, - backward/supine ≈ -1.5).
+- lean: torso bend (+ forward). head: nod (+ looks down, - looks up). turn: head yaw (+ to the actor's left).
+- hip [L, R]: thigh swing (- forward/up: sitting ≈ -1.57; + backward). knee [L, R]: bend (+, 0..2.4).
+- sh [L pitch, L out, R pitch, R out]: arm swing (- forward/up: straight ahead ≈ -1.57, overhead ≈ -2.9; + backward); "out" raises the arm sideways: left + / right - (rest ≈ 0.08 / -0.08, horizontal ≈ 1.5 / -1.5).
+- el [L, R]: elbow bend (- bends the forearm forward/up, 0 straight, about -2.4 at most).
+Built-in examples: sit = drop -0.4, hip [-1.57,-1.57], knee [1.57,1.57], sh [-0.55,0.12,-0.55,-0.12], el [-0.2,-0.2]; catcher crouch = drop -0.5, hip [-1.6,-1.6], knee [1.95,1.95], lean 0.22. Prefer a listed pose when it fits.
+
+If the text asks for something even new objects and poses cannot show, plan the closest shot and say so in notes (Korean). notes: one or two Korean sentences about choices you made and what you added, empty if none.`;
 
 export function userPrompt(project, text) {
   return `${sceneBlock(project)}\n\nShot descriptions:\n${text.trim()}`;

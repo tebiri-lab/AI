@@ -452,6 +452,14 @@ function setPose(r, p) {
   r.elR.rotation.set(p.el[1], 0, 0);
 }
 
+// Project-defined actor poses (e.g. made by Claude): name -> joint angles in the POSE_DEF shape.
+let CUSTOM_POSES = {};
+export function setCustomPoses(map) {
+  CUSTOM_POSES = {};
+  for (const [k, v] of Object.entries(map || {})) if (v?.def && !POSE_DEF[k]) CUSTOM_POSES[k] = v.def;
+}
+const poseDef = (name) => POSE_DEF[name] || CUSTOM_POSES[name];
+
 export function poseNames(type) {
   return Object.keys(POSE_SETS[type] || {});
 }
@@ -519,14 +527,14 @@ export function applyPoseBlend(group, pk, dist = 0, speed = 0, clock = 0, beat =
   const pb = snapPose(r);
   r.root.position.y = pa.y + (pb.y - pa.y) * u;
   BLEND_JOINTS.forEach((k, i) => r[k].quaternion.slerpQuaternions(pa.q[i], pb.q[i], u));
-  const arc = a !== b && POSE_DEF[b]?.arc;
+  const arc = a !== b && poseDef(b)?.arc;
   if (arc) r.root.position.y += arc * Math.sin(Math.PI * s);
 }
 
 export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
   const r = group.userData.rig;
   if (r) {
-    let d = POSE_DEF[pose] || POSE_DEF.stand;
+    let d = poseDef(pose) || POSE_DEF.stand;
     if (d.follow) d = followPose(d.follow, local);
     if (r.handL) { r.handL.scale.set(0.8, 1.1, 0.6); r.handR.scale.set(0.8, 1.1, 0.6); }
     const hip = d.hip || [0, 0], knee = d.knee || [0, 0], sh = d.sh || [0, 0.08, 0, -0.08], el = d.el || [0, 0];

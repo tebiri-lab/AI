@@ -4,12 +4,12 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SIZES, ANGLES, DIRS, MOVES, SENSORS, ASPECTS, LIGHTS, OBJ_TYPES, ACTOR_COLORS, POSE_SETS, HOLDS, BALLPARKS } from './constants.js';
 import { sampleCamera, resolveCamera, lockTarget, sampleObject, sampleLocal, sampleHead, samplePose, worldToLocal, ancestors, setObjects, sortKeys, keyIndexAt } from './anim.js';
 import { generateShot, parseShotText, describeShot, defaultParams, objectHeight, aimOffset } from './generator.js';
-import { buildObject, signature, applyPose, applyPoseBlend, applyHead, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors, modelCache, loadModelBytes } from './scene.js';
+import { buildObject, signature, applyPose, applyPoseBlend, applyHead, buildGround, buildLights, applyLighting, buildCameraRig, updateMirrors, modelCache, loadModelBytes, setCustomPoses } from './scene.js';
 import { exportPNG, encodeVideo, saveBlob, canSaveMov, exportGLB, exportPrompts, exportJSON, downloadText } from './export.js';
 import { SongPlayer } from './audio.js';
 import { CymbalPhysics } from './physics.js';
 import { idbGet, idbSet, idbDel } from './store.js';
-import { copyPrompt, parseReply, claudeSample, planWithSubscription, sampleErrorText } from './claude.js';
+import { copyPrompt, parseReply, claudeSample, planWithSubscription, sampleErrorText, ADDABLE } from './claude.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -878,6 +878,7 @@ const meshes = new Map();
 
 function syncScene() {
   setObjects(project.objects);
+  setCustomPoses(project.customPoses);
   const ids = new Set(project.objects.map((o) => o.id));
   for (const [id, g] of meshes) {
     if (!ids.has(id)) {
@@ -910,6 +911,13 @@ function setLight(name) {
 }
 
 const defaultPose = (type) => Object.keys(POSE_SETS[type] || {})[0] || '';
+// Built-in poses plus the project's own (actor poses Claude added), as { key: label }.
+const posesFor = (type) => {
+  const base = POSE_SETS[type];
+  if (type !== 'actor') return base;
+  const extra = Object.fromEntries(Object.entries(project.customPoses || {}).map(([k, v]) => [k, `${v.label || k} (추가 자세)`]));
+  return { ...base, ...extra };
+};
 const poseOf = (o, shot) => shot?.poses?.[o.id] || o.pose || defaultPose(o.type);
 
 // Pose every object for (shot, t), then run the cymbal physics up to that moment (physics.js re-poses the
@@ -1687,7 +1695,7 @@ function renderObjInspector() {
   $('oHoldWrap').hidden = o.type !== 'actor';
   $('oHeadWrap').hidden = o.type !== 'actor';
   if (o.type === 'actor') $('oHold').value = o.hold || 'none';
-  const poses = POSE_SETS[o.type];
+  const poses = posesFor(o.type);
   $('oPoseWrap').hidden = !poses;
   $('oPoseShotWrap').hidden = !poses;
   if (poses) {
@@ -1718,7 +1726,7 @@ function renderObjInspector() {
     const li = document.createElement('li');
     li.className = Math.abs(k.t - time) <= frameTol() ? 'on' : '';
     li.innerHTML = `<span class="kd">◆</span><span class="kt">${k.t.toFixed(2)}s</span><span class="kf">${k.pos.map((v) => v.toFixed(1)).join(', ')}</span>`;
-    const poses = POSE_SETS[o.type];
+    const poses = posesFor(o.type);
     if (poses) {
       // Pose from this key on (blended over the key gap); blank keeps the previous key's pose.
       const ps = document.createElement('select');
@@ -2080,22 +2088,66 @@ function generateFromText() {
 const finite = (v, d) => (Number.isFinite(+v) ? +v : d);
 const vec = (a, d) => (Array.isArray(a) && a.length === 3 && a.every((x) => Number.isFinite(+x)) ? a.map((x) => r3(+x)) : d);
 
+let planRefs = new Map(); // new_objects ref -> created object id, while a Claude plan is applied
+
 function findObj(ref) {
   if (!ref) return null;
   const s = String(ref).trim();
+  if (planRefs.has(s)) return objById(planRefs.get(s));
   return objById(s) || project.objects.find((o) => o.name === s) || project.objects.find((o) => o.name.toLowerCase() === s.toLowerCase()) || null;
 }
 
 function applyClaudePlan(data) {
   const shots = Array.isArray(data?.shots) ? data.shots : [];
   if (!shots.length) throw new Error('샷이 없습니다');
-  if (!project.objects.length) throw new Error('씬에 오브젝트를 먼저 추가하세요');
+  if (!project.objects.length && !(data.new_objects || []).length) throw new Error('씬에 오브젝트가 없습니다');
   const replace = $('genReplace').checked;
   const log = [];
+  const added = [];
   let lastParams;
+  planRefs = new Map();
+  const poseMap = new Map(); // pose name Claude used -> stored custom pose key
+  const nums = (a, n, d) => (Array.isArray(a) && a.length === n && a.every((x) => Number.isFinite(+x)) ? a.map((x) => +x) : d);
   mutate(() => {
+    // 1) Objects the shots need but the scene lacks.
+    for (const n of Array.isArray(data.new_objects) ? data.new_objects : []) {
+      const type = ADDABLE.includes(n.type) ? n.type : 'box';
+      const def = OBJ_TYPES[type];
+      let name = String(n.name || def.ko).trim().slice(0, 40) || def.ko;
+      if (project.objects.some((o) => o.name === name)) { let k = 2; while (project.objects.some((o) => o.name === `${name}${k}`)) k++; name = `${name}${k}`; }
+      const over = { name, pos: vec(n.pos, [0, 0, 0]), rotY: r3(finite(n.rotY, 0)) };
+      if (/^#[0-9a-f]{6}$/i.test(n.color || '')) over.color = n.color;
+      else if (type === 'actor') over.color = ACTOR_COLORS[project.objects.filter((o) => o.type === 'actor').length % ACTOR_COLORS.length];
+      if (def.height && +n.height > 0) over.height = clamp(+n.height, 0.3, 80);
+      const sz = def.size && nums(n.size, 3, null);
+      if (sz) over.size = sz.map((v) => clamp(v, 0.05, 200));
+      const o = makeObject(type, over);
+      project.objects.push(o);
+      if (n.ref) planRefs.set(String(n.ref).trim(), o.id);
+      added.push(`${o.name}(${def.ko})`);
+    }
+    // 2) Actor poses the built-in set lacks, as joint angles.
+    project.customPoses ||= {};
+    for (const np of Array.isArray(data.new_poses) ? data.new_poses : []) {
+      const a = np.angles || {};
+      const raw = String(np.name || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'pose';
+      let key = `c_${raw}`;
+      if (POSE_SETS.actor[key]) key = `${key}_2`;
+      const def = {
+        drop: clamp(finite(a.drop, 0), -1, 0.5), pitch: clamp(finite(a.pitch, 0), -1.7, 1.7),
+        lean: clamp(finite(a.lean, 0), -1.5, 1.6), head: clamp(finite(a.head, 0), -1.2, 1.2), turn: clamp(finite(a.turn, 0), -1.4, 1.4),
+        hip: nums(a.hip, 2, [0, 0]).map((v) => clamp(v, -2.6, 1.2)), knee: nums(a.knee, 2, [0, 0]).map((v) => clamp(v, 0, 2.6)),
+        sh: nums(a.sh, 4, [0, 0.08, 0, -0.08]).map((v) => clamp(v, -3.2, 3.2)), el: nums(a.el, 2, [0, 0]).map((v) => clamp(v, -2.6, 0.3)),
+      };
+      if (np.walk) def.walk = true;
+      project.customPoses[key] = { label: String(np.label || raw).slice(0, 40), def };
+      poseMap.set(String(np.name || ''), key);
+      added.push(`자세 "${project.customPoses[key].label}"`);
+    }
+    setCustomPoses(project.customPoses);
     shots.forEach((c, i) => {
       const subj = findObj(c.subject) || project.objects.find((o) => o.type === 'actor') || project.objects[0];
+      if (!subj) throw new Error('샷의 피사체가 없습니다');
       const sec = findObj(c.subject2);
       const params = {
         ...defaultParams(),
@@ -2136,7 +2188,8 @@ function applyClaudePlan(data) {
       }
       for (const ps of Array.isArray(c.poses) ? c.poses : []) {
         const o = findObj(ps.object);
-        if (o && POSE_SETS[o.type]?.[ps.pose]) (gen.poses ||= {})[o.id] = ps.pose;
+        const pose = poseMap.get(String(ps.pose)) || ps.pose;
+        if (o && posesFor(o.type)?.[pose]) (gen.poses ||= {})[o.id] = pose;
       }
       if (c.name) gen.name = String(c.name).slice(0, 60);
       gen.meta.source = source;
@@ -2163,14 +2216,17 @@ function applyClaudePlan(data) {
     d.textContent = `${i + 1}. ${t}`;
     $('genLog').appendChild(d);
   });
-  if (data.notes) {
+  planRefs = new Map();
+  const note = (t) => {
     const d = document.createElement('div');
     d.className = 'gen-note';
-    d.textContent = `Claude: ${data.notes}`;
+    d.textContent = t;
     $('genLog').appendChild(d);
-  }
+  };
+  if (added.length) note(`씬에 추가: ${added.join(', ')}`);
+  if (data.notes) note(`Claude: ${data.notes}`);
   queueThumbs(true);
-  toast(`Claude 계획으로 ${shots.length}개 샷을 만들었습니다`);
+  toast(`Claude 계획으로 ${shots.length}개 샷을 만들었습니다${added.length ? ` · ${added.length}개 추가` : ''}`);
 }
 
 const claudeText = () => $('genText').value.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
@@ -2178,7 +2234,6 @@ const claudeText = () => $('genText').value.split('\n').map((l) => l.trim()).fil
 async function copyClaudePrompt() {
   const text = claudeText();
   if (!text) return toast('샷 설명을 입력하세요');
-  if (!project.objects.length) return toast('씬에 오브젝트를 먼저 추가하세요');
   const prompt = copyPrompt(project, text);
   try {
     await navigator.clipboard.writeText(prompt);
@@ -2201,7 +2256,6 @@ async function generateWithMyClaude() {
   if (claudeBusy) { claudeBusy.abort(); return; }
   const text = claudeText();
   if (!text) return toast('샷 설명을 입력하세요');
-  if (!project.objects.length) return toast('씬에 오브젝트를 먼저 추가하세요');
   const btn = $('btnClaudeRun');
   const status = $('claudeStatus');
   claudeBusy = new AbortController();
