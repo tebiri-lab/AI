@@ -120,6 +120,8 @@ export const OBJ_TYPES = {
   // Full ballpark: home plate at the origin, centre field toward -Z, stands packed with spectators.
   ballpark: { ko: '야구장 (만원 관중)', color: '#3d7a35' },
   baseball: { ko: '야구공', color: '#f4f1ea' },
+  // An imported .glb / .gltf file; `asset` keys the bytes in IndexedDB, height scales it uniformly.
+  model: { ko: '3D 모델', color: '#c08cf0', height: 1, hLabel: '높이 (m)' },
 };
 
 // Poses per object type. The first entry is the default.

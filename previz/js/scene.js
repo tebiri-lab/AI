@@ -452,6 +452,14 @@ function setPose(r, p) {
   r.elR.rotation.set(p.el[1], 0, 0);
 }
 
+// Project-defined actor poses (e.g. made by Claude): name -> joint angles in the POSE_DEF shape.
+let CUSTOM_POSES = {};
+export function setCustomPoses(map) {
+  CUSTOM_POSES = {};
+  for (const [k, v] of Object.entries(map || {})) if (v?.def && !POSE_DEF[k]) CUSTOM_POSES[k] = v.def;
+}
+const poseDef = (name) => POSE_DEF[name] || CUSTOM_POSES[name];
+
 export function poseNames(type) {
   return Object.keys(POSE_SETS[type] || {});
 }
@@ -519,14 +527,14 @@ export function applyPoseBlend(group, pk, dist = 0, speed = 0, clock = 0, beat =
   const pb = snapPose(r);
   r.root.position.y = pa.y + (pb.y - pa.y) * u;
   BLEND_JOINTS.forEach((k, i) => r[k].quaternion.slerpQuaternions(pa.q[i], pb.q[i], u));
-  const arc = a !== b && POSE_DEF[b]?.arc;
+  const arc = a !== b && poseDef(b)?.arc;
   if (arc) r.root.position.y += arc * Math.sin(Math.PI * s);
 }
 
 export function applyPose(group, pose, dist = 0, speed = 0, clock = 0, beat = 0.65, local = null) {
   const r = group.userData.rig;
   if (r) {
-    let d = POSE_DEF[pose] || POSE_DEF.stand;
+    let d = poseDef(pose) || POSE_DEF.stand;
     if (d.follow) d = followPose(d.follow, local);
     if (r.handL) { r.handL.scale.set(0.8, 1.1, 0.6); r.handR.scale.set(0.8, 1.1, 0.6); }
     const hip = d.hip || [0, 0], knee = d.knee || [0, 0], sh = d.sh || [0, 0.08, 0, -0.08], el = d.el || [0, 0];
@@ -1914,9 +1922,56 @@ function buildBaseball() {
   return g;
 }
 
+// Imported glTF/GLB models, keyed by asset id. Each entry holds the parsed scene normalised so its
+// footprint is centred on the origin with the lowest point at y = 0, plus its native height (m).
+export const modelCache = new Map();
+
+function buildModel(o) {
+  const g = new THREE.Group();
+  const m = modelCache.get(o.asset);
+  if (!m) {
+    // Not loaded (yet, or the file stayed in another browser): a wireframe stand-in of the right height.
+    const h = o.height || 1;
+    const box = new THREE.Mesh(new THREE.BoxGeometry(h * 0.6, h, h * 0.6), new THREE.MeshBasicMaterial({ color: o.color || '#c08cf0', wireframe: true }));
+    box.position.y = h / 2;
+    g.add(box);
+    return g;
+  }
+  const inst = m.root.clone(true);
+  // Geometry and materials are shared with the cache; flag them so removing the object leaves them alone.
+  inst.traverse((c) => {
+    c.userData.sharedAsset = true;
+    if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
+  });
+  const k = (o.height || m.height) / (m.height || 1);
+  inst.scale.setScalar(k);
+  g.add(inst);
+  return g;
+}
+
+/** Parse GLB/glTF bytes into a cache entry (normalised root + native height). */
+export async function loadModelBytes(id, buffer) {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const gltf = await new GLTFLoader().parseAsync(buffer, '');
+  const root = gltf.scene || gltf.scenes?.[0];
+  if (!root) throw new Error('모델에 씬이 없습니다');
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) throw new Error('모델에 메시가 없습니다');
+  const c = box.getCenter(new THREE.Vector3());
+  const wrap = new THREE.Group();
+  root.position.sub(new THREE.Vector3(c.x, box.min.y, c.z));
+  wrap.add(root);
+  const size = box.getSize(new THREE.Vector3());
+  const entry = { root: wrap, height: size.y, size: [size.x, size.y, size.z] };
+  modelCache.set(id, entry);
+  return entry;
+}
+
 export function buildObject(o) {
   let g;
   switch (o.type) {
+    case 'model': g = buildModel(o); break;
     case 'ballpark': g = buildBallpark(o); break;
     case 'baseball': g = buildBaseball(o); break;
     case 'mballoon': g = buildBalloon(o, true); break;
@@ -1959,7 +2014,7 @@ export function buildObject(o) {
 
 // Rebuild is needed whenever any of these change.
 export function signature(o) {
-  return JSON.stringify([o.type, o.name, o.color, o.height, o.size, o.hold, o.tilt, o.burstBeat, o.text, o.textColor, o.vertical, o.flat, o.rotX, o.rotZ, o.venue]);
+  return JSON.stringify([o.type, o.name, o.color, o.height, o.asset, o.type === 'model' && modelCache.has(o.asset), o.size, o.hold, o.tilt, o.burstBeat, o.text, o.textColor, o.vertical, o.flat, o.rotX, o.rotZ, o.venue]);
 }
 
 export function poseWalk(group, dist, speed) {
