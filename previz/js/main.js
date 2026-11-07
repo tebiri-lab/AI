@@ -2593,15 +2593,22 @@ function bindUI() {
   }));
   $('btnSave').onclick = saveProject;
   $('btnOpen').onclick = () => $('fileInput').click();
+  // 열기: a .previz.json opens as the project; .glb / .gltf files are added to the current scene.
   $('fileInput').addEventListener('change', async (e) => {
-    const f = e.target.files[0];
+    const files = [...e.target.files];
     e.target.value = '';
-    if (!f) return;
-    try {
-      loadProject(normalizeProject(JSON.parse(await f.text())), true);
-      toast(`"${project.name}" 을(를) 열었습니다`);
-    } catch (err) {
-      toast(`열기 실패: ${err.message}`);
+    const models = files.filter((f) => /\.(glb|gltf)$/i.test(f.name));
+    const json = files.find((f) => !models.includes(f));
+    if (json) {
+      try {
+        loadProject(normalizeProject(JSON.parse(await json.text())), true);
+        toast(`"${project.name}" 을(를) 열었습니다`);
+      } catch (err) {
+        return toast(`열기 실패: ${err.message}`);
+      }
+    }
+    for (const f of models) {
+      try { await importModelFile(f); } catch (err) { toast(`"${f.name}" 불러오기 실패: ${err.message}`, 6000); }
     }
   });
   const menu = $('exportMenu');
