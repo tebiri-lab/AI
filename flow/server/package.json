@@ -1,0 +1,15 @@
+{
+  "name": "flow-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local bridge between the workflow canvas and remote MCP servers (Higgsfield and others).",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node test/bridge.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  }
+}
