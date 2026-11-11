@@ -85,7 +85,8 @@ const actions = {
         const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) });
         const body = await res.json().catch(() => ({}));
         if (res.ok) text = body.text;
-        else if (res.status !== 501) throw new Error(body.error || '글을 쓰지 못했습니다');
+        // Claude Code on this computer could not write (not installed, or signed out): say why and fall back to the chat hand-off below.
+        else if (res.status !== 501) toast(/authenticat|OAuth|login|log in/i.test(body.error || '') ? '이 컴퓨터의 Claude Code 로그인이 만료되었습니다. 터미널에서 claude 를 실행해 /login 하면 바로 쓰기가 됩니다. 지금은 Claude 채팅 전달로 진행합니다.' : `이 컴퓨터의 Claude Code로 쓰지 못했습니다 (${(body.error || '알 수 없는 오류').slice(0, 120)}). Claude 채팅 전달로 진행합니다.`, 'error');
       }
       // No bridge, or no Claude Code on this computer: hand the request to a Claude chat by copy and paste.
       if (text == null) text = await relayBox(prompt, 'text');
