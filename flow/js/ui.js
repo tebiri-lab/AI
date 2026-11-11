@@ -87,6 +87,27 @@ export function palette(x, y, groups, onPick, placeholder = '노드 찾기') {
   input.focus();
 }
 
+// List with tabs across the top. tabs: [{ id, label, items: [{ id, title, hint }] }]
+export function tabPicker(x, y, tabs, current, onPick) {
+  closePopup();
+  const list = h('div.palette-list');
+  const bar = h('div.tabbar', { role: 'tablist' });
+  const input = h('input', { type: 'search', placeholder: '이름으로 찾기', 'aria-label': '모델 찾기' });
+  let active = tabs[0].id;
+  const draw = () => {
+    const q = input.value.trim().toLowerCase();
+    bar.replaceChildren(...tabs.map((t) => h('button', { role: 'tab', 'aria-selected': String(t.id === active), className: t.id === active ? 'on' : '', onclick: () => { active = t.id; input.value = ''; draw(); } }, t.label)));
+    // Typing searches every model, whatever tab is open.
+    const pool = q ? tabs.find((t) => t.all) || tabs[0] : tabs.find((t) => t.id === active);
+    const items = pool.items.filter((it) => !q || `${it.title} ${it.hint || ''}`.toLowerCase().includes(q));
+    list.replaceChildren(...(items.length ? items.map((it) => h(`button.palette-item${it.id === current ? '.active' : ''}`, { onclick: () => { closePopup(); onPick(it.id); } }, h('b', {}, it.title), it.hint ? h('small', {}, it.hint) : null)) : [h('div.palette-empty', {}, '맞는 모델이 없습니다')]));
+  };
+  input.addEventListener('input', draw);
+  popup = h('div.popup.palette.wide', {}, input, bar, list);
+  draw(); place(popup, x, y);
+  input.focus();
+}
+
 // ---- modal dialogs
 export function modal(title, body, buttons) {
   return new Promise((resolve) => {
@@ -106,10 +127,11 @@ export const askBox = (question, options) => modal('확인', h('p', {}, question
 
 // Relay: show the request to copy into a Claude chat, take the pasted answer back.
 export function relayBox(text, kind) {
-  const answer = h('textarea', { rows: 4, placeholder: 'Claude가 답한 결과 주소를 여기에 붙여넣으세요', autofocus: true });
+  const writing = kind === 'text';
+  const answer = h('textarea', { rows: writing ? 7 : 4, placeholder: writing ? 'Claude가 쓴 글을 여기에 붙여넣으세요' : 'Claude가 답한 결과 주소를 여기에 붙여넣으세요', autofocus: true });
   const req = h('textarea', { rows: 9, readOnly: true, value: text });
   const body = h('div.relay', {},
-    h('p', {}, `① 아래 요청을 복사해 Higgsfield 커넥터가 켜진 Claude 채팅에 붙여넣습니다. ② ${kind === 'video' ? '영상' : '이미지'}이 만들어지면 결과 주소를 아래 칸에 붙여넣습니다.`),
+    h('p', {}, writing ? '① 아래 요청을 복사해 Claude 채팅에 붙여넣습니다. ② Claude가 쓴 글을 아래 칸에 붙여넣습니다.' : `① 아래 요청을 복사해 Higgsfield 커넥터가 켜진 Claude 채팅에 붙여넣습니다. ② ${kind === 'video' ? '영상' : '이미지'}이 만들어지면 결과 주소를 아래 칸에 붙여넣습니다.`),
     req,
     h('button', { onclick: async (e) => { e.target.textContent = (await copyText(text)) ? '복사했습니다' : '복사하지 못했습니다. 직접 선택해 복사하세요'; } }, '요청 복사'),
     answer);

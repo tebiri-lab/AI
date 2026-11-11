@@ -2,7 +2,6 @@
 import { NODE_TYPES } from './nodes.js';
 
 export const DOC_VERSION = 1;
-const STORE_KEY = 'flow.doc.v1';
 const HISTORY_MAX = 80;
 
 let seq = 0;
@@ -158,7 +157,7 @@ export class Graph {
     });
     const ids = new Set(nodes.map((n) => n.id));
     if (!keepHistory) { this.undoStack.length = 0; this.redoStack.length = 0; }
-    this.doc = { version: DOC_VERSION, name: doc.name || '이름 없는 워크플로우', nodes, edges: [], view: doc.view || { x: 0, y: 0, k: 1 } };
+    this.doc = { version: DOC_VERSION, id: doc.id, updatedAt: doc.updatedAt, name: doc.name || '이름 없는 워크플로우', nodes, edges: [], view: doc.view || { x: 0, y: 0, k: 1 } };
     for (const e of doc.edges) {
       if (!e?.from || !e?.to || !ids.has(e.from.node) || !ids.has(e.to.node)) continue;
       const a = this.node(e.from.node), b = this.node(e.to.node);
@@ -166,19 +165,10 @@ export class Graph {
     }
     this.emit('reset');
   }
+  // Saving is done by whoever set onSave (the workflow library); this only debounces it.
   scheduleSave() {
     clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => {
-      try { localStorage.setItem(STORE_KEY, this.serialize()); } catch { /* storage unavailable or full: the page still works */ }
-    }, 400);
-  }
-  loadSaved() {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return false;
-      this.load(JSON.parse(raw));
-      return this.doc.nodes.length > 0;
-    } catch { return false; }
+    this.saveTimer = setTimeout(() => this.onSave?.(this.doc), 400);
   }
 }
 

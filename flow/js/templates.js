@@ -13,19 +13,19 @@ export const TEMPLATES = [
   {
     id: 'i2v', title: '시작 이미지 → 영상', hint: '가장 기본: 스틸을 만들고 그 스틸로 영상 생성',
     doc: () => build('시작 이미지 → 영상', [
-      ['look', 'text', 0, 0, { label: '룩 (공통 화풍)', text: LOOK }],
-      ['still', 'text', 0, 240, { label: '스틸 묘사', text: 'A woman in her 30s stands at a rain-soaked crosswalk at night, neon signs reflected on the wet asphalt, medium shot, eye level.' }],
+      ['look', 'text', 0, 0, { label: '룩 (공통 화풍)', ask: '실사 영화 같은 화풍. 35mm, 자연스러운 피부, 은은한 필름 그레인', text: LOOK }],
+      ['still', 'text', 0, 400, { label: '스틸 묘사', ask: '비 오는 밤 횡단보도에 선 30대 여성, 젖은 아스팔트에 네온 반사, 미디엄 샷', text: 'A woman in her 30s stands at a rain-soaked crosswalk at night, neon signs reflected on the wet asphalt, medium shot, eye level.' }],
       ['img', 'image', 380, 0, { label: '시작 이미지', model: 'nano_banana_pro', aspect: '16:9' }],
-      ['move', 'text', 380, 620, { label: '움직임 묘사', text: 'She turns her head toward the camera and starts walking forward. Slow dolly in. Rain keeps falling.' }],
+      ['move', 'text', 380, 760, { label: '움직임 묘사', ask: '카메라 쪽으로 고개를 돌리고 걸어오기 시작. 천천히 달리 인', text: 'She turns her head toward the camera and starts walking forward. Slow dolly in. Rain keeps falling.' }],
       ['vid', 'video', 800, 0, { label: '샷 1', model: 'seedance_2_5', aspect: '16:9', duration: '5', params: { mode: 'omni_reference' } }],
-      ['note', 'note', 0, 480, { text: '스틸이 마음에 들 때까지 이미지 생성만 다시 돌리고,\n마음에 들면 메뉴(⋯)에서 "결과 잠금"을 건 뒤 영상을 실행하세요.' }],
-    ], ['look.out>img.prompt', 'still.out>img.prompt', 'img.out>vid.start', 'move.out>vid.prompt']),
+      ['note', 'note', 380, -260, { text: '스틸이 마음에 들 때까지 이미지 생성만 다시 돌리고,\n마음에 들면 메뉴(⋯)에서 "결과 잠금"을 건 뒤 영상을 실행하세요.' }],
+    ], ['look.out>img.prompt', 'still.out>img.prompt', 'img.out>vid.start', 'move.out>vid.prompt', 'look.out>still.ctx', 'still.out>move.ctx']),
   },
   {
     id: 'character', title: '캐릭터 레퍼런스 멀티샷', hint: '캐릭터 시트 한 장을 여러 샷의 레퍼런스로',
     doc: () => build('캐릭터 레퍼런스 멀티샷', [
-      ['look', 'text', 0, 0, { label: '룩 (공통 화풍)', text: LOOK }],
-      ['who', 'text', 0, 240, { label: '캐릭터 설명', text: 'Korean man, late 20s, short black hair, grey wool coat over a black turtleneck, calm expression.' }],
+      ['look', 'text', 0, 0, { label: '룩 (공통 화풍)', ask: '실사 영화 같은 화풍. 35mm, 자연스러운 피부, 은은한 필름 그레인', text: LOOK }],
+      ['who', 'text', 0, 400, { label: '캐릭터 설명', text: 'Korean man, late 20s, short black hair, grey wool coat over a black turtleneck, calm expression.' }],
       ['sheet', 'image', 380, 0, { label: '캐릭터 시트', model: 'nano_banana_pro', aspect: '16:9', prompt: 'Character reference sheet on a plain light-grey background: front view, three-quarter view and profile of the same person, consistent face and outfit, even studio lighting.' }],
       ['s1', 'text', 800, -700, { label: '샷 1 묘사', text: 'Wide shot. He walks out of a subway exit into morning light, crowd passing around him.' }],
       ['s2', 'text', 800, 60, { label: '샷 2 묘사', text: 'Close-up. He stops and looks up at something off-screen, wind moving his hair.' }],
