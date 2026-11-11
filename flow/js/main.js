@@ -188,11 +188,27 @@ async function drawConn() {
   ];
   if (settings.mode === 'bridge') {
     const url = h('input', { type: 'text', value: settings.bridgeUrl, 'aria-label': '브리지 주소', onchange: async (e) => { settings.bridgeUrl = e.target.value.trim() || 'http://localhost:8787'; saveSettings(); await refreshBridge(); drawConn(); } });
+    // "확인": if the bridge does not answer, ask the macOS helper (flowbridge://start, set up by install-mac.sh) to start it.
+    const check = h('button', {}, bridge.online ? '확인' : '켜기 · 확인');
+    check.onclick = async () => {
+      check.disabled = true;
+      await refreshBridge();
+      if (!bridge.online) {
+        toast('브리지를 켜는 중입니다');
+        location.href = 'flowbridge://start';
+        for (let i = 0; i < 12 && !bridge.online; i++) { await new Promise((res) => setTimeout(res, 1000)); await refreshBridge(); }
+      }
+      drawConn();
+      toast(bridge.online ? '브리지에 연결했습니다' : '브리지가 켜지지 않았습니다. 아래 안내를 확인하세요.', bridge.online ? '' : 'error');
+    };
+    const off = bridge.online ? h('button', { title: '브리지 서버를 끕니다', onclick: async () => { await bridgeApi.shutdown().catch(() => {}); await new Promise((res) => setTimeout(res, 400)); await refreshBridge(); drawConn(); toast('브리지를 껐습니다'); } }, '끄기') : null;
     kids.push(h('h3', {}, '브리지 서버'),
-      h('div.row', {}, url, h('button', { onclick: async () => { await refreshBridge(); drawConn(); toast(bridge.online ? '브리지에 연결했습니다' : '브리지에 닿지 않습니다', bridge.online ? '' : 'error'); } }, '확인'),
+      h('div.row', {}, url, check, off,
         h('span', { className: `badge ${bridge.online ? 'on' : 'warn'}` }, bridge.online ? '켜짐' : '꺼짐')));
     if (!bridge.online) {
-      kids.push(h('p', {}, '이 저장소의 flow/server 폴더에서 아래 명령으로 브리지를 켭니다 (Node.js 20 이상). 켠 뒤 http://localhost:8787 로 이 페이지를 열면 가장 확실합니다.'),
+      kids.push(h('p', {}, 'Mac에서는 한 번만 설치해 두면 위 "켜기 · 확인" 버튼이 브리지를 켭니다. 처음 누를 때 Chrome이 "Flow Bridge 열기"를 물으면 허용하세요. 터미널에서 이 저장소의 flow/server 폴더로 가서:'),
+        h('pre.cmd', {}, './install-mac.sh'),
+        h('p', {}, '설치 없이 직접 켜려면 (Node.js 20 이상):'),
         h('pre.cmd', {}, 'cd flow/server\nnpm install\nnpm start'));
     } else {
       kids.push(h('h3', {}, 'MCP 서버'));

@@ -35,6 +35,7 @@ export const bridgeApi = {
   addServer: (name, url) => api('/api/servers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, url }) }),
   removeServer: (id) => api(`/api/servers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   connect: (id) => api(`/api/servers/${encodeURIComponent(id)}/connect`, { method: 'POST' }),
+  shutdown: () => api('/api/shutdown', { method: 'POST' }),
   logout: (id) => api(`/api/servers/${encodeURIComponent(id)}/logout`, { method: 'POST' }),
 };
 export const serverReady = (id) => bridge.online && bridge.servers.some((s) => s.id === id && s.state === 'connected');
