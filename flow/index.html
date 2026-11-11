@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>워크플로우 · Video Skill</title>
+  <meta name="description" content="생성형 AI 이미지·영상 워크플로우를 노드 캔버스로 정리하고 Higgsfield MCP로 실행합니다." />
+  <link rel="stylesheet" href="../previz/css/style.css" />
+  <link rel="stylesheet" href="css/flow.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand"><span class="dot"></span>VIDEO<span class="brand-sub">SKILL</span></div>
+    <nav class="site-nav" aria-label="사이트"><a href="../previz/">프리비즈</a><a href="../previz/lab.html">구도 실험실</a><a href="../previz/filter.html">프롬프트 게이지</a><a href="../previz/guide.html">프롬프트 가이드</a><a href="./" aria-current="page">워크플로우</a></nav>
+    <input id="docName" class="project-name" spellcheck="false" aria-label="워크플로우 이름" />
+    <div class="top-actions">
+      <button id="btnUndo" title="실행 취소 (Ctrl+Z)" aria-label="실행 취소">↶</button>
+      <button id="btnRedo" title="다시 실행 (Ctrl+Shift+Z)" aria-label="다시 실행">↷</button>
+      <span class="sep"></span>
+      <button id="btnTemplates">템플릿 ▾</button>
+      <button id="btnAdd" title="노드 추가 (A 또는 빈 곳 더블클릭)">＋ 노드</button>
+      <button id="btnFile">파일 ▾</button>
+      <input id="fileInput" type="file" accept=".json,application/json" hidden />
+      <span class="sep"></span>
+      <button id="btnConn" class="conn" title="생성 실행 방식과 MCP 연결"><i class="led"></i><span id="connLabel">데모</span></button>
+      <button id="btnRun" class="primary" title="모든 노드를 순서대로 실행. 이미 결과가 있고 설정이 그대로인 생성 노드는 건너뜁니다.">전체 실행</button>
+    </div>
+  </header>
+
+  <main id="stage" tabindex="-1" aria-label="워크플로우 캔버스"></main>
+
+  <div id="zoombar" role="group" aria-label="화면">
+    <button id="btnZoomOut" aria-label="축소">−</button>
+    <button id="btnZoomReset" title="100%로"><span id="zoomLabel">100%</span></button>
+    <button id="btnZoomIn" aria-label="확대">＋</button>
+    <button id="btnFit" title="전체 보기 (F)">맞춤</button>
+    <button id="btnHelp" title="단축키">?</button>
+  </div>
+  <div id="runbar" hidden><span id="runText"></span><button id="btnStop">모두 중단</button></div>
+
+  <aside id="connPanel" hidden aria-label="연결"></aside>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
