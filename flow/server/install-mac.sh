@@ -37,6 +37,8 @@ cat > "$LAUNCHER" <<LAUNCH
 # Written by install-mac.sh. Starts the bridge unless it is already answering.
 curl -s -m 2 -o /dev/null http://127.0.0.1:8787/api/status && exit 0
 cd "$HERE" || exit 1
+# Programs started from an app get a bare PATH; add the usual places so node and the claude command are found.
+export PATH="$(dirname "$NODE"):\$HOME/.local/bin:\$HOME/.claude/local:/opt/homebrew/bin:/usr/local/bin:\$PATH"
 FLOW_ALLOWED_ORIGINS="$ORIGINS" nohup "$NODE" server.mjs >> "$DIR/bridge.log" 2>&1 &
 LAUNCH
 chmod 700 "$LAUNCHER"

@@ -9,6 +9,7 @@ import { promises as fs, createReadStream, existsSync, mkdirSync, readFileSync, 
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -24,6 +25,22 @@ const STATE_FILE = path.join(STATE_DIR, 'state.json');
 const EXTRA_ORIGINS = (process.env.FLOW_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 const BUILTIN = [{ id: 'higgsfield', name: 'Higgsfield', url: process.env.HIGGSFIELD_MCP_URL || 'https://mcp.higgsfield.ai/mcp', builtin: true }];
 const CALL_TIMEOUT_MS = 120000;
+const WORKFLOW_DIR = path.join(STATE_DIR, 'workflows');
+const workflowFile = (id) => (/^[\w-]{1,80}$/.test(id) ? path.join(WORKFLOW_DIR, `${id}.json`) : null);
+// Text writing uses the Claude Code command on this computer (the person's own subscription), when it is installed.
+const LLM_CMD = process.env.FLOW_LLM_CMD || 'claude';
+function writeWithClaude(prompt) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(LLM_CMD, ['-p', '--output-format', 'text'], { cwd: os.tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    const timer = setTimeout(() => { child.kill(); reject(httpError(504, '글 작성이 너무 오래 걸려 멈췄습니다')); }, 180000);
+    child.on('error', (e) => { clearTimeout(timer); reject(e.code === 'ENOENT' ? httpError(501, '이 컴퓨터에서 Claude Code(claude 명령)를 찾지 못했습니다') : httpError(500, e.message)); });
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('close', (code) => { clearTimeout(timer); if (code === 0 && out.trim()) resolve(out.trim()); else reject(httpError(502, (err || out).trim().slice(0, 300) || `claude 명령이 실패했습니다 (${code})`)); });
+    child.stdin.end(prompt);
+  });
+}
 
 // ---- saved state: added servers and each server's OAuth data
 let state = { servers: [], auth: {} };
@@ -164,7 +181,7 @@ async function handle(req, res) {
 
   if (p.startsWith('/api/')) {
     if (!originAllowed(origin)) return send(res, 403, { error: '이 페이지에서는 브리지를 쓸 수 없습니다. FLOW_ALLOWED_ORIGINS 에 주소를 추가하세요.' });
-    const cors = origin ? { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' } : {};
+    const cors = origin ? { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' } : {};
     if (req.method === 'OPTIONS') return send(res, 204, '', cors);
     const json = (status, body) => send(res, status, body, cors);
     try {
@@ -208,6 +225,34 @@ async function handle(req, res) {
           if (state.auth[id]) { delete state.auth[id].tokens; delete state.auth[id].verifier; persist(); }
           return json(200, { ok: true });
         }
+      }
+      if (p === '/api/llm' && req.method === 'POST') {
+        const { prompt } = JSON.parse((await readBody(req, 1e6)).toString() || '{}');
+        if (!prompt?.trim()) throw httpError(400, '내용이 비어 있습니다');
+        return json(200, { text: await writeWithClaude(String(prompt)) });
+      }
+      if (p === '/api/workflows' && req.method === 'GET') {
+        await fs.mkdir(WORKFLOW_DIR, { recursive: true });
+        const list = [];
+        for (const f of await fs.readdir(WORKFLOW_DIR)) {
+          if (!f.endsWith('.json')) continue;
+          try { const d = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, f), 'utf8')); list.push({ id: d.id, name: d.name, updatedAt: d.updatedAt || 0 }); } catch { /* unreadable file: skipped */ }
+        }
+        return json(200, { workflows: list });
+      }
+      const w = /^\/api\/workflows\/([^/]+)$/.exec(p);
+      if (w) {
+        const file = workflowFile(decodeURIComponent(w[1]));
+        if (!file) throw httpError(400, '워크플로우 이름이 올바르지 않습니다');
+        if (req.method === 'GET') { try { return json(200, JSON.parse(await fs.readFile(file, 'utf8'))); } catch { throw httpError(404, '없는 워크플로우입니다'); } }
+        if (req.method === 'PUT') {
+          const doc = JSON.parse((await readBody(req, 50e6)).toString());
+          if (!Array.isArray(doc?.nodes)) throw httpError(400, '워크플로우 형식이 아닙니다');
+          await fs.mkdir(WORKFLOW_DIR, { recursive: true });
+          await fs.writeFile(file, JSON.stringify({ ...doc, id: decodeURIComponent(w[1]) }));
+          return json(200, { ok: true });
+        }
+        if (req.method === 'DELETE') { await fs.rm(file, { force: true }); return json(200, { ok: true }); }
       }
       if (p === '/api/call' && req.method === 'POST') {
         const { server, tool, args } = JSON.parse((await readBody(req, 5e6)).toString() || '{}');

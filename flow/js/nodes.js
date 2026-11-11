@@ -1,6 +1,6 @@
 // Node type definitions: ports, settings fields and what running the node does.
 // A result is { items: [{ type, url?, text?, jobId?, mediaId?, name? }], at }. Downstream nodes receive the picked item.
-import { listModels, getModel, modelRoles, modelDurations, modelParams } from './models.js';
+import { listModels, getModel, modelRoles, modelDurations, modelParams, touchModel } from './models.js';
 import { bridge } from './providers.js';
 import { grabFrame } from './media.js';
 
@@ -32,16 +32,21 @@ function paramFields(model, node) {
   return modelParams(model).filter((p) => p.name !== 'extension_mode' || mode === 'video_extension').map((p) => {
     const key = `params.${p.name}`;
     const label = PARAM_LABEL[p.name] || p.name;
-    if (p.options) return { key, label, kind: 'select', structural: p.name === 'mode', options: p.nullable ? ['', ...p.options] : p.options, fallback: p.default ?? (p.nullable ? '' : p.options[0]) };
+    if (p.options) {
+      const opts = (p.nullable ? ['', ...p.options] : p.options).map((o) => ({ value: String(o), label: OPTION_LABEL[p.name]?.[o] || (o === '' ? '(지정 안 함)' : String(o)) }));
+      return { key, label, kind: 'select', structural: p.name === 'mode', options: opts, fallback: paramDefault(p) ?? (p.nullable ? '' : p.options[0]) };
+    }
     if (p.type === 'bool') return { key, label, kind: 'check', fallback: !!p.default };
     return { key, label, kind: 'number', min: p.min, max: p.max, step: Number.isInteger(p.default ?? 1) ? 1 : 0.05, fallback: p.default ?? p.min };
   });
 }
-const PARAM_LABEL = { resolution: '해상도', quality: '품질', mode: '모드', genre: '장르', generate_audio: '오디오 생성', variant: '변형', thinking_level: '추론 깊이', extension_mode: '확장 방향', bitrate_mode: '비트레이트', sound: '사운드', background: '배경' };
+// House defaults that differ from the model's own.
+const PARAM_DEFAULT = { bitrate_mode: 'high' };
+const paramDefault = (p) => (p.options?.includes(PARAM_DEFAULT[p.name]) ? PARAM_DEFAULT[p.name] : p.default);
+const OPTION_LABEL = { mode: { t2v: '텍스트만 (t2v)', omni_reference: '레퍼런스 사용', video_edit: '영상 편집', video_extension: '영상 확장' } };
+const PARAM_LABEL = { draft: '드래프트 (480p 시안)',  resolution: '해상도', quality: '품질', mode: '모드', genre: '장르', generate_audio: '오디오 생성', variant: '변형', thinking_level: '추론 깊이', extension_mode: '확장 방향', bitrate_mode: '비트레이트', sound: '사운드', background: '배경' };
 
-function modelField(kind) {
-  return { key: 'model', label: '모델', kind: 'select', structural: true, wide: true, options: listModels(kind).map((m) => ({ value: m.id, label: `${m.name}${m.provider_name ? ` · ${m.provider_name}` : ''}` })) };
-}
+function modelField(kind) { return { key: 'model', label: '모델', kind: 'model', modelKind: kind, structural: true, wide: true }; }
 function pickModel(node, kind) { return getModel(node.data.model) || listModels(kind)[0]; }
 
 function joinText(items) { return (items || []).map((i) => i.text || '').filter(Boolean).join('\n\n'); }
@@ -50,7 +55,7 @@ function joinText(items) { return (items || []).map((i) => i.text || '').filter(
 function collectParams(node, model) {
   const out = {};
   for (const p of modelParams(model)) {
-    const v = node.data.params?.[p.name] ?? p.default;
+    const v = node.data.params?.[p.name] ?? paramDefault(p);
     if (v === '' || v == null) continue;
     out[p.name] = v;
   }
@@ -67,7 +72,11 @@ export function buildRequest(node, inputs) {
   for (const p of mediaPorts(model)) for (const item of inputs[p.key] || []) medias.push({ role: p.role, item });
   if (!prompt && !medias.length) throw new Error('프롬프트를 쓰거나 연결하세요');
   const req = { kind, model: model.id, prompt, params: collectParams(node, model), medias, count: Math.max(1, Math.min(4, +node.data.count || 1)) };
-  if (model.aspect_ratios?.length && node.data.aspect) req.aspect = model.aspect_ratios.includes(node.data.aspect) ? node.data.aspect : model.aspect_ratios[0];
+  // "자동": models that have their own auto setting get it; for the others the ratio is simply not sent (model default).
+  if (model.aspect_ratios?.length && node.data.aspect) {
+    if (node.data.aspect === 'auto') { if (model.aspect_ratios.includes('auto')) req.aspect = 'auto'; }
+    else req.aspect = model.aspect_ratios.includes(node.data.aspect) ? node.data.aspect : model.aspect_ratios[0];
+  }
   if (kind === 'video') {
     const d = modelDurations(model);
     if (d) {
@@ -84,6 +93,7 @@ export function buildRequest(node, inputs) {
 }
 async function runGenerate(kind, ctx) {
   const req = buildRequest(ctx.node, ctx.inputs);
+  touchModel(req.model);
   const items = await ctx.provider.generate(req, ctx);
   return { items, request: { model: req.model, prompt: req.prompt } };
 }
@@ -92,16 +102,27 @@ function generatorFields(kind) {
   return (node) => {
     const model = pickModel(node, kind);
     const fields = [modelField(kind), { key: 'prompt', label: '프롬프트', kind: 'textarea', rows: 4, placeholder: '여기에 쓰거나 텍스트 노드를 연결하세요. 둘 다 있으면 연결된 글 뒤에 붙습니다.' }];
-    if (model?.aspect_ratios?.length) fields.push({ key: 'aspect', label: '화면비', kind: 'select', options: model.aspect_ratios, fallback: model.aspect_ratios.includes('16:9') ? '16:9' : model.aspect_ratios[0] });
+    if (model?.aspect_ratios?.length) fields.push({ key: 'aspect', label: '화면비', kind: 'select', options: [{ value: 'auto', label: '자동' }, ...model.aspect_ratios.filter((a) => a !== 'auto').map((a) => ({ value: a, label: a }))], fallback: model.aspect_ratios.includes('16:9') ? '16:9' : 'auto' });
     if (kind === 'video') {
       const d = modelDurations(model);
       if (d?.options) fields.push({ key: 'duration', label: '길이(초)', kind: 'select', options: d.options.map(String), fallback: String(d.options[0]) });
       else if (d) fields.push({ key: 'duration', label: `길이(초) ${d.min}–${d.max}`, kind: 'number', min: d.min, max: d.max, step: 1, fallback: 5 });
     }
     fields.push(...paramFields(model, node));
-    fields.push({ key: 'count', label: '변형 수', kind: 'select', options: ['1', '2', '3', '4'], fallback: '1' });
+    fields.push({ key: 'count', label: '변형 수', kind: 'select', options: ['1', '2', '3', '4'], fallback: '2' });
     return fields;
   };
+}
+
+// A draft is a 480p render: choosing another resolution clears the draft, and ticking draft sets 480p.
+// Returns true when another setting was changed and the node's controls need redrawing.
+function coupleDraft(node, key, value) {
+  const params = (node.data.params ||= {});
+  const model = pickModel(node, node.type);
+  const res = model?.parameters?.find((p) => p.name === 'resolution');
+  if (key === 'params.resolution' && value !== '480p' && params.draft) { params.draft = false; return true; }
+  if (key === 'params.draft' && value === true && res?.options?.includes('480p') && params.resolution !== '480p') { params.resolution = '480p'; return true; }
+  return false;
 }
 
 // Form fields from a tool's JSON Schema (top-level properties; nested objects and arrays are edited as JSON).
@@ -132,10 +153,15 @@ export const CATEGORIES = [
 
 export const NODE_TYPES = {
   text: {
-    title: '텍스트', category: 'input', hint: '프롬프트, 캐릭터 설명, 스타일 문장', instant: true, width: 280,
-    defaults: { text: '' },
+    title: '텍스트', category: 'input', hint: '프롬프트, 캐릭터 설명, 스타일 문장. AI에게 시켜서 쓸 수도 있음', instant: true, width: 300,
+    defaults: { ask: '', text: '' },
+    inputs: [{ key: 'ctx', label: '참고 (AI 작성용)', type: 'text', multi: true }],
     outputs: [{ key: 'out', label: '텍스트', type: 'text' }],
-    fields: () => [{ key: 'text', kind: 'textarea', rows: 6, placeholder: '프롬프트나 설명을 쓰세요' }],
+    fields: () => [
+      { key: 'ask', label: 'AI에게 시킬 내용', kind: 'textarea', rows: 3, placeholder: '예: 비 오는 밤 횡단보도에 선 30대 여성, 미디엄 샷.\n쓰지 않아도 됩니다. 아래 칸에 직접 써도 됩니다.' },
+      { kind: 'action', action: 'write', label: 'AI로 쓰기', hint: '위 내용(과 왼쪽에 연결된 참고 글)으로 프롬프트를 써서 아래 칸에 넣습니다' },
+      { key: 'text', label: '결과 — 다음 노드로 넘어가는 글', kind: 'textarea', rows: 6, placeholder: '프롬프트나 설명. 직접 써도 되고, AI가 쓴 뒤에 고쳐도 됩니다.' },
+    ],
     run: async ({ node }) => ({ items: node.data.text.trim() ? [{ type: 'text', text: node.data.text.trim() }] : [] }),
   },
   join: {
@@ -171,19 +197,21 @@ export const NODE_TYPES = {
   },
   image: {
     title: '이미지 생성', category: 'gen', hint: '시작 이미지, 캐릭터 시트, 키 비주얼', spends: true, width: 320,
-    defaults: { model: 'nano_banana_pro', prompt: '', aspect: '16:9', count: '1', params: {} },
+    defaults: { model: 'nano_banana_pro', prompt: '', aspect: '16:9', count: '2', params: {} },
     inputs: (node) => [PROMPT_IN, ...mediaPorts(pickModel(node, 'image'))],
     outputs: [{ key: 'out', label: '이미지', type: 'image' }],
     fields: generatorFields('image'),
+    onChange: coupleDraft,
     preview: 'media',
     run: (ctx) => runGenerate('image', ctx),
   },
   video: {
     title: '영상 생성', category: 'gen', hint: '시작 이미지 → 영상, 레퍼런스 기반 샷', spends: true, width: 340,
-    defaults: { model: 'seedance_2_5', prompt: '', aspect: '16:9', duration: '5', count: '1', params: {} },
+    defaults: { model: 'seedance_2_5', prompt: '', aspect: '16:9', duration: '5', count: '2', params: {} },
     inputs: (node) => [PROMPT_IN, ...mediaPorts(pickModel(node, 'video'))],
     outputs: [{ key: 'out', label: '영상', type: 'video' }],
     fields: generatorFields('video'),
+    onChange: coupleDraft,
     preview: 'media',
     run: (ctx) => runGenerate('video', ctx),
   },

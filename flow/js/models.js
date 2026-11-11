@@ -5,6 +5,7 @@
 const RES = (opts, def) => ({ name: 'resolution', type: 'string', options: opts, default: def });
 const AUDIO = (def = true) => ({ name: 'generate_audio', type: 'bool', default: def });
 const GENRE = { name: 'genre', type: 'string', options: ['auto', 'action', 'horror', 'comedy', 'noir', 'drama', 'epic'], default: 'auto' };
+const BITRATE = { name: 'bitrate_mode', type: 'string', options: ['standard', 'high'], default: 'standard' };
 const AR_WIDE = ['auto', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
 const AR_IMG = ['1:1', '3:2', '2:3', '4:3', '3:4', '4:5', '5:4', '9:16', '16:9', '21:9'];
 const ALL_REFS = ['start_image', 'end_image', 'image_references', 'video_references', 'audio_references'];
@@ -20,10 +21,10 @@ export const SEED_MODELS = [
   { id: 'soul_2', name: 'Higgsfield Soul 2.0', provider_name: 'Higgsfield', output_type: 'image', description: '실사 인물·패션', parameters: [{ name: 'quality', type: 'string', options: ['1.5k', '2k'], default: '2k' }], medias: [{ max: 1, roles: ['image'] }], aspect_ratios: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'] },
   // ---- video
   { id: 'seedance_2_5', name: 'Seedance 2.5', provider_name: 'Bytedance', output_type: 'video', description: '멀티 레퍼런스, 편집, 확장',
-    parameters: [{ name: 'mode', type: 'string', options: ['t2v', 'omni_reference', 'video_edit', 'video_extension'], default: 't2v' }, RES(['480p', '720p', '1080p'], '720p'), AUDIO(), { name: 'extension_mode', type: 'string', options: ['backward', 'forward'], nullable: true }],
+    parameters: [{ name: 'mode', type: 'string', options: ['t2v', 'omni_reference', 'video_edit', 'video_extension'], default: 't2v' }, RES(['480p', '720p', '1080p'], '720p'), AUDIO(), BITRATE, { name: 'extension_mode', type: 'string', options: ['backward', 'forward'], nullable: true }, { name: 'draft', type: 'bool', default: false }],
     medias: [{ roles: ALL_REFS }], aspect_ratios: AR_WIDE, duration_range: { min: 4, max: 30 } },
   { id: 'seedance_2_0', name: 'Seedance 2.0', provider_name: 'Bytedance', output_type: 'video', description: '레퍼런스 기반, 인물 일관성',
-    parameters: [RES(['480p', '720p', '1080p', '4k'], '720p'), { name: 'mode', type: 'string', options: ['std', 'fast'], default: 'std' }, GENRE, AUDIO()],
+    parameters: [RES(['480p', '720p', '1080p', '4k'], '720p'), { name: 'mode', type: 'string', options: ['std', 'fast'], default: 'std' }, BITRATE, GENRE, AUDIO()],
     medias: [{ roles: ALL_REFS }], aspect_ratios: ['auto', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9'], duration_range: { min: 4, max: 15 } },
   { id: 'cinematic_studio_3_0', name: 'Cinema Studio Video 3.0', provider_name: 'Higgsfield', output_type: 'video', description: '시네마 등급',
     parameters: [RES(['480p', '720p', '1080p', '4k'], '720p'), GENRE, AUDIO(false)],
@@ -78,4 +79,18 @@ export function modelDurations(model) {
 const HIDDEN = new Set(['duration', 'folder_id', 'batch_size', 'preset_id', 'style_id', 'soul_id', 'draft_job_id', 'width', 'height', 'size']);
 export function modelParams(model) {
   return (model?.parameters || []).filter((p) => !HIDDEN.has(p.name) && !/_ids?$/.test(p.name) && (p.options || p.type === 'bool' || (p.type === 'number' && p.min != null)));
+}
+
+// Recently used models (picked or run), newest first.
+const RECENT_KEY = 'flow.recent.v1';
+export function recentModels(kind) {
+  let ids = [];
+  try { ids = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); } catch { /* none */ }
+  return ids.map(getModel).filter((m) => m && m.output_type === kind);
+}
+export function touchModel(id) {
+  let ids = [];
+  try { ids = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); } catch { /* none */ }
+  ids = [id, ...ids.filter((x) => x !== id)].slice(0, 12);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(ids)); } catch { /* not saved */ }
 }

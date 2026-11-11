@@ -41,6 +41,13 @@ try {
   assert.equal((await post('/api/servers/other/connect')).body.state, 'connected');
   assert.equal((await api('/api/servers/other', { method: 'DELETE' })).status, 200);
   assert.equal((await api('/api/proxy?url=' + encodeURIComponent('https://localhost/x.mp4'))).status, 400, 'private hosts are not proxied');
+  const put = (id, doc) => api(`/api/workflows/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(doc) });
+  assert.equal((await put('w_test1', { name: 'A', nodes: [], edges: [], updatedAt: 5 })).status, 200);
+  assert.deepEqual((await api('/api/workflows')).body.workflows, [{ id: 'w_test1', name: 'A', updatedAt: 5 }]);
+  assert.equal((await api('/api/workflows/w_test1')).body.name, 'A');
+  assert.equal((await put('..%2Fstate', { nodes: [] })).status, 400, 'workflow ids cannot leave the folder');
+  assert.equal((await api('/api/workflows/w_test1', { method: 'DELETE' })).status, 200);
+  assert.equal((await api('/api/workflows/w_test1')).status, 404);
   assert.equal((await fetch(`${B}/flow/server/server.mjs`)).status, 404, 'the server folder is not served');
   assert.equal((await fetch(`${B}/flow/`)).status, 200);
   console.log('bridge: all checks passed');

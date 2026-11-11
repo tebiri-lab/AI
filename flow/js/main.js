@@ -8,6 +8,7 @@ import { initMedia, sweepMedia } from './media.js';
 import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS } from './providers.js';
 import { setModels, isLiveCatalog, listModels } from './models.js';
 import { h, toast, menu, modal, confirmBox, askBox, relayBox } from './ui.js';
+import { library } from './library.js';
 
 const $ = (id) => document.getElementById(id);
 const graph = new Graph();
@@ -50,10 +51,58 @@ const actions = {
     } catch (e) { node.message = e.message; }
     graph.emit('node:status', node);
   },
+  // Expected credits under the node, in the connected mode (the server's cost preflight; nothing is submitted).
+  async estimate(node) {
+    let text = '';
+    if (settings.mode === 'bridge' && serverReady(settings.server)) {
+      try {
+        const req = buildRequest(node, engine.inputsOf(node));
+        const key = JSON.stringify({ ...req, prompt: req.prompt ? 1 : 0, medias: req.medias.map((m) => [m.role, m.item.jobId || m.item.mediaId || 0]) });
+        if (!costCache.has(key)) costCache.set(key, PROVIDERS.bridge.cost(req, { signal: new AbortController().signal, progress() {} }).catch(() => null));
+        const credits = await costCache.get(key);
+        if (credits != null) text = `예상 크레딧 ${credits}${req.count > 1 ? ` · 변형 ${req.count}개` : ''}`;
+      } catch { /* nothing to estimate yet (no prompt, no model) */ }
+    }
+    if (node.cost !== text) { node.cost = text; canvas.paintStatus(node); }
+  },
+  // "AI로 쓰기" on a text node: Claude writes the prompt from the instruction and the connected reference texts.
+  async write(node) {
+    const ask = (node.data.ask || '').trim();
+    if (!ask) return toast('"AI에게 시킬 내용"을 먼저 쓰세요', 'error');
+    const refs = (engine.inputsOf(node).ctx || []).map((i) => i.text).filter(Boolean);
+    const prompt = [
+      'You write prompts for AI image and video generation (photorealistic, live-action look unless told otherwise).',
+      'Write the prompt asked for below. Output only the prompt text itself, in English, with no preface, no quotes, no markdown and no explanation.',
+      refs.length ? `\nReference texts that this prompt must stay consistent with (do not repeat them verbatim):\n${refs.map((r, i) => `[${i + 1}] ${r}`).join('\n')}` : '',
+      node.data.text.trim() ? `\nCurrent draft to revise:\n${node.data.text.trim()}` : '',
+      `\nRequest${node.data.label ? ` (this text is used as: ${node.data.label})` : ''}:\n${ask}`,
+    ].filter(Boolean).join('\n');
+    const btn = canvas.els.get(node.id)?.querySelector('.action');
+    if (btn) { btn.disabled = true; btn.textContent = '쓰는 중…'; }
+    let text = null;
+    try {
+      if (bridge.online) {
+        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) text = body.text;
+        else if (res.status !== 501) throw new Error(body.error || '글을 쓰지 못했습니다');
+      }
+      // No bridge, or no Claude Code on this computer: hand the request to a Claude chat by copy and paste.
+      if (text == null) text = await relayBox(prompt, 'text');
+    } catch (e) { toast(e.message, 'error'); }
+    if (text?.trim()) {
+      graph.checkpoint();
+      node.data.text = text.trim();
+      canvas.paintFields(node);
+      await canvas.recompute(node); canvas.refreshDependents(node);
+      graph.emit('node:data', node);
+    } else if (btn) { btn.disabled = false; btn.textContent = 'AI로 쓰기'; }
+  },
   onSelection() {},
   onView(k) { $('zoomLabel').textContent = `${Math.round(k * 100)}%`; },
   onRunState() { updateRunState(); },
 };
+const costCache = new Map();
 const canvas = new Canvas({ stage: $('stage'), graph, engine, actions });
 
 function updateRunState(starting) {
@@ -63,18 +112,52 @@ function updateRunState(starting) {
 }
 graph.on((kind) => { if (kind === 'node:status' || kind === 'node:result') updateRunState(); if (kind === 'reset') $('docName').value = graph.doc.name; });
 
-// ---- documents
+// ---- documents (every workflow lives in the library and is saved as you work)
+let opening = false;
+graph.onSave = (doc) => { if (!opening && doc.id) library.put(doc); };
 function openDoc(doc, fit = true) {
   engine.stop(); graph.load(doc);
   // Fill in what instant nodes (text, joins, boards) produce so previews and "settings changed" marks are right from the start.
   for (const id of graph.order(graph.doc.nodes.map((n) => n.id))) { const n = graph.node(id); if (NODE_TYPES[n.type].instant && n.type !== 'frame') canvas.recompute(n); }
   if (fit) requestAnimationFrame(() => canvas.fit());
+  else canvas.applyView();
 }
+// Leave the current workflow (saving it first) and show another one.
+async function switchTo(doc, fit = true) {
+  opening = true;
+  try {
+    clearTimeout(graph.saveTimer);
+    if (graph.doc.id) await library.put(graph.doc);
+    doc.id ||= library.newId();
+    openDoc(doc, fit);
+    await library.put(graph.doc);
+    library.setLast(graph.doc.id);
+  } finally { opening = false; }
+}
+const asNew = (doc) => ({ ...doc, id: library.newId(), updatedAt: undefined });
 function download(name, text) {
   const a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'application/json' })), download: name });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-async function replaceGuard() { return !graph.doc.nodes.length || confirmBox('워크플로우 바꾸기', '지금 캔버스의 워크플로우를 닫고 새로 엽니다. 필요하면 먼저 파일 → 저장으로 내려받으세요.', '바꾸기'); }
+const when = (t) => (t ? new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+async function showLibrary() {
+  clearTimeout(graph.saveTimer);
+  if (graph.doc.id) await library.put(graph.doc);
+  await library.sync();
+  const box = h('div.doc-list');
+  let close;
+  const draw = async () => {
+    const list = await library.list();
+    box.replaceChildren(...list.map((d) => h(`div.doc-row${d.id === graph.doc.id ? '.current' : ''}`, {},
+      h('button.name', { onclick: async () => { close(); if (d.id !== graph.doc.id) await switchTo(await library.get(d.id), false); } }, h('b', {}, d.name || '이름 없는 워크플로우'), h('small', {}, `${when(d.updatedAt)} · 노드 ${d.nodes}개${d.id === graph.doc.id ? ' · 지금 열려 있음' : ''}`)),
+      h('button', { title: '사본 만들기', onclick: async () => { const src = await library.get(d.id); await library.put(asNew({ ...src, name: `${src.name} 사본` })); draw(); } }, '복제'),
+      d.id === graph.doc.id ? null : h('button.danger', { onclick: async () => { await library.remove(d.id); draw(); } }, '삭제'))));
+  };
+  await draw();
+  const p = modal('내 워크플로우', h('div', {}, h('p', {}, '작업하는 동안 자동으로 저장됩니다. 이 브라우저에 보관되고, 브리지가 켜져 있으면 내 컴퓨터(~/.flow-bridge/workflows)에도 함께 저장됩니다.'), box), [{ label: '닫기', primary: true }]);
+  close = () => document.querySelector('.modal-back')?.remove();
+  return p;
+}
 
 $('docName').addEventListener('input', (e) => { graph.doc.name = e.target.value; graph.scheduleSave(); });
 $('btnUndo').onclick = () => graph.undo() || toast('되돌릴 것이 없습니다');
@@ -84,14 +167,16 @@ $('btnRun').onclick = () => guarded(graph.doc.nodes.filter((n) => !NODE_TYPES[n.
 $('btnStop').onclick = () => engine.stop();
 $('btnTemplates').onclick = (e) => {
   const r = e.currentTarget.getBoundingClientRect();
-  menu(r.left, r.bottom + 6, TEMPLATES.map((t) => ({ label: `${t.title} — ${t.hint}`, run: async () => { if (await replaceGuard()) openDoc(t.doc()); } })));
+  menu(r.left, r.bottom + 6, TEMPLATES.map((t) => ({ label: `${t.title} — ${t.hint}`, run: () => switchTo(asNew(t.doc())) })));
 };
 $('btnFile').onclick = (e) => {
   const r = e.currentTarget.getBoundingClientRect();
   menu(r.left, r.bottom + 6, [
-    { label: '새 워크플로우', run: async () => { if (await replaceGuard()) openDoc(emptyDoc(), false); } },
-    { label: '열기 (.flow.json)', run: () => $('fileInput').click() },
-    { label: '저장 (.flow.json)', key: 'Ctrl+S', run: saveFile },
+    { label: '내 워크플로우…', run: showLibrary },
+    { label: '새 워크플로우', run: () => switchTo(asNew(emptyDoc()), false) },
+    '-',
+    { label: '파일에서 가져오기 (.flow.json)', run: () => $('fileInput').click() },
+    { label: '파일로 내보내기 (.flow.json)', key: 'Ctrl+S', run: saveFile },
     '-',
     { label: '쓰지 않는 로컬 파일 정리', run: async () => { await sweepMedia(usedMedia()); toast('캔버스에서 쓰지 않는 로컬 이미지·영상을 지웠습니다'); } },
   ]);
@@ -105,7 +190,7 @@ function saveFile() { download(`${(graph.doc.name || 'workflow').replace(/[\\/:*
 $('fileInput').addEventListener('change', async (e) => {
   const file = e.target.files[0]; e.target.value = '';
   if (!file) return;
-  try { const doc = JSON.parse(await file.text()); if (await replaceGuard()) openDoc(doc); } catch (err) { toast(`열 수 없습니다: ${err.message}`, 'error'); }
+  try { await switchTo(asNew(JSON.parse(await file.text()))); } catch (err) { toast(`열 수 없습니다: ${err.message}`, 'error'); }
 });
 
 $('btnZoomIn').onclick = () => canvas.zoomBy(1.25);
@@ -174,6 +259,27 @@ async function loadCatalog() {
   graph.emit('reset');
   return n;
 }
+// After the bridge comes up: connect Higgsfield and fetch the model list, without further clicks.
+// A first-time login still needs the person: the login window is opened, or the 로그인 button is left to press.
+async function autoConnect() {
+  const id = settings.server;
+  if (!bridge.servers.some((s) => s.id === id)) return;
+  try {
+    if (!serverReady(id)) {
+      const r = await bridgeApi.connect(id);
+      if (r.authUrl) {
+        const win = window.open(r.authUrl, '_blank');
+        toast(win ? '새 창에서 Higgsfield 로그인을 마치면 이어서 연결합니다' : 'Higgsfield 로그인이 필요합니다. 아래 "로그인"을 누르세요.');
+        if (!win) { await refreshBridge(); return; }
+        for (let i = 0; i < 90 && !serverReady(id); i++) { await new Promise((res) => setTimeout(res, 2000)); await refreshBridge(); }
+      }
+      await refreshBridge();
+    }
+    if (!serverReady(id)) { const srv = bridge.servers.find((s) => s.id === id); if (srv?.error) toast(`Higgsfield 연결 실패: ${srv.error}`, 'error'); return; }
+    const n = await loadCatalog();
+    toast(`${bridge.servers.find((x) => x.id === id)?.name || 'MCP'}에 연결했고 모델 ${n}개를 받았습니다`);
+  } catch (e) { toast(e.message, 'error'); }
+}
 // Tool nodes list what the connected servers offer, so they are redrawn when that changes.
 function repaintTools() { for (const n of graph.doc.nodes) if (n.type === 'tool') { canvas.paintFields(n); } canvas.queueEdges(); }
 async function drawConn() {
@@ -198,8 +304,9 @@ async function drawConn() {
         location.href = 'flowbridge://start';
         for (let i = 0; i < 12 && !bridge.online; i++) { await new Promise((res) => setTimeout(res, 1000)); await refreshBridge(); }
       }
+      if (bridge.online) { await autoConnect(); library.sync(); }
       drawConn();
-      toast(bridge.online ? '브리지에 연결했습니다' : '브리지가 켜지지 않았습니다. 아래 안내를 확인하세요.', bridge.online ? '' : 'error');
+      if (!bridge.online) toast('브리지가 켜지지 않았습니다. 아래 안내를 확인하세요.', 'error');
     };
     const off = bridge.online ? h('button', { title: '브리지 서버를 끕니다', onclick: async () => { await bridgeApi.shutdown().catch(() => {}); await new Promise((res) => setTimeout(res, 400)); await refreshBridge(); drawConn(); toast('브리지를 껐습니다'); } }, '끄기') : null;
     kids.push(h('h3', {}, '브리지 서버'),
@@ -268,12 +375,21 @@ $('btnConn').onclick = async () => { const p = $('connPanel'); p.hidden = !p.hid
 // ---- start
 (async () => {
   await initMedia();
-  const hash = location.hash.slice(1);
-  const tpl = TEMPLATES.find((t) => t.id === hash);
-  if (tpl) openDoc(tpl.doc());
-  else if (graph.loadSaved()) { openDoc(graph.doc, false); canvas.applyView(); }
-  else openDoc(TEMPLATES[0].doc());
-  if (settings.mode === 'bridge') { await refreshBridge(); repaintTools(); }
+  await library.migrate();
+  const tpl = TEMPLATES.find((t) => t.id === location.hash.slice(1));
+  const list = await library.list();
+  let doc = null;
+  if (tpl) {
+    // A template link opens the workflow already made from it, if there is one, instead of piling up copies.
+    const made = tpl.doc();
+    const existing = list.find((d) => d.name === made.name);
+    doc = existing ? await library.get(existing.id) : asNew(made);
+  } else doc = (await library.get(library.last())) || (list[0] && (await library.get(list[0].id))) || asNew(TEMPLATES[0].doc());
+  await switchTo(doc, !doc.updatedAt);
+  if (settings.mode === 'bridge') { await refreshBridge(); repaintTools(); library.sync(); canvas.queueCost(); }
   paintConn();
-  window.flow = { graph, engine, canvas, settings, currentProvider };
+  window.flow = { graph, engine, canvas, settings, currentProvider, library };
 })();
+// Save at once when the page is being closed or hidden, not only after the short delay.
+addEventListener('pagehide', () => { if (graph.doc.id) library.put(graph.doc); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && graph.doc.id) library.put(graph.doc); });
