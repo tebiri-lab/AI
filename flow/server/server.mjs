@@ -171,6 +171,12 @@ async function handle(req, res) {
       if (p === '/api/status' && req.method === 'GET') {
         return json(200, { ok: true, servers: configs().map((s) => { const e = entry(s.id); return { id: s.id, name: s.name, url: s.url, builtin: !!s.builtin, state: e.status, error: e.error, toolCount: e.tools.length }; }) });
       }
+      // Turn the bridge off from the page (it can be started again from the page once the macOS helper is installed).
+      if (p === '/api/shutdown' && req.method === 'POST') {
+        json(200, { ok: true });
+        setTimeout(() => process.exit(0), 100);
+        return;
+      }
       if (p === '/api/tools' && req.method === 'GET') {
         return json(200, { tools: configs().flatMap((s) => entry(s.id).tools.map((t) => ({ server: s.id, name: t.name, description: t.description || '', inputSchema: t.inputSchema }))) });
       }
