@@ -62,15 +62,33 @@ function collectParams(node, model) {
   return out;
 }
 
+// Reference tags. In a prompt, "@Image 1" (also "@image1", "@이미지 1", "@Video 1", "@Audio 1") points at the
+// first image connected to the reference port, in top-to-bottom order. They are sent in the form Higgsfield reads:
+// @[Image 1](image_1). Element tags such as @char_name are left as they are.
+export const TAG_PORTS = { refs: 'Image', vref: 'Video', aref: 'Audio' };
+const TAG_WORD = { image: 'Image', 이미지: 'Image', video: 'Video', 영상: 'Video', 비디오: 'Video', audio: 'Audio', 오디오: 'Audio' };
+const TAG_RE = /@\s?(image|video|audio|이미지|영상|비디오|오디오)\s?(\d+)/gi;
+const KIND_KO = { Image: '레퍼런스 이미지', Video: '레퍼런스 영상', Audio: '레퍼런스 오디오' };
+export function tagify(prompt, counts) {
+  return prompt.replace(TAG_RE, (_, word, num) => {
+    const name = TAG_WORD[word.toLowerCase()], n = +num;
+    if (n < 1 || n > (counts[name] || 0)) throw new Error(`프롬프트의 @${name} ${n}에 해당하는 ${KIND_KO[name]}가 없습니다 (연결된 것: ${counts[name] || 0}개)`);
+    return `@[${name} ${n}](${name.toLowerCase()}_${n})`;
+  });
+}
+
 // The request a generator node would send, from its settings and what is connected to it.
 export function buildRequest(node, inputs) {
   const kind = node.type;
   const model = pickModel(node, kind);
   if (!model) throw new Error('모델을 고르세요');
-  const prompt = [joinText(inputs.prompt), node.data.prompt?.trim()].filter(Boolean).join('\n\n');
+  const rawPrompt = [joinText(inputs.prompt), node.data.prompt?.trim()].filter(Boolean).join('\n\n');
   const medias = [];
-  for (const p of mediaPorts(model)) for (const item of inputs[p.key] || []) medias.push({ role: p.role, item });
-  if (!prompt && !medias.length) throw new Error('프롬프트를 쓰거나 연결하세요');
+  // References go first, in tag order, so "@Image 1" is the first reference whether or not a start/end frame is also connected.
+  const ports = mediaPorts(model);
+  for (const p of [...ports.filter((x) => TAG_PORTS[x.key]), ...ports.filter((x) => !TAG_PORTS[x.key])]) for (const item of inputs[p.key] || []) medias.push({ role: p.role, item });
+  if (!rawPrompt && !medias.length) throw new Error('프롬프트를 쓰거나 연결하세요');
+  const prompt = tagify(rawPrompt, Object.fromEntries(Object.entries(TAG_PORTS).map(([key, name]) => [name, (inputs[key] || []).length])));
   const req = { kind, model: model.id, prompt, params: collectParams(node, model), medias, count: Math.max(1, Math.min(4, +node.data.count || 1)) };
   // "자동": models that have their own auto setting get it; for the others the ratio is simply not sent (model default).
   if (model.aspect_ratios?.length && node.data.aspect) {
@@ -119,7 +137,7 @@ export function finalizeRequest(node, item, resolution) {
 function generatorFields(kind) {
   return (node) => {
     const model = pickModel(node, kind);
-    const fields = [modelField(kind), { key: 'prompt', label: '프롬프트', kind: 'textarea', rows: 4, placeholder: '여기에 쓰거나 텍스트 노드를 연결하세요. 둘 다 있으면 연결된 글 뒤에 붙습니다.' }];
+    const fields = [modelField(kind), { key: 'prompt', label: '프롬프트', kind: 'textarea', rows: 4, placeholder: '여기에 쓰거나 텍스트 노드를 연결하세요. 둘 다 있으면 연결된 글 뒤에 붙습니다.' }, { kind: 'tags' }];
     if (model?.aspect_ratios?.length) fields.push({ key: 'aspect', label: '화면비', kind: 'select', options: [{ value: 'auto', label: '자동' }, ...model.aspect_ratios.filter((a) => a !== 'auto').map((a) => ({ value: a, label: a }))], fallback: model.aspect_ratios.includes('16:9') ? '16:9' : 'auto' });
     if (kind === 'video') {
       const d = modelDurations(model);

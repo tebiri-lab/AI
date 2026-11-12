@@ -86,6 +86,7 @@ const actions = {
     const prompt = [
       'You write prompts for AI image and video generation (photorealistic, live-action look unless told otherwise).',
       'Write the prompt asked for below. Output only the prompt text itself, in English, with no preface, no quotes, no markdown and no explanation.',
+      'If the request or the draft contains reference tags such as @Image 1, @Video 1 or @Audio 1, keep each tag exactly as written and say what it is used for.',
       refs.length ? `\nReference texts that this prompt must stay consistent with (do not repeat them verbatim):\n${refs.map((r, i) => `[${i + 1}] ${r}`).join('\n')}` : '',
       node.data.text.trim() ? `\nCurrent draft to revise:\n${node.data.text.trim()}` : '',
       `\nRequest${node.data.label ? ` (this text is used as: ${node.data.label})` : ''}:\n${ask}`,

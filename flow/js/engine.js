@@ -30,6 +30,14 @@ export class Engine {
     }
     return out;
   }
+  // The items arriving at one input port together with the node each comes from, in the order they are sent.
+  sourcesOf(node, portKey) {
+    const g = this.graph, port = g.port(node, 'in', portKey);
+    if (!port) return [];
+    const accepts = port.accepts || [port.type];
+    return g.edgesInto(node.id, portKey).map((e) => g.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x)
+      .flatMap((src) => this.outItems(src).filter((i) => accepts.includes('any') || accepts.includes(i.type)).map((item) => ({ src, item })));
+  }
   // What the node would run with right now. A result made with the same signature is still current.
   signature(node) {
     const { pick, label, locked, ...data } = node.data; // naming, locking or picking a variant does not change what would be generated

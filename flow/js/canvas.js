@@ -1,5 +1,5 @@
 // The canvas: pan/zoom, node cards, typed ports, edges, selection, minimap.
-import { NODE_TYPES, CATEGORIES, finalResolutions } from './nodes.js';
+import { NODE_TYPES, CATEGORIES, finalResolutions, TAG_PORTS } from './nodes.js';
 import { TYPE_LABEL } from './graph.js';
 import { displayUrl, saveBlob } from './media.js';
 import { h, toast, menu, palette, tabPicker, copyText, lightbox } from './ui.js';
@@ -89,7 +89,7 @@ export class Canvas {
   }
   afterChange() {
     this.empty.hidden = this.graph.doc.nodes.length > 0;
-    for (const n of this.graph.doc.nodes) { this.paintPorts(n); this.paintStatus(n); }
+    for (const n of this.graph.doc.nodes) { this.paintPorts(n); this.paintStatus(n); this.paintTags(n); }
     this.queueEdges(); this.actions.onSelection?.(); this.queueCost();
   }
   // Expected credits are asked for a moment after things settle, not on every keystroke.
@@ -100,6 +100,7 @@ export class Canvas {
       const n = this.graph.node(id);
       if (NODE_TYPES[n.type].instant && !this.engine.isRunning(id) && n.type !== 'frame') this.recompute(n);
       else this.paintStatus(n);
+      this.paintTags(n);
     }
   }
   async recompute(n) {
@@ -165,9 +166,44 @@ export class Canvas {
     const def = NODE_TYPES[node.type];
     const box = el.querySelector('.fields');
     box.replaceChildren(...def.fields(node).map((f) => this.field(node, f)));
+    this.paintTags(node);
+  }
+  // Reference tags under the prompt: one chip per connected reference, numbered the way it is sent. A click types the tag.
+  paintTags(node) {
+    const box = this.els.get(node.id)?.querySelector('.tags'); if (!box) return;
+    const chips = [];
+    for (const [key, name] of Object.entries(TAG_PORTS)) {
+      this.engine.sourcesOf(node, key).forEach(({ src, item }, i) => {
+        const tag = `@${name} ${i + 1}`, url = displayUrl(item.url);
+        chips.push(h('button.tag-chip', { title: `프롬프트에 ${tag} 넣기`, onclick: () => this.insertTag(node, tag) },
+          item.type === 'image' && url ? h('img', { src: url, alt: '', loading: 'lazy', draggable: false }) : null, h('b', {}, tag), h('span', {}, src.data.label || NODE_TYPES[src.type].title)));
+      });
+    }
+    // Connected but not generated yet: the number is known from the connection order, the picture is not there yet.
+    if (!chips.length) {
+      for (const [key, name] of Object.entries(TAG_PORTS)) {
+        this.graph.edgesInto(node.id, key).map((e) => this.graph.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x).forEach((src, i) => {
+          const tag = `@${name} ${i + 1}`;
+          chips.push(h('button.tag-chip', { title: `프롬프트에 ${tag} 넣기`, onclick: () => this.insertTag(node, tag) }, h('b', {}, tag), h('span', {}, src.data.label || NODE_TYPES[src.type].title)));
+        });
+      }
+    }
+    box.replaceChildren(...(chips.length ? [h('small', {}, '레퍼런스 태그 — 누르면 프롬프트에 들어갑니다'), ...chips] : []));
+    box.hidden = !chips.length;
+  }
+  insertTag(node, tag) {
+    const ta = this.els.get(node.id)?.querySelector('.fields textarea'); if (!ta) return;
+    const at = document.activeElement === ta ? ta.selectionStart : ta.value.length;
+    const before = ta.value.slice(0, at), after = ta.value.slice(document.activeElement === ta ? ta.selectionEnd : at);
+    const text = `${before}${before && !/\s$/.test(before) ? ' ' : ''}${tag} `;
+    this.graph.checkpoint();
+    ta.value = text + after; node.data.prompt = ta.value;
+    ta.focus(); ta.setSelectionRange(text.length, text.length);
+    this.graph.emit('node:data', node);
   }
   field(node, f) {
     if (f.kind === 'info') return h('p.info', {}, f.text);
+    if (f.kind === 'tags') return h('div.tags', { hidden: true });
     if (f.kind === 'action') return h('button.action', { title: f.hint || '', onclick: () => this.actions[f.action](node) }, f.label);
     if (f.kind === 'model') return this.modelField(node, f);
     let v = getPath(node.data, f.key);
