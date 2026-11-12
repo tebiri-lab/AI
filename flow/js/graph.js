@@ -153,8 +153,13 @@ export class Graph {
     if (!doc || !Array.isArray(doc.nodes) || !Array.isArray(doc.edges)) throw new Error('워크플로우 파일 형식이 아닙니다');
     const nodes = doc.nodes.filter((n) => NODE_TYPES[n.type]).map((n) => {
       const d = NODE_TYPES[n.type];
-      return { id: n.id || uid('n'), type: n.type, x: +n.x || 0, y: +n.y || 0, w: +n.w || d.width || 280, data: { ...structuredClone(d.defaults || {}), ...(n.data || {}) }, status: n.result ? 'done' : 'idle', result: n.result || null, sig: n.result ? n.sig || null : null, history: Array.isArray(n.history) ? n.history : [] };
+      return { id: n.id || uid('n'), type: n.type, x: +n.x || 0, y: +n.y || 0, w: +n.w || d.width || 280, data: { ...structuredClone(d.defaults || {}), ...(n.data || {}) }, status: n.result ? 'done' : 'idle', result: n.result || null, sig: n.result ? n.sig || null : null, history: Array.isArray(n.history) ? n.history : [], vmax: +n.vmax || 0 };
     });
+    // Results saved before versions existed are numbered oldest first.
+    for (const n of nodes) {
+      const all = [...n.history].reverse().concat(n.result ? [n.result] : []);
+      if (NODE_TYPES[n.type].spends && all.some((r) => !r.v)) { all.forEach((r, i) => { r.v = i + 1; }); n.vmax = Math.max(n.vmax, all.length); }
+    }
     const ids = new Set(nodes.map((n) => n.id));
     if (!keepHistory) { this.undoStack.length = 0; this.redoStack.length = 0; }
     this.doc = { version: DOC_VERSION, id: doc.id, updatedAt: doc.updatedAt, name: doc.name || '이름 없는 워크플로우', nodes, edges: [], view: doc.view || { x: 0, y: 0, k: 1 } };

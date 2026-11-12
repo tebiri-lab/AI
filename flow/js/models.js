@@ -21,7 +21,7 @@ export const SEED_MODELS = [
   { id: 'soul_2', name: 'Higgsfield Soul 2.0', provider_name: 'Higgsfield', output_type: 'image', description: '실사 인물·패션', parameters: [{ name: 'quality', type: 'string', options: ['1.5k', '2k'], default: '2k' }], medias: [{ max: 1, roles: ['image'] }], aspect_ratios: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'] },
   // ---- video
   { id: 'seedance_2_5', name: 'Seedance 2.5', provider_name: 'Bytedance', output_type: 'video', description: '멀티 레퍼런스, 편집, 확장',
-    parameters: [{ name: 'mode', type: 'string', options: ['t2v', 'omni_reference', 'video_edit', 'video_extension'], default: 't2v' }, RES(['480p', '720p', '1080p'], '720p'), AUDIO(), BITRATE, { name: 'extension_mode', type: 'string', options: ['backward', 'forward'], nullable: true }, { name: 'draft', type: 'bool', default: false }],
+    parameters: [{ name: 'mode', type: 'string', options: ['t2v', 'omni_reference', 'video_edit', 'video_extension'], default: 't2v' }, RES(['480p', '720p', '1080p', '4k'], '720p'), AUDIO(), BITRATE, { name: 'extension_mode', type: 'string', options: ['backward', 'forward'], nullable: true }, { name: 'draft', type: 'bool', default: false }, { name: 'draft_job_id', type: 'string', nullable: true }],
     medias: [{ roles: ALL_REFS }], aspect_ratios: AR_WIDE, duration_range: { min: 4, max: 30 } },
   { id: 'seedance_2_0', name: 'Seedance 2.0', provider_name: 'Bytedance', output_type: 'video', description: '레퍼런스 기반, 인물 일관성',
     parameters: [RES(['480p', '720p', '1080p', '4k'], '720p'), { name: 'mode', type: 'string', options: ['std', 'fast'], default: 'std' }, BITRATE, GENRE, AUDIO()],

@@ -2,7 +2,7 @@
 import { Graph, emptyDoc } from './graph.js';
 import { Engine } from './engine.js';
 import { Canvas } from './canvas.js';
-import { NODE_TYPES, buildRequest } from './nodes.js';
+import { NODE_TYPES, buildRequest, finalizeRequest } from './nodes.js';
 import { TEMPLATES } from './templates.js';
 import { initMedia, sweepMedia } from './media.js';
 import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS } from './providers.js';
@@ -64,6 +64,19 @@ const actions = {
       } catch { /* nothing to estimate yet (no prompt, no model) */ }
     }
     if (node.cost !== text) { node.cost = text; canvas.paintStatus(node); }
+  },
+  // "1080p로 완성 / 4K로 완성": render the picked draft again at full resolution. Shows the price first when it is known.
+  async finalize(node, item, resolution) {
+    if (engine.isRunning(node.id)) return;
+    const label = resolution === '4k' ? '4K' : resolution;
+    let costLine = '';
+    if (settings.mode === 'bridge' && serverReady(settings.server)) {
+      const credits = await PROVIDERS.bridge.cost(finalizeRequest(node, item, resolution), { signal: new AbortController().signal, progress() {} }).catch(() => null);
+      if (credits != null) costLine = ` 예상 크레딧: ${credits}.`;
+    }
+    if (settings.mode !== 'demo' && !(await confirmBox(`${label}로 완성`, `v${node.result.v} 드래프트를 ${label}로 다시 생성합니다.${costLine} 드래프트와 같은 길이로 만들어지고, 결과는 이 노드의 새 버전으로 들어옵니다.`, '생성'))) return;
+    updateRunState(true);
+    if (!(await engine.finalize(node, item, resolution, finalizeRequest))) toast('완성하지 못했습니다. 노드 아래쪽 글을 확인하세요.', 'error');
   },
   // "AI로 쓰기" on a text node: Claude writes the prompt from the instruction and the connected reference texts.
   async write(node) {
@@ -303,7 +316,7 @@ async function drawConn() {
       if (!bridge.online) {
         toast('브리지를 켜는 중입니다');
         location.href = 'flowbridge://start';
-        for (let i = 0; i < 12 && !bridge.online; i++) { await new Promise((res) => setTimeout(res, 1000)); await refreshBridge(); }
+        for (let i = 0; i < 25 && !bridge.online; i++) { await new Promise((res) => setTimeout(res, 1000)); await refreshBridge(); }
       }
       if (bridge.online) { await autoConnect(); library.sync(); }
       drawConn();

@@ -3,7 +3,7 @@
 import { NODE_TYPES } from './nodes.js';
 import { currentProvider, settings } from './providers.js';
 
-const HISTORY_MAX = 8;
+const HISTORY_MAX = 12;
 
 export class Engine {
   constructor(graph, hooks) {
@@ -120,7 +120,32 @@ export class Engine {
     return [...state.entries()].filter(([, s]) => s === 'fail').map(([id]) => id);
   }
 
-  async exec(node) {
+  // Every result of a generating node gets a version number (v1, v2, …) that never repeats on that node.
+  nextVersion(node) {
+    node.vmax = Math.max(node.vmax || 0, node.result?.v || 0, ...(node.history || []).map((r) => r.v || 0)) + 1;
+    return node.vmax;
+  }
+  versions(node) { return [node.result, ...(node.history || [])].filter(Boolean).sort((a, b) => (a.v || 0) - (b.v || 0)); }
+  // Make an earlier version the node's current result; the one it replaces goes back into the history.
+  showVersion(node, v) {
+    const chosen = (node.history || []).find((r) => r.v === v);
+    if (!chosen) return;
+    if (node.result) node.result.pick = +node.data.pick || 0;
+    node.history = [node.result, ...node.history.filter((r) => r !== chosen)].filter(Boolean).sort((a, b) => (b.v || 0) - (a.v || 0));
+    node.result = chosen; node.sig = chosen.sig || null; node.data.pick = chosen.pick || 0;
+    this.graph.emit('node:result', node);
+  }
+  // Render the picked draft again at full resolution, as a new version on the same node.
+  finalize(node, item, resolution, buildReq) {
+    const from = node.result.v;
+    return this.exec(node, async (ctx) => {
+      const req = buildReq(node, item, resolution);
+      const items = await ctx.provider.generate(req, ctx);
+      return { items, request: { ...node.result.request, draft: false, resolution, finalOf: from } };
+    });
+  }
+
+  async exec(node, runner) {
     const g = this.graph, def = NODE_TYPES[node.type];
     const ctrl = new AbortController();
     this.active.set(node.id, ctrl);
@@ -133,12 +158,14 @@ export class Engine {
     };
     const sig = this.signature(node);
     try {
-      const res = await def.run(ctx);
+      const res = await (runner || def.run)(ctx);
       if (ctrl.signal.aborted) throw new DOMException('중단됨', 'AbortError');
+      const v = def.spends ? this.nextVersion(node) : undefined;
       if (node.result?.items?.length && def.spends) {
+        node.result.pick = +node.data.pick || 0;
         node.history = [node.result, ...(node.history || [])].slice(0, HISTORY_MAX);
       }
-      node.result = { items: res.items, at: Date.now(), request: res.request };
+      node.result = { items: res.items, at: Date.now(), request: res.request, sig, ...(v ? { v } : {}) };
       node.sig = sig; node.data.pick = 0;
       node.status = 'done'; node.message = '';
       return true;

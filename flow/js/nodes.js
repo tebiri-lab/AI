@@ -95,7 +95,25 @@ async function runGenerate(kind, ctx) {
   const req = buildRequest(ctx.node, ctx.inputs);
   touchModel(req.model);
   const items = await ctx.provider.generate(req, ctx);
-  return { items, request: { model: req.model, prompt: req.prompt } };
+  return { items, request: { model: req.model, prompt: req.prompt, draft: !!req.params.draft, resolution: req.params.resolution } };
+}
+
+// Finishing a draft: models with a draft mode can render a completed draft again at full resolution
+// (Higgsfield's "Generate in 1080p / 4K"). This is a new generation from the draft's job, not an upscale.
+const FINAL_RES = ['1080p', '4k'];
+export function finalResolutions(node, item) {
+  if (node.type !== 'video' || !node.result?.request?.draft || !item || !(item.jobId || item.demo)) return [];
+  const model = getModel(node.result.request.model);
+  if (!model?.parameters?.some((p) => p.name === 'draft_job_id')) return [];
+  const opts = model.parameters.find((p) => p.name === 'resolution')?.options || [];
+  return FINAL_RES.filter((r) => opts.includes(r));
+}
+export function finalizeRequest(node, item, resolution) {
+  const model = getModel(node.result.request.model);
+  const params = { draft_job_id: item.jobId, resolution };
+  const bitrate = model.parameters.find((p) => p.name === 'bitrate_mode');
+  if (bitrate) params.bitrate_mode = node.data.params?.bitrate_mode ?? paramDefault(bitrate);
+  return { kind: 'video', model: model.id, prompt: '', params, medias: [], count: 1 };
 }
 
 function generatorFields(kind) {
