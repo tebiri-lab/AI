@@ -37,7 +37,7 @@ cd flow/server
 ./install-mac.sh
 ```
 
-그 뒤로는 연결 패널의 **켜기 · 확인** 버튼이 이 폴더를 최신 `main`으로 받아 온 뒤(직접 고친 파일이 없을 때만) 브리지를 켜고, 이어서 Higgsfield 연결과 모델 목록 받기까지 합니다(처음 한 번은 로그인 창이 뜹니다). 웹 페이지는 프로그램을 직접 실행할 수 없어서, 이 스크립트가 `flowbridge://start` 주소에 반응하는 작은 도우미 앱(`~/Applications/Flow Bridge.app`)을 만들어 둡니다. 처음 누를 때 Chrome이 "Flow Bridge 열기"를 물으면 허용하세요. 켜진 브리지는 패널의 **끄기**로 끕니다. 저장소 폴더를 옮기면 다시 설치하고, 지울 때는 `./install-mac.sh --uninstall`입니다. 설치할 때 이 저장소의 GitHub Pages 주소(`https://<소유자>.github.io`)가 브리지를 쓸 수 있는 페이지로 함께 등록됩니다.
+그 뒤로는 연결 패널의 **켜기 · 확인** 버튼이 이 폴더를 최신 `main`으로 받아 온 뒤(직접 고친 파일이 없을 때만) 브리지를 켜고, 이어서 Higgsfield 연결과 모델 목록 받기까지 합니다(처음 한 번은 로그인 창이 뜹니다). 웹 페이지는 프로그램을 직접 실행할 수 없어서, 이 스크립트가 `flowbridge://start` 주소에 반응하는 작은 도우미 앱(`~/Applications/Flow Bridge.app`)을 만들어 둡니다. 처음 누를 때 Chrome이 "Flow Bridge 열기"를 물으면 허용하세요. 켜진 브리지는 패널의 **끄기**로 끕니다. 이 설치는 한 번이면 됩니다. 이후 업데이트(브리지를 켜는 방식이 바뀌는 것 포함)는 버튼을 누를 때 자동으로 받아 옵니다. 저장소 폴더를 옮기거나 Node.js를 다른 위치에 다시 설치했을 때만 다시 설치하고, 지울 때는 `./install-mac.sh --uninstall`입니다. 설치할 때 이 저장소의 GitHub Pages 주소(`https://<소유자>.github.io`)가 브리지를 쓸 수 있는 페이지로 함께 등록됩니다.
 
 - 브리지는 내 컴퓨터(127.0.0.1)에서만 열리고, 로그인 정보는 `~/.flow-bridge/state.json`(본인만 읽기)에 저장됩니다.
 - GitHub Pages에 올린 페이지에서 내 브리지를 쓰려면 브리지를 켤 때 그 주소를 허용합니다: `FLOW_ALLOWED_ORIGINS=https://이름.github.io npm start`. Safari는 https 페이지에서 `http://localhost` 호출을 막으므로 Chrome·Edge를 쓰거나 `http://localhost:8787/flow/`로 여세요.

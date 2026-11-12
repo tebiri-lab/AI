@@ -35,20 +35,15 @@ chmod 700 "$DIR"
 cat > "$LAUNCHER" <<LAUNCH
 #!/bin/bash
 # Written by install-mac.sh. Starts the bridge unless it is already answering.
+# It only updates this folder and hands over to run-bridge.sh inside it, so this file never needs rewriting.
 curl -s -m 2 -o /dev/null http://127.0.0.1:8787/api/status && exit 0
 cd "$HERE" || exit 1
-# Bring this folder up to date first, so the button always starts the current bridge. Only when it is on main
-# with nothing edited by hand; if the download fails (offline), the version already here is started.
+# Update first, so the button always starts the current bridge. Only on main with nothing edited by hand;
+# if the download fails (offline), the version already here is started.
 if [ "\$(git branch --show-current 2>/dev/null)" = "main" ] && git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
-  BEFORE="\$(git rev-parse HEAD)"
   git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=5 pull --ff-only -q origin main >> "$DIR/bridge.log" 2>&1 || true
-  if ! git diff --quiet "\$BEFORE" HEAD -- package-lock.json 2>/dev/null; then
-    PATH="$(dirname "$NODE"):\$PATH" npm install --no-audit --no-fund >> "$DIR/bridge.log" 2>&1 || true
-  fi
 fi
-# Programs started from an app get a bare PATH; add the usual places so node and the claude command are found.
-export PATH="$(dirname "$NODE"):\$HOME/.local/bin:\$HOME/.claude/local:/opt/homebrew/bin:/usr/local/bin:\$PATH"
-FLOW_ALLOWED_ORIGINS="$ORIGINS" nohup "$NODE" server.mjs >> "$DIR/bridge.log" 2>&1 &
+exec /bin/bash "$HERE/run-bridge.sh" "$NODE" "$ORIGINS" "$DIR"
 LAUNCH
 chmod 700 "$LAUNCHER"
 
