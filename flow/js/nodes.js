@@ -224,10 +224,13 @@ export const NODE_TYPES = {
       { key: 'url', label: '또는 주소', kind: 'text', placeholder: 'https://…' },
     ],
     preview: 'media',
+    onChange: (node, key) => { if (key === 'url' || key === 'kind') delete node.data.ref; return false; },
     run: async ({ node }) => {
       const { kind, url, file, name } = node.data;
-      if (file) return { items: [{ type: kind, url: file, name, local: true }] };
-      if (url.trim()) return { items: [{ type: kind, url: url.trim(), name: url.trim().split('/').pop() }] };
+      // `ref` is carried by media dragged out of a result: the server-side id lets it be reused without uploading again.
+      const ref = node.data.ref || {};
+      if (file) return { items: [{ type: kind, url: file, name, local: true, ...ref }] };
+      if (url.trim()) return { items: [{ type: kind, url: url.trim(), name: name || url.trim().split('/').pop(), ...ref }] };
       return { items: [] };
     },
   },
