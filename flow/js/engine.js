@@ -40,7 +40,7 @@ export class Engine {
   }
   // What the node would run with right now. A result made with the same signature is still current.
   signature(node) {
-    const { pick, label, locked, ...data } = node.data; // naming, locking or picking a variant does not change what would be generated
+    const { pick, label, locked, collapsed, ...data } = node.data; // naming, locking, folding or picking a variant does not change what would be generated
     const ins = Object.entries(this.inputsOf(node)).map(([k, items]) => [k, items.map((i) => i.jobId || i.url || i.text)]);
     return JSON.stringify([node.type, data, ins]);
   }

@@ -83,8 +83,8 @@ export class Canvas {
     else if (kind === 'node:add') { this.renderNode(node); this.afterChange(); }
     else if (kind === 'edges') this.afterChange();
     else if (kind === 'node:status') this.paintStatus(node);
-    else if (kind === 'node:result') { this.paintStatus(node); this.paintPreview(node); this.refreshDependents(node); this.queueEdges(); }
-    else if (kind === 'node:data') { this.paintStatus(node); this.refreshDependents(node); this.queueCost(); }
+    else if (kind === 'node:result') { this.paintStatus(node); this.paintFold(node); this.paintPreview(node); this.refreshDependents(node); this.queueEdges(); }
+    else if (kind === 'node:data') { this.paintStatus(node); this.paintFold(node); this.refreshDependents(node); this.queueCost(); }
     else if (kind === 'run:end') this.actions.onRunState?.();
   }
   afterChange() {
@@ -125,15 +125,38 @@ export class Canvas {
     const old = this.els.get(node.id);
     const el = h(`div.node${def.note ? '.note' : ''}`, { dataset: { id: node.id, type: node.type }, style: { left: `${node.x}px`, top: `${node.y}px`, width: `${node.w}px` } });
     const title = h('span.title', { title: '더블클릭해 이름 바꾸기', ondblclick: (e) => this.rename(node, e.currentTarget) }, node.data.label || def.title);
-    const head = h('div.node-head', {}, h('i.cat', { dataset: { cat: def.category } }), title, h('span.chip'),
+    const fold = h('button.fold', { onclick: () => this.setCollapsed(this.sel.has(node.id) ? this.selectedNodes() : [node], !node.data.collapsed) });
+    const head = h('div.node-head', {}, fold, h('i.cat', { dataset: { cat: def.category } }), title, h('span.chip'),
       def.instant ? null : h('button.run', { title: '이 노드 실행 (Ctrl+Enter)', 'aria-label': '실행', onclick: () => this.actions.runNode(node.id) }, '▶'),
       h('button.more', { title: '메뉴', 'aria-label': '노드 메뉴', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); this.nodeMenu(node, r.left, r.bottom + 4); } }, '⋯'));
-    el.append(head, h('div.ports'), h('div.fields'), h('div.cost', { hidden: true }), h('div.preview'), h('div.foot'), h('div.resize', { title: '너비 조절' }));
+    el.append(head, h('div.ports'), h('div.fields'), h('p.excerpt'), h('div.cost', { hidden: true }), h('div.preview'), h('div.foot'), h('div.resize', { title: '너비 조절' }));
     if (old) old.replaceWith(el); else this.nodeLayer.append(el);
     this.els.set(node.id, el);
     el.classList.toggle('sel', this.sel.has(node.id));
+    this.paintFold(node);
     this.paintPorts(node); this.paintFields(node); this.paintPreview(node); this.paintStatus(node);
     return el;
+  }
+  // Folded: only the title and the result stay (plus the ports that are connected, so the lines keep their ends).
+  // A node without pictures shows the beginning of its text instead.
+  paintFold(node) {
+    const el = this.els.get(node.id); if (!el) return;
+    const on = !!node.data.collapsed, def = NODE_TYPES[node.type];
+    el.classList.toggle('collapsed', on);
+    const btn = el.querySelector('.fold');
+    btn.textContent = on ? '▸' : '▾'; btn.title = on ? '펼치기' : '접기 (제목과 결과만 남기기)'; btn.setAttribute('aria-label', on ? '펼치기' : '접기'); btn.setAttribute('aria-expanded', String(!on));
+    const d = node.data;
+    const text = node.type === 'image' || node.type === 'video' ? (node.result?.items?.length ? '' : getModel(d.model)?.name || '')
+      : d.text ?? d.revised ?? d.template ?? d.title ?? (node.type === 'media' ? d.name : node.type === 'tool' ? d.tool : '') ?? '';
+    const ex = el.querySelector('.excerpt');
+    ex.textContent = on ? String(text || '').trim().slice(0, 160) : '';
+    ex.hidden = !on || !ex.textContent;
+  }
+  setCollapsed(nodes, on) {
+    if (!nodes.length) return;
+    this.graph.checkpoint();
+    for (const n of nodes) { n.data.collapsed = on || undefined; this.paintFold(n); }
+    this.queueEdges(); this.drawMini(); this.graph.scheduleSave();
   }
   rename(node, span) {
     span.contentEditable = 'true'; span.focus();
@@ -546,6 +569,7 @@ export class Canvas {
       def.spends && node.result && { label: node.data.locked ? '결과 잠금 풀기' : '결과 잠금 (다시 생성하지 않음)', run: () => { this.graph.checkpoint(); node.data.locked = !node.data.locked; this.graph.emit('node:data', node); } },
       node.result && !def.instant && { label: '결과 지우기', run: () => { this.graph.checkpoint(); node.result = null; node.history = []; node.status = 'idle'; node.message = ''; this.graph.emit('node:result', node); } },
       '-',
+      { label: node.data.collapsed ? '펼치기' : '접기 (제목과 결과만)', key: 'H', run: () => this.setCollapsed(this.selectedNodes(), !node.data.collapsed) },
       { label: '맨 위로', key: 'Shift+]', run: () => this.reorder('front') },
       { label: '한 칸 위로', key: ']', run: () => this.reorder('up') },
       { label: '한 칸 아래로', key: '[', run: () => this.reorder('down') },
@@ -733,6 +757,7 @@ export class Canvas {
       if (direct && direct !== portEl) return direct;
       let best = null, bestD = SNAP;
       for (const el of this.nodeLayer.querySelectorAll('.port.ok')) {
+        if (!el.offsetParent) continue; // hidden in a folded node
         const r = el.querySelector('.dot').getBoundingClientRect();
         const d = Math.hypot(ev.clientX - (r.left + r.width / 2), ev.clientY - (r.top + r.height / 2));
         if (d < bestD) { best = el; bestD = d; }
