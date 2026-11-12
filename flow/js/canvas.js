@@ -89,7 +89,7 @@ export class Canvas {
   }
   afterChange() {
     this.empty.hidden = this.graph.doc.nodes.length > 0;
-    for (const n of this.graph.doc.nodes) { this.paintPorts(n); this.paintStatus(n); this.paintTags(n); }
+    for (const n of this.graph.doc.nodes) { this.paintPorts(n); this.paintStatus(n); this.paintTags(n); if (NODE_TYPES[n.type].preview === 'review') this.paintPreview(n); }
     this.queueEdges(); this.actions.onSelection?.(); this.queueCost();
   }
   // Expected credits are asked for a moment after things settle, not on every keystroke.
@@ -202,7 +202,7 @@ export class Canvas {
     this.graph.emit('node:data', node);
   }
   field(node, f) {
-    if (f.kind === 'info') return h('p.info', {}, f.text);
+    if (f.kind === 'info') return f.label ? h('div.field.wide', {}, h('span', {}, f.label), h('p.info.boxed', {}, f.text)) : h('p.info', {}, f.text);
     if (f.kind === 'tags') return h('div.tags', { hidden: true });
     if (f.kind === 'action') return h('button.action', { title: f.hint || '', onclick: () => this.actions[f.action](node) }, f.label);
     if (f.kind === 'model') return this.modelField(node, f);
@@ -212,7 +212,7 @@ export class Canvas {
     const commit = (value, structural) => {
       if (!dirty) { this.graph.checkpoint(); dirty = true; }
       setPath(node.data, f.key, value);
-      if (node.wrote && f.key === 'text') { node.wrote = false; this.paintStatus(node); } // edited by hand since the AI wrote it
+      if (node.wrote && (f.key === 'text' || f.key === 'revised')) { node.wrote = false; this.paintStatus(node); } // edited by hand since the AI wrote it
       if (NODE_TYPES[node.type].onChange?.(node, f.key, value) && !structural) this.paintFields(node);
       if (structural) {
         const cut = this.graph.pruneEdges(node.id);
@@ -286,8 +286,8 @@ export class Canvas {
     const chip = el.querySelector('.chip');
     let text = def.instant ? '' : STATUS[node.status] || '';
     if (node.status === 'running' && node.startedAt) text = `${node.message || '실행 중'} · ${Math.round((Date.now() - node.startedAt) / 1000)}초`;
-    else if (node.writing) text = `AI가 쓰는 중 · ${Math.round((Date.now() - (node.startedAt || Date.now())) / 1000)}초`;
-    else if (def.instant && node.wrote) text = 'AI 작성 완료';
+    else if (node.writing) text = `${node.type === 'review' ? '결과를 보는 중' : 'AI가 쓰는 중'} · ${Math.round((Date.now() - (node.startedAt || Date.now())) / 1000)}초`;
+    else if (def.instant && node.wrote) text = node.type === 'review' ? '피드백 완료' : 'AI 작성 완료';
     else if (node.data.locked) text = '잠금';
     else if (stale) text = '설정 바뀜';
     chip.textContent = text; chip.hidden = !text;
@@ -306,6 +306,13 @@ export class Canvas {
     const def = NODE_TYPES[node.type], box = el.querySelector('.preview');
     const items = node.result?.items || [];
     box.replaceChildren();
+    // The feedback node shows what is attached to it (the results it will look at), not its own output.
+    if (def.preview === 'review') {
+      const attached = this.engine.sourcesOf(node, 'media');
+      box.hidden = !attached.length;
+      if (attached.length) box.append(h('div.strip.small', {}, attached.map(({ src, item }) => this.thumb(item, { info: this.infoOf(src) }))));
+      return;
+    }
     if (!def.preview || !items.length) { box.hidden = true; return; }
     box.hidden = false;
     const media = items.filter((i) => i.type !== 'text'), texts = items.filter((i) => i.type === 'text');
@@ -313,7 +320,7 @@ export class Canvas {
     if (media.length) {
       const pick = Math.min(media.length - 1, +node.data.pick || 0);
       box.append(h(`div.thumbs.n${Math.min(4, media.length)}`, {}, media.map((it, i) => this.thumb(it, {
-        info: { title: node.data.label || def.title, v: node.result.v, request: node.result.request },
+        info: this.infoOf(node),
         picked: media.length > 1 && i === pick,
         onPick: media.length > 1 && !def.outAll && node.type !== 'tool' ? () => { node.data.pick = i; this.paintPreview(node); this.refreshDependents(node); this.graph.emit('node:data', node); } : null,
       }))));
@@ -336,6 +343,11 @@ export class Canvas {
     for (const res of finalResolutions(node, picked)) {
       box.append(h('button.small.final', { title: '드래프트를 이 해상도로 다시 생성합니다 (업스케일이 아니라 Higgsfield의 Generate in 1080p/4K). 크레딧이 듭니다.', onclick: () => this.actions.finalize(node, picked, res) }, `${res === '4k' ? '4K' : res}로 완성`));
     }
+  }
+  // What the viewer shows next to a result of this node: name, version, the request and the references it was made with.
+  infoOf(node) {
+    const request = node.result?.request;
+    return { title: node.data.label || NODE_TYPES[node.type].title, v: node.result?.v, request, refs: (request?.refs || []).map((r) => ({ ...r, url: displayUrl(r.url) })) };
   }
   thumb(item, { picked, onPick, index, info } = {}) {
     const url = displayUrl(item.url);
@@ -402,7 +414,7 @@ export class Canvas {
       return [`## 샷 ${i + 1}${src?.data.label ? ` — ${src.data.label}` : ''}`, `- 종류: ${it.type === 'video' ? '영상' : '이미지'}${src?.result?.request?.model ? ` · ${src.result.request.model}` : ''}`, it.local ? null : `- 파일: ${it.url}`, src?.result?.request?.prompt ? `- 프롬프트:\n\n${src.result.request.prompt}` : null, ''].filter((x) => x != null).join('\n');
     })].join('\n');
     return h('div', {},
-      h('div.strip', {}, items.map((it, i) => { const src = sources.find((s) => this.engine.outItems(s).includes(it)); return this.thumb(it, { index: i + 1, info: src && { title: src.data.label || NODE_TYPES[src.type].title, v: src.result?.v, request: src.result?.request } }); })),
+      h('div.strip', {}, items.map((it, i) => { const src = sources.find((s) => this.engine.outItems(s).includes(it)); return this.thumb(it, { index: i + 1, info: src && this.infoOf(src) }); })),
       h('p.hint', {}, '순서는 연결된 노드의 위→아래 위치를 따릅니다.'),
       h('button.small', { onclick: async () => toast((await copyText(listText())) ? '샷리스트를 복사했습니다' : '복사하지 못했습니다') }, '샷리스트 복사 (.md)'));
   }
@@ -542,16 +554,6 @@ export class Canvas {
     }, { passive: false });
     st.addEventListener('pointermove', (e) => { this.lastPointer = { x: e.clientX, y: e.clientY }; });
     st.addEventListener('pointerdown', (e) => this.onDown(e));
-    st.addEventListener('dblclick', (e) => {
-      const g = e.target.closest?.('[data-edge]');
-      if (!g) return;
-      const edge = this.graph.doc.edges.find((x) => x.id === g.dataset.edge); if (!edge) return;
-      const p = this.toWorld(e.clientX, e.clientY), a = this.portPos(edge.from.node, 'out', edge.from.port), b = this.portPos(edge.to.node, 'in', edge.to.port);
-      const near = 18 / this.view.k;
-      if ((a && Math.hypot(p.x - a.x, p.y - a.y) < near) || (b && Math.hypot(p.x - b.x, p.y - b.y) < near)) return;
-      this.graph.checkpoint(); this.selEdge = null; this.graph.removeEdge(edge.id);
-      toast('연결을 끊었습니다 (Ctrl+Z로 되돌리기)');
-    });
     st.addEventListener('dblclick', (e) => { if (e.target === st || e.target === this.world || e.target === this.nodeLayer || e.target === this.edgeLayer) this.addMenu(e.clientX, e.clientY); });
     st.addEventListener('contextmenu', (e) => {
       if (e.target.closest('input,textarea,[contenteditable="true"]')) return;
@@ -594,7 +596,24 @@ export class Canvas {
     const nodeEl = e.target.closest('.node');
     if (resize && nodeEl) return this.startResize(e, this.graph.node(nodeEl.dataset.id), nodeEl);
     const edge = e.target.closest('[data-edge]');
-    if (edge && e.button === 0) { this.select([]); this.selEdge = edge.dataset.edge; this.queueEdges(); this.actions.onSelection?.(); return; }
+    if (edge && e.button === 0) {
+      // Double click on a connection removes it. Counted here, not with the browser's dblclick: the first click
+      // redraws the line (to show it selected), and a browser does not report a double click across a redrawn element.
+      const id = edge.dataset.edge, now = performance.now(), last = this.lastEdgeClick;
+      this.lastEdgeClick = { id, t: now, x: e.clientX, y: e.clientY };
+      if (last && last.id === id && now - last.t < 450 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 8) {
+        this.lastEdgeClick = null;
+        const ed = this.graph.doc.edges.find((x) => x.id === id);
+        const p = this.toWorld(e.clientX, e.clientY), a = ed && this.portPos(ed.from.node, 'out', ed.from.port), b = ed && this.portPos(ed.to.node, 'in', ed.to.port);
+        const near = 18 / this.view.k;
+        if (ed && !((a && Math.hypot(p.x - a.x, p.y - a.y) < near) || (b && Math.hypot(p.x - b.x, p.y - b.y) < near))) {
+          this.graph.checkpoint(); this.selEdge = null; this.graph.removeEdge(id);
+          toast('연결을 끊었습니다 (Ctrl+Z로 되돌리기)');
+          return;
+        }
+      }
+      this.select([]); this.selEdge = id; this.queueEdges(); this.actions.onSelection?.(); return;
+    }
     if (nodeEl && e.button === 0) {
       const id = nodeEl.dataset.id;
       const multi = e.shiftKey || e.ctrlKey || e.metaKey;

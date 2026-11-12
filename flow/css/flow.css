@@ -247,3 +247,11 @@ button.small.final { color: var(--accent-2); border-color: #5a4f1c; }
 .drag-ghost img, .drag-ghost video { display: block; width: 100%; }
 #stage.dropping { box-shadow: inset 0 0 0 2px var(--ok); }
 .thumb { touch-action: none; }
+
+.ref-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; margin: 0 0 4px; }
+.ref-strip figure { margin: 0; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; background: #0d0f12; }
+.ref-strip img, .ref-strip video { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.ref-strip .missing { aspect-ratio: 1; display: grid; place-items: center; color: var(--muted); font-size: 11px; }
+.ref-strip figcaption { padding: 3px 5px; font-size: 11px; color: var(--t-image); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fields .info.boxed { padding: 8px; background: #0d0f12; border-radius: 6px; color: var(--text); white-space: pre-wrap; max-height: 260px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
+.strip.small .thumb { flex: 0 0 96px; }
