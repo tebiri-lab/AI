@@ -500,6 +500,40 @@ export class Canvas {
   }
   duplicate() { if (!this.sel.size) return; this.graph.checkpoint(); this.select(this.graph.duplicate([...this.sel])); }
 
+  // ---- stacking order (the order of doc.nodes is the drawing order: later ones are on top)
+  // mode: 'front' | 'back' | 'up' | 'down'. One step moves a node past the nearest node it overlaps in that direction
+  // (or one place in the order when it overlaps nothing), so a step always changes what you see when there is something to pass.
+  reorder(mode) {
+    const nodes = this.graph.doc.nodes, picked = this.selectedNodes();
+    if (!picked.length) return;
+    const before = nodes.map((n) => n.id).join();
+    const rect = (n) => { const el = this.els.get(n.id); return { x0: n.x, y0: n.y, x1: n.x + n.w, y1: n.y + (el ? el.offsetHeight : 200) }; };
+    const overlap = (a, b) => { const p = rect(a), q = rect(b); return p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1; };
+    const set = new Set(picked);
+    const rest = nodes.filter((n) => !set.has(n));
+    const inOrder = nodes.filter((n) => set.has(n));
+    let next;
+    if (mode === 'front') next = [...rest, ...inOrder];
+    else if (mode === 'back') next = [...inOrder, ...rest];
+    else {
+      next = [...nodes];
+      for (const n of mode === 'up' ? [...inOrder].reverse() : inOrder) {
+        const i = next.indexOf(n);
+        const range = mode === 'up' ? next.slice(i + 1) : next.slice(0, i).reverse();
+        let steps = range.findIndex((o) => !set.has(o) && overlap(n, o));
+        if (steps < 0) steps = range.length ? 0 : -1;
+        if (steps < 0) continue;
+        next.splice(i, 1);
+        next.splice(mode === 'up' ? i + steps + 1 : i - steps - 1, 0, n);
+      }
+    }
+    if (next.map((n) => n.id).join() === before) return toast(mode === 'front' || mode === 'up' ? '이미 맨 위에 있습니다' : '이미 맨 아래에 있습니다');
+    this.graph.checkpoint();
+    this.graph.doc.nodes = next;
+    for (const n of next) { const el = this.els.get(n.id); if (el) this.nodeLayer.append(el); }
+    this.drawMini(); this.graph.scheduleSave();
+  }
+
   // ---- menus
   nodeMenu(node, x, y) {
     const def = NODE_TYPES[node.type], running = this.engine.isRunning(node.id);
@@ -511,6 +545,11 @@ export class Canvas {
       def.spends && { label: '예상 크레딧 확인', run: () => this.actions.cost(node) },
       def.spends && node.result && { label: node.data.locked ? '결과 잠금 풀기' : '결과 잠금 (다시 생성하지 않음)', run: () => { this.graph.checkpoint(); node.data.locked = !node.data.locked; this.graph.emit('node:data', node); } },
       node.result && !def.instant && { label: '결과 지우기', run: () => { this.graph.checkpoint(); node.result = null; node.history = []; node.status = 'idle'; node.message = ''; this.graph.emit('node:result', node); } },
+      '-',
+      { label: '맨 위로', key: 'Shift+]', run: () => this.reorder('front') },
+      { label: '한 칸 위로', key: ']', run: () => this.reorder('up') },
+      { label: '한 칸 아래로', key: '[', run: () => this.reorder('down') },
+      { label: '맨 아래로', key: 'Shift+[', run: () => this.reorder('back') },
       '-',
       { label: '복제', key: 'Ctrl+D', run: () => this.duplicate() },
       { label: '삭제', key: 'Del', danger: true, run: () => this.deleteSelection() },

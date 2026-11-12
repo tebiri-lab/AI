@@ -53,7 +53,9 @@ button:disabled { opacity: .45; cursor: default; }
 [data-type="any"] { --c: var(--t-any); }
 
 /* ---- node card */
+/* Each card is its own layer: what is inside a card (ports, handles) never shows through a card stacked above it. */
 .node {
+  isolation: isolate;
   position: absolute; background: var(--card); border: 1px solid var(--line-2); border-radius: 10px;
   box-shadow: 0 6px 20px rgba(0,0,0,.35); cursor: default; user-select: none; -webkit-user-select: none;
 }
