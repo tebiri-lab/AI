@@ -77,6 +77,17 @@ export function tagify(prompt, counts) {
   });
 }
 
+// What was attached to a request, in the words used on screen: "@Image 1", "시작 이미지", …
+const ROLE_NAME = { start_image: '시작 이미지', end_image: '끝 이미지' };
+const ROLE_TAG = { image_references: 'Image', image: 'Image', video_references: 'Video', video: 'Video', input_video: 'Video', audio_references: 'Audio', input_audio: 'Audio' };
+export function describeRefs(medias) {
+  const n = {};
+  return medias.map(({ role, item }) => {
+    const tag = ROLE_TAG[role];
+    return { label: tag ? `@${tag} ${(n[tag] = (n[tag] || 0) + 1)}` : ROLE_NAME[role] || role, type: item.type, url: item.url, name: item.name, still: item.still };
+  });
+}
+
 // The request a generator node would send, from its settings and what is connected to it.
 export function buildRequest(node, inputs) {
   const kind = node.type;
@@ -113,7 +124,7 @@ async function runGenerate(kind, ctx) {
   const req = buildRequest(ctx.node, ctx.inputs);
   touchModel(req.model);
   const items = await ctx.provider.generate(req, ctx);
-  return { items, request: { model: req.model, prompt: req.prompt, draft: !!req.params.draft, resolution: req.params.resolution, aspect: req.aspect, duration: req.duration } };
+  return { items, request: { model: req.model, prompt: req.prompt, draft: !!req.params.draft, resolution: req.params.resolution, aspect: req.aspect, duration: req.duration, refs: describeRefs(req.medias) } };
 }
 
 // Finishing a draft: models with a draft mode can render a completed draft again at full resolution
@@ -283,6 +294,24 @@ export const NODE_TYPES = {
       const url = await grabFrame(item.url, node.data.at, +node.data.time || 0);
       return { items: [{ type: 'image', url, name: 'frame.png', local: true }] };
     },
+  },
+  review: {
+    title: '피드백', category: 'edit', hint: '마음에 안 드는 결과를 연결해 원인 진단과 수정 프롬프트 받기', instant: true, width: 340,
+    defaults: { note: '', feedback: '', revised: '' },
+    inputs: [
+      { key: 'media', label: '결과 (이미지·영상)', type: 'any', accepts: ['image', 'video'], multi: true, max: 4 },
+      { key: 'prompt', label: '사용한 프롬프트 (선택)', type: 'text', multi: true },
+    ],
+    outputs: [{ key: 'out', label: '수정 프롬프트', type: 'text' }],
+    fields: (node) => [
+      { key: 'note', label: '마음에 안 드는 점 · 원하는 방향', kind: 'textarea', rows: 3, placeholder: '예: 얼굴이 레퍼런스와 다르고 조명이 너무 평평하다. 더 어둡고 대비가 강했으면.\n비워 두면 프롬프트와 결과가 어긋난 곳을 알아서 찾습니다.' },
+      { kind: 'action', action: 'review', label: '피드백 받기', hint: '연결된 결과를 Claude가 직접 보고, 원인 진단과 수정 프롬프트를 씁니다' },
+      ...(node.data.feedback ? [{ kind: 'info', label: '진단', text: node.data.feedback }] : []),
+      { key: 'revised', label: '수정 프롬프트 — 다음 노드로 넘어가는 글', kind: 'textarea', rows: 6, placeholder: '피드백을 받으면 여기에 들어옵니다. 고쳐 써도 됩니다.' },
+      ...(node.data.revised ? [{ kind: 'action', action: 'retry', label: '이 프롬프트로 다시 생성할 노드 만들기', hint: '원래 생성 노드를 복사해(모델·설정·레퍼런스 유지) 이 수정 프롬프트에 연결합니다' }] : []),
+    ],
+    preview: 'review',
+    run: async ({ node }) => ({ items: node.data.revised.trim() ? [{ type: 'text', text: node.data.revised.trim() }] : [] }),
   },
   board: {
     title: '샷 보드', category: 'out', hint: '결과를 샷 순서대로 모아 보기·샷리스트 내보내기', instant: true, width: 520, outAll: true,

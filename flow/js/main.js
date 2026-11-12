@@ -2,12 +2,12 @@
 import { Graph, emptyDoc } from './graph.js';
 import { Engine } from './engine.js';
 import { Canvas } from './canvas.js';
-import { NODE_TYPES, buildRequest, finalizeRequest, TAG_PORTS } from './nodes.js';
+import { NODE_TYPES, buildRequest, finalizeRequest, describeRefs, TAG_PORTS } from './nodes.js';
 import { TEMPLATES } from './templates.js';
-import { initMedia, sweepMedia } from './media.js';
+import { initMedia, sweepMedia, displayUrl, frameBlobs, pictureData } from './media.js';
 import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS } from './providers.js';
 import { setModels, isLiveCatalog, listModels } from './models.js';
-import { h, toast, menu, modal, confirmBox, askBox, relayBox } from './ui.js';
+import { h, toast, menu, modal, confirmBox, askBox, relayBox, refStrip } from './ui.js';
 import { library } from './library.js';
 
 const $ = (id) => document.getElementById(id);
@@ -38,9 +38,15 @@ const actions = {
   runDownstream(id) { guarded([id, ...graph.downstream(id)], false, '여기부터 아래로 실행'); },
   // What exactly would be sent: the joined prompt, the model settings and the references. Nothing is submitted.
   preview(node) {
-    let text;
-    try { text = relayText(buildRequest(node, engine.inputsOf(node))).split('\n').slice(3).join('\n'); } catch (e) { text = e.message; }
-    modal('보낼 요청', h('textarea', { rows: 16, readOnly: true, value: text }), [{ label: '닫기', primary: true }]);
+    let text, refs = [];
+    try {
+      const req = buildRequest(node, engine.inputsOf(node));
+      text = relayText(req).split('\n').slice(3).filter((l) => !/^medias\[/.test(l)).join('\n');
+      refs = describeRefs(req.medias).map((r) => ({ ...r, url: displayUrl(r.url) }));
+    } catch (e) { text = e.message; }
+    modal('보낼 요청', h('div', {},
+      refs.length ? h('p', {}, `첨부되는 레퍼런스 ${refs.length}개`) : null, refs.length ? refStrip(refs) : null,
+      h('textarea', { rows: 14, readOnly: true, value: text })), [{ label: '닫기', primary: true }]);
   },
   async cost(node) {
     if (node.type !== 'image' && node.type !== 'video') return toast('이 노드는 예상 크레딧을 미리 알 수 없습니다');
@@ -77,6 +83,82 @@ const actions = {
     if (settings.mode !== 'demo' && !(await confirmBox(`${label}로 완성`, `v${node.result.v} 드래프트를 ${label}로 다시 생성합니다.${costLine} 드래프트와 같은 길이로 만들어지고, 결과는 이 노드의 새 버전으로 들어옵니다.`, '생성'))) return;
     updateRunState(true);
     if (!(await engine.finalize(node, item, resolution, finalizeRequest))) toast('완성하지 못했습니다. 노드 아래쪽 글을 확인하세요.', 'error');
+  },
+  // "피드백 받기" on a feedback node: Claude looks at the connected results (for a video: its first, middle and last
+  // frame) next to the prompt they were made with, says what went wrong and writes a revised prompt.
+  async review(node) {
+    const attached = engine.sourcesOf(node, 'media');
+    if (!attached.length) return toast('피드백 받을 결과(이미지·영상)를 왼쪽 "결과" 포트에 연결하세요', 'error');
+    const given = (engine.inputsOf(node).prompt || []).map((i) => i.text).filter(Boolean).join('\n\n');
+    const used = given || [...new Set(attached.map(({ src }) => src.result?.request?.prompt).filter(Boolean))].join('\n\n---\n\n');
+    const btn = canvas.els.get(node.id)?.querySelector('.action');
+    if (btn) { btn.disabled = true; btn.textContent = '결과를 보는 중…'; }
+    node.writing = true; node.wrote = false; node.startedAt = Date.now(); canvas.paintStatus(node);
+    let answer = null;
+    try {
+      // Pictures for Claude: images as they are (scaled down), three frames per video.
+      const images = [], lines = [];
+      for (const [i, { src, item }] of attached.entries()) {
+        const name = `${src.data.label || NODE_TYPES[src.type].title}${src.result?.v ? ` v${src.result.v}` : ''}`;
+        if (item.type === 'video' && !item.still) {
+          const frames = await frameBlobs(item.url, ['first', { part: 0.5 }, 'last']);
+          for (const [k, blob] of frames.entries()) { const pic = await pictureData(blob); if (pic) images.push({ ...pic, label: `result ${i + 1} (${name}), video frame: ${['start', 'middle', 'end'][k]}` }); }
+          lines.push(`Result ${i + 1}: a generated video (${name}); you get its start, middle and end frame.`);
+        } else {
+          const pic = await pictureData(item.url);
+          images.push(pic ? { ...pic, label: `result ${i + 1} (${name})` } : { url: item.url, label: `result ${i + 1} (${name})` });
+          lines.push(`Result ${i + 1}: a generated image (${name}).`);
+        }
+      }
+      const refTags = [...new Set(attached.flatMap(({ src }) => (src.result?.request?.refs || []).map((r) => r.label).filter((l) => l.startsWith('@'))))];
+      const prompt = [
+        'You are reviewing the output of an AI image/video generation for a filmmaker who wants photorealistic, live-action looking footage.',
+        'Look at the result pictures, compare them with the prompt that produced them and with what the filmmaker says, then answer.',
+        '', ...lines, '',
+        `Prompt that was used:\n${used || '(not available)'}`, '',
+        ...(refTags.length ? [`References that were attached to that generation: ${refTags.join(', ')}. The revised prompt is used with the same references, so point at them with these tags (and say what each is used for) instead of describing a person or place from scratch.`, ''] : []),
+        `What the filmmaker is unhappy with or wants instead:\n${node.data.note.trim() || '(nothing written: find where the result fails the prompt or looks artificial)'}`, '',
+        'Answer in exactly this format and nothing else:',
+        '[진단]',
+        '(In Korean. 3 to 6 short bullet lines starting with "- ": what in the result differs from the intent, and the most likely cause in the prompt or settings.)',
+        '[수정 프롬프트]',
+        '(The complete revised prompt in English, ready to use as it is. Keep reference tags such as @Image 1 or @[Image 1](image_1) exactly as they are. No commentary.)',
+      ].join('\n');
+      if (bridge.online) {
+        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images }) });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) answer = body.text;
+        else if (res.status !== 501) toast(/authenticat|OAuth|login|log in/i.test(body.error || '') ? '이 컴퓨터의 Claude Code 로그인이 만료되었습니다. 터미널에서 claude 를 실행해 /login 하세요. 지금은 Claude 채팅 전달로 진행합니다.' : `이 컴퓨터의 Claude Code로 보지 못했습니다 (${(body.error || '알 수 없는 오류').slice(0, 120)}). Claude 채팅 전달로 진행합니다.`, 'error');
+      }
+      if (answer == null) answer = await relayBox(`${prompt}\n\n(결과 이미지·영상은 이 채팅에 직접 첨부해 주세요.)`, 'text');
+    } catch (e) { toast(e.message, 'error'); }
+    node.writing = false; delete node.startedAt;
+    const text = (answer || '').trim();
+    if (text) {
+      const cut = text.search(/\[\s*수정\s*프롬프트\s*\]/);
+      graph.checkpoint();
+      node.data.feedback = (cut >= 0 ? text.slice(0, cut) : '').replace(/\[\s*진단\s*\]/, '').trim();
+      node.data.revised = (cut >= 0 ? text.slice(cut).replace(/\[\s*수정\s*프롬프트\s*\]/, '') : text).trim();
+      node.wrote = true;
+      canvas.paintFields(node);
+      await canvas.recompute(node); canvas.refreshDependents(node);
+      graph.emit('node:data', node);
+    } else { canvas.paintStatus(node); if (btn) { btn.disabled = false; btn.textContent = '피드백 받기'; } }
+  },
+  // "이 프롬프트로 다시 생성할 노드 만들기": a copy of the generation node the reviewed result came from
+  // (same model, settings and references), with this feedback node's revised prompt as its only prompt.
+  retry(node) {
+    const src = engine.sourcesOf(node, 'media').map((x) => x.src).find((n) => n.type === 'image' || n.type === 'video');
+    if (!src) return toast('원래 생성 노드를 찾지 못했습니다. 수정 프롬프트 포트를 원하는 생성 노드의 프롬프트에 직접 연결하세요.', 'error');
+    graph.checkpoint();
+    const el = canvas.els.get(node.id);
+    const { locked, pick, ...data } = structuredClone(src.data);
+    const made = graph.addNode(src.type, node.x + node.w + 90, node.y, { ...data, prompt: '', label: `${src.data.label || NODE_TYPES[src.type].title} 수정` });
+    for (const e of graph.edgesInto(src.id)) if (e.to.port !== 'prompt') graph.connect({ ...e.from }, { node: made.id, port: e.to.port });
+    graph.connect({ node: node.id, port: 'out' }, { node: made.id, port: 'prompt' });
+    canvas.select([made.id]);
+    toast('원래 노드를 복사해 수정 프롬프트에 연결했습니다. ▶를 누르면 생성합니다.');
+    if (el) requestAnimationFrame(() => canvas.fit([node, made]));
   },
   // "AI로 쓰기" on a text node: Claude writes the prompt from the instruction and the connected reference texts.
   async write(node) {

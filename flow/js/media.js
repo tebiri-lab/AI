@@ -67,7 +67,9 @@ export function imageSize(url) {
 }
 
 // One frame of a video as a stored PNG. Remote videos must allow cross-origin reads; with the bridge on, they are fetched through it.
-export async function grabFrame(url, at, time) {
+// Frames of a video as PNG blobs. `at` is 'first', 'last', a time in seconds, or { part: 0..1 } of the length.
+// Remote videos must allow cross-origin reads; with the bridge on, they are fetched through it.
+export async function frameBlobs(url, ats) {
   let src = displayUrl(url);
   if (!src) throw new Error('영상 파일을 찾을 수 없습니다');
   const remote = /^https?:/.test(src);
@@ -82,16 +84,44 @@ export async function grabFrame(url, at, time) {
   });
   video.src = src;
   await wait('loadedmetadata');
-  const dur = Number.isFinite(video.duration) ? video.duration : 0;
-  const t = at === 'first' ? 0 : at === 'last' ? Math.max(0, dur - 0.05) : Math.max(0, Math.min(time, Math.max(0, dur - 0.05)));
-  video.currentTime = t;
-  await wait('seeked');
-  const c = document.createElement('canvas');
-  c.width = video.videoWidth; c.height = video.videoHeight;
-  c.getContext('2d').drawImage(video, 0, 0);
-  let blob;
-  try { blob = await new Promise((r) => c.toBlob(r, 'image/png')); } catch { blob = null; }
-  video.removeAttribute('src'); video.load();
-  if (!blob) throw new Error('영상 서버가 프레임 읽기를 허용하지 않습니다. 브리지를 켜면 브리지를 거쳐 읽습니다.');
+  const dur = Number.isFinite(video.duration) ? video.duration : 0, end = Math.max(0, dur - 0.05);
+  const blobs = [];
+  try {
+    for (const at of ats) {
+      const t = at === 'first' ? 0 : at === 'last' ? end : typeof at === 'object' ? end * at.part : Math.max(0, Math.min(at, end));
+      video.currentTime = t;
+      await wait('seeked');
+      const c = document.createElement('canvas');
+      c.width = video.videoWidth; c.height = video.videoHeight;
+      c.getContext('2d').drawImage(video, 0, 0);
+      let blob;
+      try { blob = await new Promise((r) => c.toBlob(r, 'image/png')); } catch { blob = null; }
+      if (!blob) throw new Error('영상 서버가 프레임 읽기를 허용하지 않습니다. 브리지를 켜면 브리지를 거쳐 읽습니다.');
+      blobs.push(blob);
+    }
+  } finally { video.removeAttribute('src'); video.load(); }
+  return blobs;
+}
+// One frame of a video as a stored PNG.
+export async function grabFrame(url, at, time) {
+  const [blob] = await frameBlobs(url, [at === 'time' ? time : at]);
   return saveBlob(blob);
+}
+// A picture as base64 JPEG no larger than `max` pixels on its long side (for handing to an AI to look at).
+// Returns null when the picture cannot be read from here (a remote server that does not allow it).
+export async function pictureData(source, max = 1400) {
+  let blob = source instanceof Blob ? source : getBlob(source);
+  if (!blob) { try { const r = await fetch(displayUrl(source)); if (r.ok) blob = await r.blob(); } catch { blob = null; } }
+  if (!blob) return null;
+  try {
+    const bmp = await createImageBitmap(blob);
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const out = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
+    const bytes = new Uint8Array(await out.arrayBuffer());
+    let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return { data: btoa(bin), type: 'image/jpeg' };
+  } catch { return null; }
 }

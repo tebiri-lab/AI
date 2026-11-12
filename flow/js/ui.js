@@ -138,6 +138,12 @@ export function relayBox(text, kind) {
   return modal('Claude에게 전달', body, [{ label: '취소', value: null }, { label: '결과 넣기', primary: true, value: () => answer.value }]).then((v) => (v === undefined ? null : v));
 }
 
+// Small pictures of the references attached to a request, each with its tag or role.
+export function refStrip(refs) {
+  return h('div.ref-strip', {}, refs.map((r) => h('figure', {},
+    !r.url ? h('div.missing', {}, '파일 없음') : r.type === 'video' && !r.still ? h('video', { src: r.url, muted: true, preload: 'metadata' }) : r.type === 'audio' ? h('div.missing', {}, '오디오') : h('img', { src: r.url, alt: '', loading: 'lazy' }),
+    h('figcaption', {}, r.label))));
+}
 // Full-size view. With `info` (what the result was made from) a side panel shows the model, settings and the prompt that was sent.
 export function lightbox(item, url, info) {
   const media = item.type === 'video' && !item.still ? h('video', { src: url, controls: true, autoplay: true, loop: true }) : h('img', { src: url, alt: '' });
@@ -146,6 +152,8 @@ export function lightbox(item, url, info) {
   const side = req ? h('aside.lightbox-info', {},
     h('h2', {}, [info.title, info.v ? `v${info.v}` : null].filter(Boolean).join(' · ')),
     facts.length ? h('p.facts', {}, facts.join(' · ')) : null,
+    info.refs?.length ? h('h3', {}, `첨부한 레퍼런스 ${info.refs.length}개`) : null,
+    info.refs?.length ? refStrip(info.refs) : null,
     h('h3', {}, '사용한 프롬프트'),
     h('pre', {}, req.prompt || '(프롬프트 없이 생성)'),
     req.prompt ? h('button', { onclick: async (e) => { e.target.textContent = (await copyText(req.prompt)) ? '복사했습니다' : '복사하지 못했습니다'; } }, '프롬프트 복사') : null) : null;

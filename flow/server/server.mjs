@@ -29,17 +29,42 @@ const WORKFLOW_DIR = path.join(STATE_DIR, 'workflows');
 const workflowFile = (id) => (/^[\w-]{1,80}$/.test(id) ? path.join(WORKFLOW_DIR, `${id}.json`) : null);
 // Text writing uses the Claude Code command on this computer (the person's own subscription), when it is installed.
 const LLM_CMD = process.env.FLOW_LLM_CMD || 'claude';
-function writeWithClaude(prompt) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(LLM_CMD, ['-p', '--output-format', 'text'], { cwd: os.tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] });
-    let out = '', err = '';
-    const timer = setTimeout(() => { child.kill(); reject(httpError(504, '글 작성이 너무 오래 걸려 멈췄습니다')); }, 180000);
-    child.on('error', (e) => { clearTimeout(timer); reject(e.code === 'ENOENT' ? httpError(501, '이 컴퓨터에서 Claude Code(claude 명령)를 찾지 못했습니다') : httpError(500, e.message)); });
-    child.stdout.on('data', (d) => { out += d; });
-    child.stderr.on('data', (d) => { err += d; });
-    child.on('close', (code) => { clearTimeout(timer); if (code === 0 && out.trim()) resolve(out.trim()); else reject(httpError(502, (err || out).trim().slice(0, 300) || `claude 명령이 실패했습니다 (${code})`)); });
-    child.stdin.end(prompt);
-  });
+// `images` are pictures Claude should look at: they are written into a throw-away folder that the command runs in,
+// and Claude is allowed the Read tool for it.
+async function writeWithClaude(prompt, images = []) {
+  let cwd = os.tmpdir(), args = ['-p', '--output-format', 'text'];
+  const files = [];
+  if (images.length) {
+    cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'flow-look-'));
+    for (const [i, img] of images.slice(0, 8).entries()) {
+      let buf, type = img.type || 'image/jpeg';
+      if (img.data) buf = Buffer.from(img.data, 'base64');
+      else {
+        let u; try { u = new URL(img.url); } catch { throw httpError(400, '이미지 주소 형식이 아닙니다'); }
+        if (u.protocol !== 'https:' || privateHost(u.hostname)) throw httpError(400, '가져올 수 없는 이미지 주소입니다');
+        const r = await fetch(u);
+        if (!r.ok || !/^image\//.test(r.headers.get('content-type') || '')) throw httpError(502, '결과 이미지를 내려받지 못했습니다');
+        type = r.headers.get('content-type'); buf = Buffer.from(await r.arrayBuffer());
+      }
+      const name = `picture${i + 1}.${/png/.test(type) ? 'png' : /webp/.test(type) ? 'webp' : 'jpg'}`;
+      await fs.writeFile(path.join(cwd, name), buf);
+      files.push(`./${name}${img.label ? ` — ${img.label}` : ''}`);
+    }
+    args.push('--allowedTools', 'Read');
+    prompt += `\n\nPictures to look at (read every file with the Read tool before answering):\n${files.join('\n')}`;
+  }
+  try {
+    return await new Promise((resolve, reject) => {
+      const child = spawn(LLM_CMD, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '', err = '';
+      const timer = setTimeout(() => { child.kill(); reject(httpError(504, '글 작성이 너무 오래 걸려 멈췄습니다')); }, 240000);
+      child.on('error', (e) => { clearTimeout(timer); reject(e.code === 'ENOENT' ? httpError(501, '이 컴퓨터에서 Claude Code(claude 명령)를 찾지 못했습니다') : httpError(500, e.message)); });
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { err += d; });
+      child.on('close', (code) => { clearTimeout(timer); if (code === 0 && out.trim()) resolve(out.trim()); else reject(httpError(502, (err || out).trim().slice(0, 300) || `claude 명령이 실패했습니다 (${code})`)); });
+      child.stdin.end(prompt);
+    });
+  } finally { if (images.length) await fs.rm(cwd, { recursive: true, force: true }).catch(() => {}); }
 }
 
 // ---- saved state: added servers and each server's OAuth data
@@ -227,9 +252,9 @@ async function handle(req, res) {
         }
       }
       if (p === '/api/llm' && req.method === 'POST') {
-        const { prompt } = JSON.parse((await readBody(req, 1e6)).toString() || '{}');
+        const { prompt, images } = JSON.parse((await readBody(req, 60e6)).toString() || '{}');
         if (!prompt?.trim()) throw httpError(400, '내용이 비어 있습니다');
-        return json(200, { text: await writeWithClaude(String(prompt)) });
+        return json(200, { text: await writeWithClaude(String(prompt), Array.isArray(images) ? images : []) });
       }
       if (p === '/api/workflows' && req.method === 'GET') {
         await fs.mkdir(WORKFLOW_DIR, { recursive: true });
