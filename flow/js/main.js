@@ -326,6 +326,7 @@ $('btnHelp').onclick = () => modal('단축키와 조작', h('dl', {}, [
   ['Ctrl+D / Ctrl+C·V', '복제 / 복사·붙여넣기'],
   ['Ctrl+Z / Ctrl+Shift+Z', '실행 취소 / 다시 실행'],
   ['F', '전체(또는 선택한 노드) 보기'],
+  ['H', '선택한 노드 접기·펼치기 (선택이 없으면 전체)'],
   ['] / [', '선택한 노드를 한 칸 위로 / 아래로 (겹친 노드 기준)'],
   ['Shift+] / Shift+[', '맨 위로 / 맨 아래로'],
   ['제목 더블클릭', '노드 이름 바꾸기 (예: 샷 1)'],
@@ -348,6 +349,7 @@ document.addEventListener('keydown', (e) => {
   if (key === 'delete' || key === 'backspace') { e.preventDefault(); return canvas.deleteSelection(); }
   if (e.code === 'BracketRight') return canvas.reorder(e.shiftKey ? 'front' : 'up');
   if (e.code === 'BracketLeft') return canvas.reorder(e.shiftKey ? 'back' : 'down');
+  if (key === 'h') { const ns = canvas.selectedNodes().length ? canvas.selectedNodes() : graph.doc.nodes; return canvas.setCollapsed(ns, !ns.every((n) => n.data.collapsed)); }
   if (key === 'f') return canvas.fit(canvas.selectedNodes());
   if (key === 'a' || key === '/') { e.preventDefault(); const p = canvas.lastPointer || { x: innerWidth / 2, y: innerHeight / 2 }; return canvas.addMenu(p.x, p.y); }
   if (key === 'escape') return canvas.select([]);

@@ -264,3 +264,14 @@ button.small.final { color: var(--accent-2); border-color: #5a4f1c; }
 
 .ref-strip .missing.audio { color: var(--t-audio); font-size: 12px; }
 .lightbox audio { width: min(520px, 80vw); cursor: default; }
+
+/* ---- folded node: title and result only */
+.node-head .fold { padding: 0; min-width: 18px; height: 20px; border: 0; background: transparent; color: var(--muted); font-size: 11px; }
+.node-head .fold:hover { color: var(--text); background: transparent; }
+.node.collapsed .fields, .node.collapsed .cost, .node.collapsed .port:not(.linked) { display: none; }
+.node.collapsed .ports { padding: 4px 0 4px; }
+.node.collapsed .ports:not(:has(.port.linked)) { display: none; }
+.node.collapsed .node-head { border-bottom-color: transparent; }
+.node.collapsed .preview { padding-top: 2px; }
+.node.collapsed .preview .hint { display: none; }
+.excerpt { margin: 0; padding: 2px 10px 10px; font-size: 12px; line-height: 1.45; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
