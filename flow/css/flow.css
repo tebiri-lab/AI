@@ -261,3 +261,6 @@ button.small.final { color: var(--accent-2); border-color: #5a4f1c; }
 .ref-strip figure.can-open { cursor: zoom-in; }
 .ref-strip figure.can-open:hover, .ref-strip figure.can-open:focus-visible { border-color: var(--t-image); outline: none; }
 .lightbox-caption { position: absolute; left: 16px; top: 16px; padding: 5px 10px; border-radius: 6px; background: rgba(0,0,0,.6); color: var(--t-image); font-weight: 600; }
+
+.ref-strip .missing.audio { color: var(--t-audio); font-size: 12px; }
+.lightbox audio { width: min(520px, 80vw); cursor: default; }
