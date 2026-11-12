@@ -316,6 +316,7 @@ $('btnZoomIn').onclick = () => canvas.zoomBy(1.25);
 $('btnZoomOut').onclick = () => canvas.zoomBy(0.8);
 $('btnZoomReset').onclick = () => canvas.zoomBy(1 / graph.doc.view.k);
 $('btnFit').onclick = () => canvas.fit(canvas.selectedNodes());
+$('btnLayout').onclick = () => canvas.autoLayout();
 $('btnHelp').onclick = () => modal('단축키와 조작', h('dl', {}, [
   ['빈 곳 더블클릭 · 우클릭 · A', '노드 추가 (이름으로 찾기)'],
   ['포트에서 끌기', '연결. 빈 곳에 놓으면 이어 붙일 노드를 고릅니다'],
@@ -326,6 +327,7 @@ $('btnHelp').onclick = () => modal('단축키와 조작', h('dl', {}, [
   ['Ctrl+D / Ctrl+C·V', '복제 / 복사·붙여넣기'],
   ['Ctrl+Z / Ctrl+Shift+Z', '실행 취소 / 다시 실행'],
   ['F', '전체(또는 선택한 노드) 보기'],
+  ['L', '자동 정렬 (2개 이상 선택하면 그 노드들만)'],
   ['H', '선택한 노드 접기·펼치기 (선택이 없으면 전체)'],
   ['] / [', '선택한 노드를 한 칸 위로 / 아래로 (겹친 노드 기준)'],
   ['Shift+] / Shift+[', '맨 위로 / 맨 아래로'],
@@ -351,6 +353,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'BracketLeft') return canvas.reorder(e.shiftKey ? 'back' : 'down');
   if (key === 'h') { const ns = canvas.selectedNodes().length ? canvas.selectedNodes() : graph.doc.nodes; return canvas.setCollapsed(ns, !ns.every((n) => n.data.collapsed)); }
   if (key === 'f') return canvas.fit(canvas.selectedNodes());
+  if (key === 'l') return canvas.autoLayout();
   if (key === 'a' || key === '/') { e.preventDefault(); const p = canvas.lastPointer || { x: innerWidth / 2, y: innerHeight / 2 }; return canvas.addMenu(p.x, p.y); }
   if (key === 'escape') return canvas.select([]);
 });
