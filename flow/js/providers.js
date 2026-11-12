@@ -157,7 +157,6 @@ async function mediaValue(item, ctx) {
 async function waitJobs(ids, kind, ctx) {
   const done = new Map();
   let pending = ids.map((job_id, index) => ({ index, job_id }));
-  const started = Date.now();
   while (pending.length) {
     if (ctx.signal.aborted) throw new DOMException('중단됨', 'AbortError');
     const data = await call(settings.server, 'jobs_wait', { jobs: pending, timeout_seconds: 15 }, ctx.signal);
@@ -170,7 +169,7 @@ async function waitJobs(ids, kind, ctx) {
     pending = pending.filter((p) => !done.has(p.job_id));
     if (!pending.length) break;
     if (data.all_terminal) throw new Error('생성이 끝났지만 결과 주소를 받지 못했습니다');
-    ctx.progress(`생성 중 · ${Math.round((Date.now() - started) / 1000)}초`);
+    ctx.progress('생성 중');
     await sleep(Math.min(15, Math.max(1, +data.poll_after_seconds || 2)) * 1000, ctx.signal);
   }
   const items = [];

@@ -36,7 +36,7 @@ export class Canvas {
     this.bind();
     graph.on((kind, detail) => this.onGraph(kind, detail));
     new ResizeObserver(() => this.queueEdges()).observe(this.nodeLayer);
-    setInterval(() => { for (const n of graph.doc.nodes) if (n.status === 'running') this.paintStatus(n); }, 1000);
+    setInterval(() => { for (const n of graph.doc.nodes) if (n.status === 'running' || n.writing) this.paintStatus(n); }, 1000);
   }
 
   get view() { return this.graph.doc.view; }
@@ -212,6 +212,7 @@ export class Canvas {
     const commit = (value, structural) => {
       if (!dirty) { this.graph.checkpoint(); dirty = true; }
       setPath(node.data, f.key, value);
+      if (node.wrote && f.key === 'text') { node.wrote = false; this.paintStatus(node); } // edited by hand since the AI wrote it
       if (NODE_TYPES[node.type].onChange?.(node, f.key, value) && !structural) this.paintFields(node);
       if (structural) {
         const cut = this.graph.pruneEdges(node.id);
@@ -276,13 +277,17 @@ export class Canvas {
   paintStatus(node) {
     const el = this.els.get(node.id); if (!el) return;
     const def = NODE_TYPES[node.type];
-    const stale = node.status !== 'running' && node.status !== 'queued' && this.engine.isStale(node);
-    el.dataset.status = node.status || 'idle';
+    const stale = !def.instant && node.status !== 'running' && node.status !== 'queued' && this.engine.isStale(node);
+    // Border colour: yellow while working (generating, or AI writing a text), green once that work is done and still current.
+    const state = node.writing ? 'running' : def.instant ? (node.wrote ? 'done' : 'idle') : node.status || 'idle';
+    el.dataset.status = state;
     el.classList.toggle('stale', stale);
     el.classList.toggle('locked', !!node.data.locked);
     const chip = el.querySelector('.chip');
     let text = def.instant ? '' : STATUS[node.status] || '';
     if (node.status === 'running' && node.startedAt) text = `${node.message || '실행 중'} · ${Math.round((Date.now() - node.startedAt) / 1000)}초`;
+    else if (node.writing) text = `AI가 쓰는 중 · ${Math.round((Date.now() - (node.startedAt || Date.now())) / 1000)}초`;
+    else if (def.instant && node.wrote) text = 'AI 작성 완료';
     else if (node.data.locked) text = '잠금';
     else if (stale) text = '설정 바뀜';
     chip.textContent = text; chip.hidden = !text;
@@ -308,6 +313,7 @@ export class Canvas {
     if (media.length) {
       const pick = Math.min(media.length - 1, +node.data.pick || 0);
       box.append(h(`div.thumbs.n${Math.min(4, media.length)}`, {}, media.map((it, i) => this.thumb(it, {
+        info: { title: node.data.label || def.title, v: node.result.v, request: node.result.request },
         picked: media.length > 1 && i === pick,
         onPick: media.length > 1 && !def.outAll && node.type !== 'tool' ? () => { node.data.pick = i; this.paintPreview(node); this.refreshDependents(node); this.graph.emit('node:data', node); } : null,
       }))));
@@ -331,9 +337,9 @@ export class Canvas {
       box.append(h('button.small.final', { title: '드래프트를 이 해상도로 다시 생성합니다 (업스케일이 아니라 Higgsfield의 Generate in 1080p/4K). 크레딧이 듭니다.', onclick: () => this.actions.finalize(node, picked, res) }, `${res === '4k' ? '4K' : res}로 완성`));
     }
   }
-  thumb(item, { picked, onPick, index } = {}) {
+  thumb(item, { picked, onPick, index, info } = {}) {
     const url = displayUrl(item.url);
-    const open = () => (url ? lightbox(item, url) : toast('이 브라우저에 파일이 없습니다', 'error'));
+    const open = () => (url ? lightbox(item, url, info) : toast('이 브라우저에 파일이 없습니다', 'error'));
     let media;
     if (!url) media = h('div.missing', {}, '파일 없음');
     else if (item.type === 'video' && !item.still) media = h('video', { src: url, preload: 'metadata', muted: true, loop: true, playsInline: true, onpointerenter: (e) => e.target.play().catch(() => {}), onpointerleave: (e) => e.target.pause() });
@@ -352,7 +358,7 @@ export class Canvas {
       return [`## 샷 ${i + 1}${src?.data.label ? ` — ${src.data.label}` : ''}`, `- 종류: ${it.type === 'video' ? '영상' : '이미지'}${src?.result?.request?.model ? ` · ${src.result.request.model}` : ''}`, it.local ? null : `- 파일: ${it.url}`, src?.result?.request?.prompt ? `- 프롬프트:\n\n${src.result.request.prompt}` : null, ''].filter((x) => x != null).join('\n');
     })].join('\n');
     return h('div', {},
-      h('div.strip', {}, items.map((it, i) => this.thumb(it, { index: i + 1 }))),
+      h('div.strip', {}, items.map((it, i) => { const src = sources.find((s) => this.engine.outItems(s).includes(it)); return this.thumb(it, { index: i + 1, info: src && { title: src.data.label || NODE_TYPES[src.type].title, v: src.result?.v, request: src.result?.request } }); })),
       h('p.hint', {}, '순서는 연결된 노드의 위→아래 위치를 따릅니다.'),
       h('button.small', { onclick: async () => toast((await copyText(listText())) ? '샷리스트를 복사했습니다' : '복사하지 못했습니다') }, '샷리스트 복사 (.md)'));
   }

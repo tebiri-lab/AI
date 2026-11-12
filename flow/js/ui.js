@@ -138,10 +138,20 @@ export function relayBox(text, kind) {
   return modal('Claude에게 전달', body, [{ label: '취소', value: null }, { label: '결과 넣기', primary: true, value: () => answer.value }]).then((v) => (v === undefined ? null : v));
 }
 
-export function lightbox(item, url) {
+// Full-size view. With `info` (what the result was made from) a side panel shows the model, settings and the prompt that was sent.
+export function lightbox(item, url, info) {
   const media = item.type === 'video' && !item.still ? h('video', { src: url, controls: true, autoplay: true, loop: true }) : h('img', { src: url, alt: '' });
-  const back = h('div.lightbox', { onclick: (e) => { if (e.target === back) back.remove(); } }, media, h('button.lightbox-close', { 'aria-label': '닫기', onclick: () => back.remove() }, '닫기'));
-  const onKey = (e) => { if (e.key === 'Escape') { back.remove(); document.removeEventListener('keydown', onKey, true); e.stopPropagation(); } };
+  const req = info?.request;
+  const facts = req ? [req.model, req.finalOf ? `v${req.finalOf} 드래프트를 ${req.resolution}로 완성` : req.draft ? '드래프트' : null, !req.finalOf && req.resolution ? req.resolution : null, req.aspect, req.duration ? `${req.duration}초` : null].filter(Boolean) : [];
+  const side = req ? h('aside.lightbox-info', {},
+    h('h2', {}, [info.title, info.v ? `v${info.v}` : null].filter(Boolean).join(' · ')),
+    facts.length ? h('p.facts', {}, facts.join(' · ')) : null,
+    h('h3', {}, '사용한 프롬프트'),
+    h('pre', {}, req.prompt || '(프롬프트 없이 생성)'),
+    req.prompt ? h('button', { onclick: async (e) => { e.target.textContent = (await copyText(req.prompt)) ? '복사했습니다' : '복사하지 못했습니다'; } }, '프롬프트 복사') : null) : null;
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
+  const back = h(`div.lightbox${side ? '.with-info' : ''}`, { onclick: (e) => { if (e.target === back || e.target.classList.contains('lightbox-media')) close(); } }, h('div.lightbox-media', {}, media), side, h('button.lightbox-close', { 'aria-label': '닫기', onclick: close }, '닫기'));
+  const onKey = (e) => { if (e.key === 'Escape') { close(); e.stopPropagation(); } };
   document.addEventListener('keydown', onKey, true);
   document.body.append(back);
 }
