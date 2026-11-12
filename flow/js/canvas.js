@@ -523,6 +523,54 @@ export class Canvas {
   }
   duplicate() { if (!this.sel.size) return; this.graph.checkpoint(); this.select(this.graph.duplicate([...this.sel])); }
 
+  // ---- automatic layout
+  // Columns follow the connections left to right (a node sits one column after the last node it depends on); inside a
+  // column nodes are stacked using their real heights. The top-to-bottom order the nodes had is kept for every pair,
+  // because that order decides how prompt parts are joined and how references are numbered (@Image 1, 2, …).
+  // Works on the selection when two or more nodes are selected, otherwise on everything.
+  autoLayout() {
+    const g = this.graph;
+    const picked = this.selectedNodes().length > 1 ? this.selectedNodes() : g.doc.nodes;
+    if (picked.length < 2) return toast('정렬할 노드가 없습니다');
+    const set = new Set(picked.map((n) => n.id));
+    const edges = g.doc.edges.filter((e) => set.has(e.from.node) && set.has(e.to.node));
+    const height = (n) => this.els.get(n.id)?.offsetHeight || 200;
+    const GAP_X = 90, GAP_Y = 36;
+    const linked = new Set(edges.flatMap((e) => [e.from.node, e.to.node]));
+    const col = new Map();
+    for (const id of g.order(set)) {
+      if (!linked.has(id)) continue;
+      col.set(id, Math.max(-1, ...edges.filter((e) => e.to.node === id).map((e) => col.get(e.from.node) ?? -1)) + 1);
+    }
+    const b = this.bounds(picked);
+    const chained = picked.filter((n) => col.has(n.id)).sort((a, c) => a.y - c.y || a.x - c.x);
+    const loose = picked.filter((n) => !col.has(n.id)).sort((a, c) => a.x - c.x || a.y - c.y);
+    const cols = Math.max(-1, ...col.values()) + 1;
+    const width = Array.from({ length: cols }, (_, i) => Math.max(...chained.filter((n) => col.get(n.id) === i).map((n) => n.w)));
+    const left = []; width.reduce((x, w, i) => { left[i] = x; return x + w + GAP_X; }, b.x0);
+    const moved = new Map();
+    const bottom = new Array(cols).fill(b.y0 - GAP_Y);
+    let lastTop = -Infinity;
+    for (const n of chained) {
+      const c = col.get(n.id);
+      const y = Math.max(bottom[c] + GAP_Y, lastTop + 1);
+      moved.set(n, { x: left[c], y });
+      bottom[c] = y + height(n); lastTop = y;
+    }
+    // Nodes connected to nothing (notes, spare nodes) go in a row underneath.
+    let x = b.x0;
+    const rowY = chained.length ? Math.max(...bottom) + GAP_Y * 2 : b.y0;
+    for (const n of loose) { moved.set(n, { x, y: rowY }); x += n.w + GAP_X / 2; }
+    if ([...moved].every(([n, p]) => n.x === Math.round(p.x) && n.y === Math.round(p.y))) return toast('이미 정렬되어 있습니다');
+    g.checkpoint();
+    for (const [n, p] of moved) {
+      n.x = Math.round(p.x); n.y = Math.round(p.y);
+      const el = this.els.get(n.id); el.style.left = `${n.x}px`; el.style.top = `${n.y}px`;
+    }
+    this.queueEdges(); g.scheduleSave();
+    requestAnimationFrame(() => this.fit(picked.length === g.doc.nodes.length ? undefined : picked));
+  }
+
   // ---- stacking order (the order of doc.nodes is the drawing order: later ones are on top)
   // mode: 'front' | 'back' | 'up' | 'down'. One step moves a node past the nearest node it overlaps in that direction
   // (or one place in the order when it overlaps nothing), so a step always changes what you see when there is something to pass.
