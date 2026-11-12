@@ -141,18 +141,18 @@ export function relayBox(text, kind) {
 // Small pictures of the references attached to a request, each with its tag or role.
 export function refStrip(refs) {
   // A reference opens in its own full-size view on top of whatever is showing; closing that returns here.
-  const open = (r) => { if (r.url && r.type !== 'audio') lightbox({ type: r.type, still: r.still }, r.url, null, r.label); };
-  return h('div.ref-strip', {}, refs.map((r) => h(`figure${r.url && r.type !== 'audio' ? '.can-open' : ''}`, { tabIndex: r.url && r.type !== 'audio' ? 0 : -1, role: 'button', title: r.url && r.type !== 'audio' ? `${r.label} 크게 보기` : r.label, onclick: () => open(r), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(r); } } },
-    !r.url ? h('div.missing', {}, '파일 없음') : r.type === 'video' && !r.still ? h('video', { src: r.url, muted: true, preload: 'metadata' }) : r.type === 'audio' ? h('div.missing', {}, '오디오') : h('img', { src: r.url, alt: '', loading: 'lazy' }),
+  const open = (r) => { if (r.url) lightbox({ type: r.type, still: r.still }, r.url, null, r.label); };
+  return h('div.ref-strip', {}, refs.map((r) => h(`figure${r.url ? '.can-open' : ''}`, { tabIndex: r.url ? 0 : -1, role: 'button', title: !r.url ? r.label : r.type === 'audio' ? `${r.label} 재생` : `${r.label} 크게 보기`, onclick: () => open(r), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(r); } } },
+    !r.url ? h('div.missing', {}, '파일 없음') : r.type === 'video' && !r.still ? h('video', { src: r.url, muted: true, preload: 'metadata' }) : r.type === 'audio' ? h('div.missing.audio', {}, '▶ 오디오') : h('img', { src: r.url, alt: '', loading: 'lazy' }),
     h('figcaption', {}, r.label))));
 }
 // Full-size view. With `info` (what the result was made from) a side panel shows the model, settings and the prompt that was sent.
 // `caption` names a picture opened from inside another view (a reference); its close button reads "돌아가기".
 export function lightbox(item, url, info, caption) {
   const under = [...document.querySelectorAll('.lightbox, .modal-back')].pop();
-  const paused = under ? [...under.querySelectorAll('video')].filter((v) => !v.paused) : [];
+  const paused = under ? [...under.querySelectorAll('video, audio')].filter((v) => !v.paused) : [];
   for (const v of paused) v.pause();
-  const media = item.type === 'video' && !item.still ? h('video', { src: url, controls: true, autoplay: true, loop: true }) : h('img', { src: url, alt: '' });
+  const media = item.type === 'audio' ? h('audio', { src: url, controls: true, autoplay: true }) : item.type === 'video' && !item.still ? h('video', { src: url, controls: true, autoplay: true, loop: true }) : h('img', { src: url, alt: '' });
   const req = info?.request;
   const facts = req ? [req.model, req.finalOf ? `v${req.finalOf} 드래프트를 ${req.resolution}로 완성` : req.draft ? '드래프트' : null, !req.finalOf && req.resolution ? req.resolution : null, req.aspect, req.duration ? `${req.duration}초` : null].filter(Boolean) : [];
   const side = req ? h('aside.lightbox-info', {},
@@ -163,7 +163,7 @@ export function lightbox(item, url, info, caption) {
     h('h3', {}, '사용한 프롬프트'),
     h('pre', {}, req.prompt || '(프롬프트 없이 생성)'),
     req.prompt ? h('button', { onclick: async (e) => { e.target.textContent = (await copyText(req.prompt)) ? '복사했습니다' : '복사하지 못했습니다'; } }, '프롬프트 복사') : null) : null;
-  const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); for (const v of paused) v.play().catch(() => {}); under?.querySelector('figure.can-open:focus, .lightbox-close, .primary')?.focus?.(); };
+  const close = () => { for (const m of back.querySelectorAll('audio, video')) m.pause(); back.remove(); document.removeEventListener('keydown', onKey, true); for (const v of paused) v.play().catch(() => {}); under?.querySelector('figure.can-open:focus, .lightbox-close, .primary')?.focus?.(); };
   const back = h(`div.lightbox${side ? '.with-info' : ''}`, { onclick: (e) => { if (e.target === back || e.target.classList.contains('lightbox-media')) close(); } }, h('div.lightbox-media', {}, media), side, caption ? h('div.lightbox-caption', {}, caption) : null, h('button.lightbox-close', { 'aria-label': under ? '돌아가기' : '닫기', onclick: close }, under ? '← 돌아가기' : '닫기'));
   // Escape closes only the view on top.
   const onKey = (e) => { if (e.key === 'Escape' && [...document.querySelectorAll('.lightbox')].pop() === back) { close(); e.stopImmediatePropagation(); } };
