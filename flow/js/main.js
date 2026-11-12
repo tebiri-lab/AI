@@ -2,7 +2,7 @@
 import { Graph, emptyDoc } from './graph.js';
 import { Engine } from './engine.js';
 import { Canvas } from './canvas.js';
-import { NODE_TYPES, buildRequest, finalizeRequest } from './nodes.js';
+import { NODE_TYPES, buildRequest, finalizeRequest, TAG_PORTS } from './nodes.js';
 import { TEMPLATES } from './templates.js';
 import { initMedia, sweepMedia } from './media.js';
 import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS } from './providers.js';
@@ -83,7 +83,7 @@ const actions = {
     const ask = (node.data.ask || '').trim();
     if (!ask) return toast('"AI에게 시킬 내용"을 먼저 쓰세요', 'error');
     const refs = (engine.inputsOf(node).ctx || []).map((i) => i.text).filter(Boolean);
-    const prompt = [
+    let prompt = [
       'You write prompts for AI image and video generation (photorealistic, live-action look unless told otherwise).',
       'Write the prompt asked for below. Output only the prompt text itself, in English, with no preface, no quotes, no markdown and no explanation.',
       'If the request or the draft contains reference tags such as @Image 1, @Video 1 or @Audio 1, keep each tag exactly as written and say what it is used for.',
@@ -91,6 +91,19 @@ const actions = {
       node.data.text.trim() ? `\nCurrent draft to revise:\n${node.data.text.trim()}` : '',
       `\nRequest${node.data.label ? ` (this text is used as: ${node.data.label})` : ''}:\n${ask}`,
     ].filter(Boolean).join('\n');
+    // Tags this text can use: the references connected to the generation node(s) it feeds (directly or through a join).
+    const tagLines = [];
+    for (const id of graph.downstream(node.id)) {
+      const gen = graph.node(id);
+      if (gen.type !== 'image' && gen.type !== 'video') continue;
+      for (const [key, name] of Object.entries(TAG_PORTS)) {
+        graph.edgesInto(gen.id, key).map((e) => graph.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x)
+          .forEach((src, i) => tagLines.push(`@${name} ${i + 1} = ${src.data.label || NODE_TYPES[src.type].title}`));
+      }
+      if (tagLines.length) break;
+    }
+    if (tagLines.length) prompt += `\n\nReference tags available to this prompt (write a tag exactly like "@Image 1" when the prompt should point at that reference; use only these):\n${tagLines.join('\n')}`;
+    const asked = [...new Set((`${ask} ${node.data.text}`.match(/@\s?(?:image|video|audio|이미지|영상|비디오|오디오)\s?\d+/gi) || []).map(tagKey))];
     const btn = canvas.els.get(node.id)?.querySelector('.action');
     if (btn) { btn.disabled = true; btn.textContent = '쓰는 중…'; }
     let text = null;
@@ -108,6 +121,10 @@ const actions = {
     if (text?.trim()) {
       graph.checkpoint();
       node.data.text = text.trim();
+      // Tags the request mentioned must still be in what came back; say so if one was dropped.
+      const kept = new Set((node.data.text.match(/@\[?\s?(?:image|video|audio|이미지|영상|비디오|오디오)\s?\d+/gi) || []).map(tagKey));
+      const lost = asked.filter((t) => !kept.has(t));
+      if (lost.length) toast(`AI가 쓴 글에 ${lost.map((t) => `@${t}`).join(', ')} 태그가 빠졌습니다. 결과 칸에 직접 넣어 주세요.`, 'error');
       canvas.paintFields(node);
       await canvas.recompute(node); canvas.refreshDependents(node);
       graph.emit('node:data', node);
@@ -118,6 +135,9 @@ const actions = {
   onRunState() { updateRunState(); },
 };
 const costCache = new Map();
+// "@image1", "@Image 1", "@[Image 1", "@이미지 1" -> "Image 1"
+const TAG_NAMES = { image: 'Image', 이미지: 'Image', video: 'Video', 영상: 'Video', 비디오: 'Video', audio: 'Audio', 오디오: 'Audio' };
+const tagKey = (t) => { const m = /(image|video|audio|이미지|영상|비디오|오디오)\s?(\d+)/i.exec(t); return `${TAG_NAMES[m[1].toLowerCase()]} ${+m[2]}`; };
 const canvas = new Canvas({ stage: $('stage'), graph, engine, actions });
 
 function updateRunState(starting) {
