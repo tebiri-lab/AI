@@ -106,6 +106,7 @@ const actions = {
     const asked = [...new Set((`${ask} ${node.data.text}`.match(/@\s?(?:image|video|audio|이미지|영상|비디오|오디오)\s?\d+/gi) || []).map(tagKey))];
     const btn = canvas.els.get(node.id)?.querySelector('.action');
     if (btn) { btn.disabled = true; btn.textContent = '쓰는 중…'; }
+    node.writing = true; node.wrote = false; node.startedAt = Date.now(); canvas.paintStatus(node);
     let text = null;
     try {
       if (bridge.online) {
@@ -118,6 +119,7 @@ const actions = {
       // No bridge, or no Claude Code on this computer: hand the request to a Claude chat by copy and paste.
       if (text == null) text = await relayBox(prompt, 'text');
     } catch (e) { toast(e.message, 'error'); }
+    node.writing = false; delete node.startedAt; node.wrote = !!text?.trim();
     if (text?.trim()) {
       graph.checkpoint();
       node.data.text = text.trim();
@@ -128,7 +130,7 @@ const actions = {
       canvas.paintFields(node);
       await canvas.recompute(node); canvas.refreshDependents(node);
       graph.emit('node:data', node);
-    } else if (btn) { btn.disabled = false; btn.textContent = 'AI로 쓰기'; }
+    } else { canvas.paintStatus(node); if (btn) { btn.disabled = false; btn.textContent = 'AI로 쓰기'; } }
   },
   onSelection() {},
   onView(k) { $('zoomLabel').textContent = `${Math.round(k * 100)}%`; },

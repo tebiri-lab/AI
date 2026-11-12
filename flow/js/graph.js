@@ -53,7 +53,7 @@ export class Graph {
   restore(json) {
     const s = JSON.parse(json);
     this.doc.nodes = s.nodes; this.doc.edges = s.edges;
-    for (const n of this.doc.nodes) if (n.status === 'running' || n.status === 'queued') n.status = 'idle';
+    for (const n of this.doc.nodes) { if (n.status === 'running' || n.status === 'queued') n.status = 'idle'; delete n.writing; delete n.startedAt; }
     this.emit('reset');
   }
   undo() { if (!this.undoStack.length) return false; this.redoStack.push(this.snapshot()); this.restore(this.undoStack.pop()); return true; }
