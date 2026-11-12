@@ -235,11 +235,11 @@ export class Canvas {
       input = h('input', { type: 'file', accept: `${kind}/*`, onchange: async (e) => {
         const file = e.target.files[0]; if (!file) return;
         this.graph.checkpoint();
-        node.data.file = await saveBlob(file); node.data.name = file.name; node.data.url = '';
+        node.data.file = await saveBlob(file); node.data.name = file.name; node.data.url = ''; delete node.data.ref;
         this.paintFields(node); this.recompute(node).then(() => this.refreshDependents(node));
         this.graph.emit('node:data', node);
       } });
-      if (node.data.file) return h('label.field', {}, h('span', {}, f.label), h('span.file', {}, h('em', {}, node.data.name || '파일'), h('button', { onclick: () => { this.graph.checkpoint(); node.data.file = ''; node.data.name = ''; this.paintFields(node); this.recompute(node).then(() => this.refreshDependents(node)); this.graph.emit('node:data', node); } }, '빼기')));
+      if (node.data.file) return h('label.field', {}, h('span', {}, f.label), h('span.file', {}, h('em', {}, node.data.name || '파일'), h('button', { onclick: () => { this.graph.checkpoint(); node.data.file = ''; node.data.name = ''; delete node.data.ref; this.paintFields(node); this.recompute(node).then(() => this.refreshDependents(node)); this.graph.emit('node:data', node); } }, '빼기')));
     }
     input.addEventListener('blur', () => { dirty = false; if (NODE_TYPES[node.type].instant && node.type !== 'frame') this.recompute(node).then(() => this.refreshDependents(node)); });
     const wrap = h(`label.field${f.kind === 'check' ? '.inline' : ''}${f.wide ? '.wide' : ''}`, { title: f.hint || '' }, f.label ? h('span', {}, f.label) : null, input);
@@ -345,11 +345,55 @@ export class Canvas {
     else if (item.type === 'video' && !item.still) media = h('video', { src: url, preload: 'metadata', muted: true, loop: true, playsInline: true, onpointerenter: (e) => e.target.play().catch(() => {}), onpointerleave: (e) => e.target.pause() });
     else if (item.type === 'audio') media = h('audio', { src: url, controls: true, preload: 'none' });
     else media = h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async', draggable: false });
-    return h(`div.thumb${picked ? '.picked' : ''}`, { onclick: (e) => { if (e.target.closest('a,audio')) return; if (onPick && !picked) onPick(); else open(); }, ondblclick: open },
+    return h(`div.thumb${picked ? '.picked' : ''}`, { title: '누르면 크게 보기 · 캔버스 빈 곳으로 끌어내면 레퍼런스로 꺼내기', onpointerdown: (e) => this.startThumbDrag(e, item, info), onclick: (e) => { if (this.dragged || e.target.closest('a,audio')) return; if (onPick && !picked) onPick(); else open(); }, ondblclick: open },
       media,
       index != null ? h('b.no', {}, index) : null,
       item.demo ? h('span.tag', {}, item.still ? '데모 · 영상 자리' : '데모') : item.type === 'video' ? h('span.tag', {}, '영상') : null,
       url && !item.local ? h('a.dl', { href: url, target: '_blank', rel: 'noopener', title: '새 탭에서 열기' }, '열기') : null);
+  }
+  // Drag a result out of its node and drop it on empty canvas: it becomes a 미디어 불러오기 node, ready to connect as a reference.
+  startThumbDrag(e, item, info) {
+    if (e.button !== 0 || e.target.closest('a,audio') || !item.url) return;
+    const s = { x: e.clientX, y: e.clientY };
+    let ghost = null;
+    this.drag(e, (ev) => {
+      if (!ghost) {
+        if (Math.hypot(ev.clientX - s.x, ev.clientY - s.y) < 8) return;
+        const url = displayUrl(item.url);
+        ghost = h('div.drag-ghost', {}, item.type === 'audio' ? '오디오' : item.type === 'video' && !item.still ? h('video', { src: url, muted: true, preload: 'metadata' }) : h('img', { src: url, alt: '' }));
+        document.body.append(ghost); this.dragged = true; this.stage.classList.add('dropping');
+      }
+      ghost.style.left = `${ev.clientX}px`; ghost.style.top = `${ev.clientY}px`;
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      ghost.classList.toggle('ok', !!under && this.stage.contains(under) && !under.closest('.node'));
+    }, (ev) => {
+      if (!ghost) return;
+      const ok = ghost.classList.contains('ok');
+      ghost.remove(); this.stage.classList.remove('dropping');
+      setTimeout(() => { this.dragged = false; }, 0); // the click that ends this drag must not open the viewer
+      if (ok) this.addMedia({ kind: item.type, url: item.url, name: item.name, label: [info?.title, info?.v ? `v${info.v}` : null].filter(Boolean).join(' '), ref: { jobId: item.jobId, mediaId: item.mediaId, demo: item.demo, still: item.still } }, ev.clientX, ev.clientY);
+    });
+  }
+  // A 미디어 불러오기 node holding the given media, placed under the pointer.
+  async addMedia({ kind, url, name, label, ref }, cx, cy, quiet) {
+    const at = this.toWorld(cx, cy), local = url.startsWith('idb:');
+    if (!quiet) this.graph.checkpoint();
+    const clean = Object.fromEntries(Object.entries(ref || {}).filter(([, v]) => v));
+    const node = this.graph.addNode('media', at.x - 130, at.y - 24, { kind, label: label || undefined, name: name || '', url: local ? '' : url, file: local ? url : '', ...(Object.keys(clean).length ? { ref: clean } : {}) });
+    await this.recompute(node);
+    this.select([node.id]);
+    return node;
+  }
+  // Files (or a picture dragged from another browser tab) dropped on the canvas become 미디어 불러오기 nodes too.
+  async dropFiles(e) {
+    const kindOf = (type) => ['image', 'video', 'audio'].find((k) => type.startsWith(`${k}/`));
+    const files = [...(e.dataTransfer.files || [])].filter((f) => kindOf(f.type));
+    const link = !files.length && (e.dataTransfer.getData('text/uri-list') || '').split('\n').find((l) => /^https?:\/\//.test(l));
+    if (!files.length && !link) return toast('이미지·영상·오디오 파일만 놓을 수 있습니다', 'error');
+    this.graph.checkpoint();
+    let i = 0;
+    for (const file of files) await this.addMedia({ kind: kindOf(file.type), url: await saveBlob(file), name: file.name, label: file.name.replace(/\.[^.]+$/, '') }, e.clientX + i * 28, e.clientY + i++ * 28, true);
+    if (link) await this.addMedia({ kind: /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(link) ? 'video' : /\.(mp3|wav|m4a|ogg)(\?|#|$)/i.test(link) ? 'audio' : 'image', url: link.trim(), name: link.trim().split('/').pop().split('?')[0] }, e.clientX, e.clientY, true);
   }
   board(node, items) {
     const sources = this.graph.edgesInto(node.id, 'shots').map((e) => this.graph.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x);
@@ -515,6 +559,15 @@ export class Canvas {
       const nodeEl = e.target.closest('.node');
       if (nodeEl) this.nodeMenu(this.graph.node(nodeEl.dataset.id), e.clientX, e.clientY);
       else this.addMenu(e.clientX, e.clientY);
+    });
+    // The browser's own drag of pictures and links would take over from the result drag below.
+    this.nodeLayer.addEventListener('dragstart', (e) => e.preventDefault());
+    st.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].some((t) => t === 'Files' || t === 'text/uri-list')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; st.classList.add('dropping'); } });
+    st.addEventListener('dragleave', (e) => { if (e.target === st) st.classList.remove('dropping'); });
+    st.addEventListener('drop', (e) => {
+      st.classList.remove('dropping');
+      if (e.target.closest('input[type="file"]')) return; // a file field takes its own drop
+      e.preventDefault(); this.dropFiles(e);
     });
     this.mini.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
