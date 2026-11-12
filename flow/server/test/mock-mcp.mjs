@@ -37,8 +37,9 @@ function tool(name, a) {
   calls.push({ name, args: a });
   const p = a.params || {};
   if (name === 'generate_image' || name === 'generate_video' || name === 'upscale_image') {
-    if (p.get_cost) return ok({ cost: { credits: name === 'generate_video' ? 35 : 2, credits_exact: name === 'generate_video' ? 35 : 2 } });
+    if (p.get_cost) { const c = p.draft_job_id ? (p.resolution === '4k' ? 272 : 128) : name === 'generate_video' ? 35 : 2; return ok({ cost: { credits: c, credits_exact: c } }); }
     if (name !== 'upscale_image' && !p.model) return ok({ error: 'model is required' });
+    if (p.draft_job_id && !jobs.has(p.draft_job_id)) return ok({ error: `unknown draft ${p.draft_job_id}` });
     for (const m of p.medias || []) if (!uploads.has(m.value) && !jobs.has(m.value)) return ok({ error: `unknown media ${m.value}` });
     const ids = Array.from({ length: p.count || 1 }, () => crypto.randomUUID());
     for (const id of ids) jobs.set(id, { kind: name === 'generate_video' ? 'video' : 'image', prompt: p.prompt || '', readyAt: Date.now() + DELAY, fail: /FAIL/.test(p.prompt || '') });

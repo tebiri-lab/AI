@@ -1,5 +1,5 @@
 // The canvas: pan/zoom, node cards, typed ports, edges, selection, minimap.
-import { NODE_TYPES, CATEGORIES } from './nodes.js';
+import { NODE_TYPES, CATEGORIES, finalResolutions } from './nodes.js';
 import { TYPE_LABEL } from './graph.js';
 import { displayUrl, saveBlob } from './media.js';
 import { h, toast, menu, palette, tabPicker, copyText, lightbox } from './ui.js';
@@ -281,11 +281,19 @@ export class Canvas {
       const text = texts.map((t) => t.text).join('\n\n');
       box.append(h('pre.text', {}, text.length > 1200 ? `${text.slice(0, 1200)}…` : text), h('button.small', { onclick: async () => toast((await copyText(text)) ? '복사했습니다' : '복사하지 못했습니다') }, '복사'));
     }
-    if (node.history?.length) box.append(h('button.small', { title: '지금 결과와 바로 전 결과를 맞바꿉니다', onclick: () => {
-      const [prev, ...rest] = node.history;
-      node.history = [...rest, node.result]; node.result = prev; node.data.pick = 0; node.sig = null;
-      this.paintPreview(node); this.refreshDependents(node); this.graph.emit('node:data', node);
-    } }, `이전 결과 보기 (${node.history.length})`));
+    // Versions: every generation on this node, oldest first. Pressing one makes it the result the next nodes use.
+    const versions = def.spends ? this.engine.versions(node).filter((r) => r.v) : [];
+    if (versions.length) {
+      const cur = node.result;
+      const about = (r) => [`v${r.v}`, r.request?.finalOf ? `v${r.request.finalOf} 드래프트를 ${r.request.resolution}로 완성` : r.request?.draft ? '드래프트' : '', r.request?.model, r.at ? new Date(r.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''].filter(Boolean).join(' · ');
+      box.prepend(h('div.versions', { role: 'group', 'aria-label': '버전' },
+        versions.map((r) => h(`button${r === cur ? '.on' : ''}`, { title: about(r), 'aria-pressed': String(r === cur), onclick: () => { if (r !== cur) this.engine.showVersion(node, r.v); } }, `v${r.v}`)),
+        h('span', {}, about(cur).replace(/^v\d+ · /, ''))));
+    }
+    const picked = media[Math.min(media.length - 1, +node.data.pick || 0)];
+    for (const res of finalResolutions(node, picked)) {
+      box.append(h('button.small.final', { title: '드래프트를 이 해상도로 다시 생성합니다 (업스케일이 아니라 Higgsfield의 Generate in 1080p/4K). 크레딧이 듭니다.', onclick: () => this.actions.finalize(node, picked, res) }, `${res === '4k' ? '4K' : res}로 완성`));
+    }
   }
   thumb(item, { picked, onPick, index } = {}) {
     const url = displayUrl(item.url);

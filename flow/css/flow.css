@@ -217,3 +217,9 @@ pre.cmd { margin: 0 0 8px; padding: 8px; background: #0d0f12; border-radius: 6px
 .doc-row .name { flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; padding: 2px 0; white-space: normal; }
 .doc-row .name b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-row .name small { color: var(--muted); }
+
+.versions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.versions button { padding: 1px 7px; font: 11px var(--mono); border-radius: 999px; background: transparent; color: var(--muted); }
+.versions button.on { background: var(--accent-2); border-color: var(--accent-2); color: #111; font-weight: 700; }
+.versions span { font-size: 11px; color: var(--muted); margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+button.small.final { color: var(--accent-2); border-color: #5a4f1c; }

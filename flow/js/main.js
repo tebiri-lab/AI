@@ -2,7 +2,7 @@
 import { Graph, emptyDoc } from './graph.js';
 import { Engine } from './engine.js';
 import { Canvas } from './canvas.js';
-import { NODE_TYPES, buildRequest } from './nodes.js';
+import { NODE_TYPES, buildRequest, finalizeRequest } from './nodes.js';
 import { TEMPLATES } from './templates.js';
 import { initMedia, sweepMedia } from './media.js';
 import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS } from './providers.js';
@@ -65,6 +65,19 @@ const actions = {
     }
     if (node.cost !== text) { node.cost = text; canvas.paintStatus(node); }
   },
+  // "1080p로 완성 / 4K로 완성": render the picked draft again at full resolution. Shows the price first when it is known.
+  async finalize(node, item, resolution) {
+    if (engine.isRunning(node.id)) return;
+    const label = resolution === '4k' ? '4K' : resolution;
+    let costLine = '';
+    if (settings.mode === 'bridge' && serverReady(settings.server)) {
+      const credits = await PROVIDERS.bridge.cost(finalizeRequest(node, item, resolution), { signal: new AbortController().signal, progress() {} }).catch(() => null);
+      if (credits != null) costLine = ` 예상 크레딧: ${credits}.`;
+    }
+    if (settings.mode !== 'demo' && !(await confirmBox(`${label}로 완성`, `v${node.result.v} 드래프트를 ${label}로 다시 생성합니다.${costLine} 드래프트와 같은 길이로 만들어지고, 결과는 이 노드의 새 버전으로 들어옵니다.`, '생성'))) return;
+    updateRunState(true);
+    if (!(await engine.finalize(node, item, resolution, finalizeRequest))) toast('완성하지 못했습니다. 노드 아래쪽 글을 확인하세요.', 'error');
+  },
   // "AI로 쓰기" on a text node: Claude writes the prompt from the instruction and the connected reference texts.
   async write(node) {
     const ask = (node.data.ask || '').trim();
@@ -85,7 +98,8 @@ const actions = {
         const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) });
         const body = await res.json().catch(() => ({}));
         if (res.ok) text = body.text;
-        else if (res.status !== 501) throw new Error(body.error || '글을 쓰지 못했습니다');
+        // Claude Code on this computer could not write (not installed, or signed out): say why and fall back to the chat hand-off below.
+        else if (res.status !== 501) toast(/authenticat|OAuth|login|log in/i.test(body.error || '') ? '이 컴퓨터의 Claude Code 로그인이 만료되었습니다. 터미널에서 claude 를 실행해 /login 하면 바로 쓰기가 됩니다. 지금은 Claude 채팅 전달로 진행합니다.' : `이 컴퓨터의 Claude Code로 쓰지 못했습니다 (${(body.error || '알 수 없는 오류').slice(0, 120)}). Claude 채팅 전달로 진행합니다.`, 'error');
       }
       // No bridge, or no Claude Code on this computer: hand the request to a Claude chat by copy and paste.
       if (text == null) text = await relayBox(prompt, 'text');
@@ -302,7 +316,7 @@ async function drawConn() {
       if (!bridge.online) {
         toast('브리지를 켜는 중입니다');
         location.href = 'flowbridge://start';
-        for (let i = 0; i < 12 && !bridge.online; i++) { await new Promise((res) => setTimeout(res, 1000)); await refreshBridge(); }
+        for (let i = 0; i < 25 && !bridge.online; i++) { await new Promise((res) => setTimeout(res, 1000)); await refreshBridge(); }
       }
       if (bridge.online) { await autoConnect(); library.sync(); }
       drawConn();
