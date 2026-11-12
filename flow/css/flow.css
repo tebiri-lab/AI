@@ -257,3 +257,7 @@ button.small.final { color: var(--accent-2); border-color: #5a4f1c; }
 .ref-strip figcaption { padding: 3px 5px; font-size: 11px; color: var(--t-image); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fields .info.boxed { padding: 8px; background: #0d0f12; border-radius: 6px; color: var(--text); white-space: pre-wrap; max-height: 260px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
 .strip.small .thumb { flex: 0 0 96px; }
+
+.ref-strip figure.can-open { cursor: zoom-in; }
+.ref-strip figure.can-open:hover, .ref-strip figure.can-open:focus-visible { border-color: var(--t-image); outline: none; }
+.lightbox-caption { position: absolute; left: 16px; top: 16px; padding: 5px 10px; border-radius: 6px; background: rgba(0,0,0,.6); color: var(--t-image); font-weight: 600; }
