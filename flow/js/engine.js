@@ -148,6 +148,19 @@ export class Engine {
     node.result = chosen; node.sig = chosen.sig || null; node.data.pick = chosen.pick || 0;
     this.graph.emit('node:result', node);
   }
+  // Take results that already exist on the server (picked from the generation history) in as a new version of the node.
+  adopt(node, items, request) {
+    const v = this.nextVersion(node);
+    if (node.result?.items?.length) {
+      node.result.pick = +node.data.pick || 0;
+      node.history = [node.result, ...(node.history || [])].slice(0, HISTORY_MAX);
+    }
+    node.result = { items, at: Date.now(), request, v, adopted: true };
+    // Not made from this node's current settings, so there is nothing to compare for "settings changed".
+    node.sig = null; node.data.pick = 0; node.status = 'done'; node.message = '';
+    delete node.pending;
+    this.graph.emit('node:result', node);
+  }
   // Render the picked draft again at full resolution, as a new version on the same node.
   finalize(node, item, resolution, buildReq) {
     const from = node.result.v;

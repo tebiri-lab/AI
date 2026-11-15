@@ -66,7 +66,8 @@ export function findUrls(data, kind) {
   const full = [], small = [];
   walk(data, (v, k) => {
     if (typeof v !== 'string' || !/^https?:\/\//.test(v)) return;
-    (/thumb|poster|preview|cover|min_/i.test(k) ? small : full).push(v);
+    // Higgsfield returns each result twice: rawUrl (the file) and minUrl (a small preview, …_min.webp).
+    (/thumb|poster|preview|cover|^min|min_/i.test(k) || /_min\.\w+(\?|$)/.test(v) ? small : full).push(v);
   });
   const list = full.length ? full : small;
   const typed = list.filter((u) => kindOfUrl(u, null) === kind);
@@ -229,6 +230,18 @@ const mcp = {
     if (!serverReady(server)) throw new Error('브리지 연결이 끊겨 결과를 받지 못했습니다');
     ctx.progress('생성 결과를 이어받는 중');
     return waitJobs(ids, kind, ctx, server);
+  },
+  // One page of the account's finished generations (newest first), for attaching a result that already exists to a node.
+  async history(kind, cursor) {
+    this.ready();
+    const data = await call(settings.server, 'show_generations', { type: kind, size: 24, ...(cursor != null ? { cursor } : {}) });
+    const items = (data.items || []).filter((g) => g?.id && (g.results?.rawUrl || g.results?.url)).map((g) => ({
+      id: g.id, type: g.type || kind, model: g.model, at: g.createdAt ? g.createdAt * 1000 : 0,
+      url: g.results.rawUrl || g.results.url, thumb: g.results.minUrl || g.results.rawUrl || g.results.url,
+      prompt: g.params?.prompt || '', aspect: g.params?.aspect_ratio, resolution: g.params?.resolution, duration: g.params?.duration,
+      refs: (g.params?.input_images || []).filter((r) => r?.url).map((r, i) => ({ label: `@Image ${i + 1}`, type: 'image', url: r.url })),
+    }));
+    return { items, next: data.next_cursor ?? null };
   },
   // Credits a generation would cost, without submitting it (the tools' get_cost preflight).
   async cost(req, ctx) {

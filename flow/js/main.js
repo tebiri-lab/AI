@@ -71,6 +71,49 @@ const actions = {
     }
     if (node.cost !== text) { node.cost = text; canvas.paintStatus(node); }
   },
+  // "생성 기록에서 결과 가져오기": pick generations that already exist on Higgsfield (made elsewhere, or lost to a reload
+  // before results could be picked up) and attach them to this node as a new version.
+  async adopt(node) {
+    if (settings.mode !== 'bridge' || !serverReady(settings.server)) return toast('생성 기록은 MCP에 연결된 상태에서 불러올 수 있습니다', 'error');
+    const kind = node.type;
+    let mine = '';
+    try { mine = buildRequest(node, engine.inputsOf(node)).prompt.trim(); } catch { /* no prompt yet: nothing to match against */ }
+    const picked = new Map();
+    const grid = h('div.history-grid'), more = h('button', {}, '더 보기'), status = h('p.hint', {}, '불러오는 중…');
+    let cursor = null, take = null;
+    const sync = () => { if (!take) return; take.disabled = !picked.size; take.textContent = picked.size ? `${picked.size}개 가져오기` : '가져오기'; };
+    const card = (g) => {
+      const same = mine && g.prompt.trim() === mine;
+      const el = h(`button.history-card${same ? '.same' : ''}`, { title: g.prompt.slice(0, 600), 'aria-pressed': 'false', onclick: () => {
+        if (picked.has(g.id)) picked.delete(g.id); else picked.set(g.id, g);
+        el.classList.toggle('on', picked.has(g.id)); el.setAttribute('aria-pressed', String(picked.has(g.id))); sync();
+      } },
+        /\.(mp4|webm|mov)(\?|$)/i.test(g.thumb) ? h('video', { src: g.thumb, muted: true, preload: 'metadata' }) : h('img', { src: g.thumb, alt: '', loading: 'lazy' }),
+        h('span', {}, h('b', {}, g.model || ''), h('small', {}, `${when(g.at)}${same ? ' · 이 노드의 프롬프트와 같음' : ''}`)));
+      return el;
+    };
+    const load = async () => {
+      more.disabled = true;
+      try {
+        const page = await PROVIDERS.bridge.history(kind, cursor);
+        // Results made from exactly this node's prompt come first: those are most likely the ones looked for.
+        const list = cursor == null ? [...page.items.filter((g) => mine && g.prompt.trim() === mine), ...page.items.filter((g) => !(mine && g.prompt.trim() === mine))] : page.items;
+        grid.append(...list.map(card));
+        cursor = page.next; more.hidden = cursor == null; more.disabled = false;
+        status.textContent = grid.children.length ? '가져올 결과를 누르세요. 여러 개를 고르면 한 버전의 변형으로 함께 들어옵니다.' : `생성 기록에 ${kind === 'video' ? '영상' : '이미지'}이 없습니다.`;
+      } catch (e) { status.textContent = `생성 기록을 불러오지 못했습니다: ${e.message}`; more.hidden = true; }
+    };
+    more.onclick = load;
+    const shown = modal(`생성 기록에서 가져오기 — ${node.data.label || NODE_TYPES[node.type].title}`, h('div', {}, status, grid, h('div.history-more', {}, more)), [{ label: '취소', value: false }, { label: '가져오기', value: true, primary: true }], 'wide');
+    take = [...document.querySelectorAll('.modal-back')].pop().querySelector('.primary');
+    sync(); load();
+    if (!(await shown)) return;
+    if (!picked.size) return;
+    const list = [...picked.values()], first = list[0];
+    graph.checkpoint();
+    engine.adopt(node, list.map((g) => ({ type: g.type, url: g.url, jobId: g.id })), { model: first.model, prompt: first.prompt, resolution: first.resolution, aspect: first.aspect, duration: first.duration, refs: first.refs });
+    toast(`생성 기록의 결과 ${list.length}개를 v${node.result.v} 버전으로 가져왔습니다`);
+  },
   // "1080p로 완성 / 4K로 완성": render the picked draft again at full resolution. Shows the price first when it is known.
   async finalize(node, item, resolution) {
     if (engine.isRunning(node.id)) return;
