@@ -401,12 +401,17 @@ export class Canvas {
     // Border colour: yellow while working (generating, or AI writing a text), green once that work is done and still current.
     const state = node.writing ? 'running' : def.instant ? (node.wrote ? 'done' : 'idle') : node.status || 'idle';
     el.dataset.status = state;
-    el.classList.toggle('stale', stale);
+    // The instruction was edited after the AI wrote from it: the text below no longer matches what is asked.
+    const d = node.data;
+    const askChanged = !node.writing && ((node.type === 'text' && d.askUsed != null && (d.ask || '').trim() !== d.askUsed) || (node.type === 'review' && d.noteUsed != null && (d.note || '').trim() !== d.noteUsed));
+    el.classList.toggle('stale', stale || askChanged);
+    el.classList.toggle('ask-changed', askChanged);
     el.classList.toggle('locked', !!node.data.locked);
     const chip = el.querySelector('.chip');
     let text = def.instant ? '' : STATUS[node.status] || '';
     if (node.status === 'running' && node.startedAt) text = `${node.message || '실행 중'} · ${Math.round((Date.now() - node.startedAt) / 1000)}초`;
     else if (node.writing) text = `${node.type === 'review' ? '결과를 보는 중' : node.type === 'frame' ? '프레임 추출 중' : 'AI가 쓰는 중'} · ${Math.round((Date.now() - (node.startedAt || Date.now())) / 1000)}초`;
+    else if (askChanged) text = node.type === 'review' ? '요청 바뀜 · 다시 받기' : '지시 바뀜 · 다시 쓰기';
     else if (def.instant && node.wrote) text = node.type === 'review' ? '피드백 완료' : 'AI 작성 완료';
     else if (node.data.locked) text = '잠금';
     else if (stale) text = '설정 바뀜';

@@ -293,3 +293,7 @@ button.small.final { color: var(--accent-2); border-color: #5a4f1c; }
 .modal .crop-box { width: fit-content; max-width: 100%; margin: 0 auto; }
 .modal .field.crop > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
 .crop-foot span { display: flex; gap: 6px; }
+
+/* The instruction changed since the AI wrote from it: point at the button that redoes it. */
+.node.ask-changed { border-color: var(--accent-2); border-style: dashed; }
+.node.ask-changed .fields .action:first-of-type { background: var(--accent-2); border-color: var(--accent-2); color: #111; font-weight: 600; }
