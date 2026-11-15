@@ -146,7 +146,7 @@ const actions = {
     graph.connect({ node: node.id, port: 'out' }, { node: made.id, port: 'prompt' });
     canvas.select([made.id]);
     toast('원래 노드를 복사해 수정 프롬프트에 연결했습니다. ▶를 누르면 생성합니다.');
-    if (el) requestAnimationFrame(() => canvas.fit([node, made]));
+    if (el) requestAnimationFrame(() => canvas.reveal([node, made]));
   },
   // "AI로 쓰기" on a text node: Claude writes the prompt from the instruction and the connected reference texts.
   async write(node) {
@@ -256,7 +256,7 @@ function openDoc(doc, fit = true) {
   engine.stop(); graph.load(doc);
   // Fill in what instant nodes (text, joins, boards) produce so previews and "settings changed" marks are right from the start.
   for (const id of graph.order(graph.doc.nodes.map((n) => n.id))) { const n = graph.node(id); if (NODE_TYPES[n.type].instant) canvas.recompute(n); }
-  if (fit) requestAnimationFrame(() => canvas.fit());
+  if (fit) requestAnimationFrame(() => canvas.fit(undefined, false));
   else canvas.applyView();
 }
 // Leave the current workflow (saving it first) and show another one.
@@ -269,6 +269,7 @@ async function switchTo(doc, fit = true) {
     openDoc(doc, fit);
     await library.put(graph.doc);
     library.setLast(graph.doc.id);
+    resumePending();
   } finally { opening = false; }
 }
 const asNew = (doc) => ({ ...doc, id: library.newId(), updatedAt: undefined });
@@ -382,7 +383,17 @@ const MODES = [
   { id: 'bridge', title: 'MCP 연결', text: '내 컴퓨터에서 브리지 서버를 켜고 Higgsfield MCP에 로그인해 캔버스에서 바로 생성합니다.' },
   { id: 'relay', title: 'Claude 전달', text: '서버 없이 씁니다. 노드가 만든 요청을 Higgsfield 커넥터가 켜진 Claude 채팅에 붙여넣고, 결과 주소를 다시 붙여넣습니다.' },
 ];
+// Generations that were still running when the page was closed or reloaded: take their results in once the
+// server they run on is reachable. Until then the node says so.
+function resumePending() {
+  for (const n of graph.doc.nodes) {
+    if (!n.pending || engine.isRunning(n.id)) continue;
+    if (settings.mode === 'bridge' && serverReady(n.pending.server)) { engine.resume(n); updateRunState(true); }
+    else if (!n.message) { n.message = '새로고침 전에 시작한 생성이 있습니다. MCP에 연결되면 결과를 이어서 받습니다.'; graph.emit('node:status', n); }
+  }
+}
 function paintConn() {
+  resumePending();
   const btn = $('btnConn');
   const ready = serverReady(settings.server);
   $('connLabel').textContent = settings.mode === 'demo' ? '데모' : settings.mode === 'relay' ? 'Claude 전달' : ready ? `${bridge.servers.find((x) => x.id === settings.server)?.name || 'MCP'} 연결됨` : bridge.online ? '로그인 필요' : '브리지 꺼짐';

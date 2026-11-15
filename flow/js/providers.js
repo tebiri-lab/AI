@@ -154,12 +154,12 @@ async function mediaValue(item, ctx) {
   return id;
 }
 
-async function waitJobs(ids, kind, ctx) {
+async function waitJobs(ids, kind, ctx, server = settings.server) {
   const done = new Map();
   let pending = ids.map((job_id, index) => ({ index, job_id }));
   while (pending.length) {
     if (ctx.signal.aborted) throw new DOMException('중단됨', 'AbortError');
-    const data = await call(settings.server, 'jobs_wait', { jobs: pending, timeout_seconds: 15 }, ctx.signal);
+    const data = await call(server, 'jobs_wait', { jobs: pending, timeout_seconds: 15 }, ctx.signal);
     for (const j of data.jobs || []) {
       const status = String(j.status || '').toLowerCase();
       if (/fail|error|cancel|nsfw|reject/.test(status)) throw new Error(j.error || j.message || `생성 실패 (${j.status})`);
@@ -194,6 +194,8 @@ async function submit(tool, params, kind, ctx) {
     if (urls.length) return urls.map((url) => ({ type: kind, url }));
     throw new Error('생성 요청의 답에서 작업 번호를 찾지 못했습니다');
   }
+  // The jobs now exist on the server: tell the node, so a page reload can pick the result up instead of losing it.
+  ctx.onJobs?.(ids, kind, settings.server);
   ctx.progress('생성 중');
   return waitJobs(ids, kind, ctx);
 }
@@ -221,6 +223,12 @@ const mcp = {
     this.ready();
     const { width, height } = await imageSize(item.url);
     return submit('upscale_image', { image_id: await mediaValue(item, ctx), width, height, resolution }, 'image', ctx);
+  },
+  // Wait for jobs that were submitted earlier (before a reload) and return their results.
+  async collect(ids, kind, ctx, server) {
+    if (!serverReady(server)) throw new Error('브리지 연결이 끊겨 결과를 받지 못했습니다');
+    ctx.progress('생성 결과를 이어받는 중');
+    return waitJobs(ids, kind, ctx, server);
   },
   // Credits a generation would cost, without submitting it (the tools' get_cost preflight).
   async cost(req, ctx) {
