@@ -300,7 +300,7 @@ export const NODE_TYPES = {
     },
   },
   frame: {
-    title: '프레임 추출', category: 'edit', hint: '영상의 마지막 프레임을 다음 샷의 시작 이미지로', instant: true, width: 260,
+    title: '프레임 추출', category: 'edit', hint: '영상의 마지막 프레임을 다음 샷의 시작 이미지로', instant: true, cache: true, slow: true, width: 260,
     defaults: { at: 'last', time: 0 },
     inputs: [{ key: 'video', label: '영상', type: 'video' }],
     outputs: [{ key: 'out', label: '이미지', type: 'image' }],
@@ -311,7 +311,7 @@ export const NODE_TYPES = {
     preview: 'media',
     run: async ({ node, inputs }) => {
       const item = inputs.video?.[0];
-      if (!item) throw new Error('영상을 연결하세요');
+      if (!item) return { items: [] }; // nothing connected (or not generated) yet
       const url = await grabFrame(item.url, node.data.at, +node.data.time || 0);
       return { items: [{ type: 'image', url, name: 'frame.png', local: true }] };
     },

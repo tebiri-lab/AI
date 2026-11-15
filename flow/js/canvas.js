@@ -2,7 +2,7 @@
 import { NODE_TYPES, CATEGORIES, finalResolutions, TAG_PORTS } from './nodes.js';
 import { TYPE_LABEL } from './graph.js';
 import { displayUrl, saveBlob } from './media.js';
-import { h, toast, menu, palette, tabPicker, copyText, lightbox } from './ui.js';
+import { h, toast, menu, palette, tabPicker, copyText, lightbox, modal } from './ui.js';
 import { listModels, getModel, recentModels, touchModel } from './models.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -98,20 +98,37 @@ export class Canvas {
   refreshDependents(node) {
     for (const id of this.graph.downstream(node.id)) {
       const n = this.graph.node(id);
-      if (NODE_TYPES[n.type].instant && !this.engine.isRunning(id) && n.type !== 'frame') this.recompute(n);
+      // A node that takes a moment (frame extraction) tells the nodes after it once it is done.
+      if (NODE_TYPES[n.type].instant && !this.engine.isRunning(id)) this.recompute(n).then((changed) => { if (changed && NODE_TYPES[n.type].slow) this.refreshDependents(n); });
       else this.paintStatus(n);
       this.paintTags(n);
       if (NODE_TYPES[n.type].liveFields) this.paintFields(n); // its controls show what is connected to it
     }
   }
+  // Work out an instant node again. Returns true when its result changed.
   async recompute(n) {
-    // Nodes that make a new file each time (crop) are left alone while what they would make has not changed.
-    if (NODE_TYPES[n.type].cache && n.result && n.sig === this.engine.signature(n)) return;
+    const def = NODE_TYPES[n.type];
+    // Nodes that make a new file each time (frame, crop) are left alone while what they would make has not changed.
+    if (def.cache && n.result && n.sig === this.engine.signature(n)) return false;
+    // One at a time per node: a request that arrives meanwhile runs once more afterwards with the latest inputs.
+    if (n.busy) { n.again = true; return false; }
+    n.busy = true;
+    if (def.slow) { n.writing = true; n.startedAt = Date.now(); this.paintStatus(n); }
+    let ok = true;
     try {
-      const res = await NODE_TYPES[n.type].run({ node: n, inputs: this.engine.inputsOf(n) });
-      n.result = { items: res.items, at: Date.now() }; n.sig = this.engine.signature(n); n.status = 'done'; n.message = '';
-    } catch { return; }
-    this.paintPreview(n); this.paintStatus(n);
+      const sig = this.engine.signature(n);
+      const res = await def.run({ node: n, inputs: this.engine.inputsOf(n) });
+      n.result = { items: res.items, at: Date.now() }; n.sig = sig; n.status = 'done'; n.message = '';
+    } catch (e) {
+      ok = false;
+      if (def.cache) { n.status = 'error'; n.message = e?.message || String(e); }
+    }
+    n.busy = false;
+    if (def.slow) { n.writing = false; delete n.startedAt; }
+    if (!this.graph.node(n.id)) return false; // deleted meanwhile
+    this.paintPreview(n); this.paintStatus(n); this.paintFold(n);
+    if (n.again) { n.again = false; return (await this.recompute(n)) || ok; }
+    return ok;
   }
 
   renderAll() {
@@ -268,17 +285,22 @@ export class Canvas {
       } });
       if (node.data.file) return h('label.field', {}, h('span', {}, f.label), h('span.file', {}, h('em', {}, node.data.name || '파일'), h('button', { onclick: () => { this.graph.checkpoint(); node.data.file = ''; node.data.name = ''; delete node.data.ref; this.paintFields(node); this.recompute(node).then(() => this.refreshDependents(node)); this.graph.emit('node:data', node); } }, '빼기')));
     }
-    input.addEventListener('blur', () => { dirty = false; if (NODE_TYPES[node.type].instant && node.type !== 'frame') this.recompute(node).then(() => this.refreshDependents(node)); });
+    input.addEventListener('blur', () => { dirty = false; if (NODE_TYPES[node.type].instant) this.recompute(node).then(() => this.refreshDependents(node)); });
     const wrap = h(`label.field${f.kind === 'check' ? '.inline' : ''}${f.wide ? '.wide' : ''}`, { title: f.hint || '' }, f.label ? h('span', {}, f.label) : null, input);
     return wrap;
   }
 
   // Crop editor: the connected picture with a frame on it. Drag inside the frame to move it, a corner to resize it,
   // outside it to draw a new one. The frame is kept in fractions of the picture, so it holds when the picture is replaced.
-  cropField(node) {
+  cropField(node, large) {
     const src = this.engine.inputsOf(node).image?.[0];
     const url = src && displayUrl(src.url);
-    if (!url) return h('p.info', {}, '왼쪽 "이미지" 포트에 이미지를 연결하세요. 영상에서 자르려면 영상 → 프레임 추출 → 크롭 순서로 연결합니다.');
+    if (!url) {
+      const from = this.graph.edgesInto(node.id, 'image').map((e) => this.graph.node(e.from.node))[0];
+      if (!from) return h('p.info', {}, '왼쪽 "이미지" 포트에 이미지를 연결하면 여기에 그림과 자르는 틀이 나타납니다. 영상에서 자르려면 영상 → 프레임 추출 → 크롭 순서로 연결합니다.');
+      const name = from.data.label || NODE_TYPES[from.type].title;
+      return h('p.info', {}, from.status === 'error' ? `연결된 "${name}"에서 그림을 받지 못했습니다: ${from.message}` : from.writing || from.busy ? `"${name}"이(가) 그림을 준비하는 중입니다…` : NODE_TYPES[from.type].instant ? `연결된 "${name}"에 아직 그림이 없습니다. 그 앞의 영상·이미지가 생성되면 여기에 그림과 자르는 틀이 자동으로 나타납니다.` : `연결된 "${name}"에 아직 결과가 없습니다. 그 노드를 ▶로 실행하면 여기에 그림과 자르는 틀이 나타납니다.`);
+    }
     const img = h('img', { src: url, alt: '', draggable: false });
     const frame = h('div.crop-rect', {}, ['nw', 'ne', 'sw', 'se'].map((c) => h(`i.crop-handle.${c}`, { dataset: { corner: c } })));
     const size = h('small.crop-size');
@@ -339,8 +361,10 @@ export class Canvas {
       }, () => { if (moved) apply(node.data.rect, true); else { this.cropping = false; this.graph.undoStack.pop(); } });
     });
     const whole = h('button.small', { onclick: () => { this.graph.checkpoint(); apply(fit({ x: 0, y: 0, w: 1, h: 1 }), true); } }, '전체로');
+    // The same editor in a big window, for cutting precisely.
+    const big = large ? null : h('button.small', { onclick: async () => { await modal('크롭', this.cropField(node, true), [{ label: '완료', primary: true }], 'wide'); this.paintFields(node); } }, '크게 편집');
     draw();
-    return h('div.field.wide.crop', {}, h('span', {}, '자를 부분 — 안쪽을 끌면 이동, 모서리를 끌면 크기, 바깥을 끌면 새로 그리기'), box, h('div.crop-foot', {}, size, whole));
+    return h('div.field.wide.crop', {}, h('span', {}, '자를 부분 — 안쪽을 끌면 이동, 모서리를 끌면 크기, 바깥을 끌면 새로 그리기'), box, h('div.crop-foot', {}, size, h('span', {}, big, whole)));
   }
   // Model chooser: a button that opens a list with a tab per company and the recently used models first.
   modelField(node, f) {
@@ -382,7 +406,7 @@ export class Canvas {
     const chip = el.querySelector('.chip');
     let text = def.instant ? '' : STATUS[node.status] || '';
     if (node.status === 'running' && node.startedAt) text = `${node.message || '실행 중'} · ${Math.round((Date.now() - node.startedAt) / 1000)}초`;
-    else if (node.writing) text = `${node.type === 'review' ? '결과를 보는 중' : 'AI가 쓰는 중'} · ${Math.round((Date.now() - (node.startedAt || Date.now())) / 1000)}초`;
+    else if (node.writing) text = `${node.type === 'review' ? '결과를 보는 중' : node.type === 'frame' ? '프레임 추출 중' : 'AI가 쓰는 중'} · ${Math.round((Date.now() - (node.startedAt || Date.now())) / 1000)}초`;
     else if (def.instant && node.wrote) text = node.type === 'review' ? '피드백 완료' : 'AI 작성 완료';
     else if (node.data.locked) text = '잠금';
     else if (stale) text = '설정 바뀜';

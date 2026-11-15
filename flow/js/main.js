@@ -237,7 +237,7 @@ graph.onSave = (doc) => { if (!opening && doc.id) library.put(doc); };
 function openDoc(doc, fit = true) {
   engine.stop(); graph.load(doc);
   // Fill in what instant nodes (text, joins, boards) produce so previews and "settings changed" marks are right from the start.
-  for (const id of graph.order(graph.doc.nodes.map((n) => n.id))) { const n = graph.node(id); if (NODE_TYPES[n.type].instant && n.type !== 'frame') canvas.recompute(n); }
+  for (const id of graph.order(graph.doc.nodes.map((n) => n.id))) { const n = graph.node(id); if (NODE_TYPES[n.type].instant) canvas.recompute(n); }
   if (fit) requestAnimationFrame(() => canvas.fit());
   else canvas.applyView();
 }
