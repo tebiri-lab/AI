@@ -57,7 +57,28 @@ export class Canvas {
     v.x = px - ((px - v.x) / v.k) * k; v.y = py - ((py - v.y) / v.k) * k; v.k = k;
     this.applyView();
   }
-  zoomBy(factor) { const r = this.stage.getBoundingClientRect(); this.zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor); }
+  // Glide to another view instead of jumping there (zoom buttons, 맞춤, 정렬). Any wheel or pointer input stops it.
+  animateTo(target, ms = 260) {
+    cancelAnimationFrame(this.viewAnim);
+    if (!ms || matchMedia('(prefers-reduced-motion: reduce)').matches) { Object.assign(this.view, target); return this.applyView(); }
+    const from = { ...this.view }, t0 = performance.now();
+    // The point at the middle of the screen moves in a straight line while the zoom changes evenly, so nothing swings sideways.
+    const r = this.stage.getBoundingClientRect(), cx = r.width / 2, cy = r.height / 2;
+    const w0 = { x: (cx - from.x) / from.k, y: (cy - from.y) / from.k }, w1 = { x: (cx - target.x) / target.k, y: (cy - target.y) / target.k };
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms), e = 1 - (1 - t) ** 3;
+      const k = from.k * (target.k / from.k) ** e, wx = w0.x + (w1.x - w0.x) * e, wy = w0.y + (w1.y - w0.y) * e;
+      Object.assign(this.view, t === 1 ? target : { k, x: cx - wx * k, y: cy - wy * k });
+      this.applyView();
+      if (t < 1) this.viewAnim = requestAnimationFrame(step);
+    };
+    this.viewAnim = requestAnimationFrame(step);
+  }
+  zoomBy(factor) {
+    const v = this.view, r = this.stage.getBoundingClientRect(), px = r.width / 2, py = r.height / 2;
+    const k = Math.max(0.15, Math.min(2.5, v.k * factor));
+    this.animateTo({ k, x: px - ((px - v.x) / v.k) * k, y: py - ((py - v.y) / v.k) * k }, 160);
+  }
   bounds(nodes = this.graph.doc.nodes) {
     if (!nodes.length) return null;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -68,12 +89,22 @@ export class Canvas {
     }
     return { x0, y0, x1, y1 };
   }
-  fit(nodes) {
+  fit(nodes, animate = true) {
     const b = this.bounds(nodes?.length ? nodes : undefined), r = this.stage.getBoundingClientRect();
     if (!b || !r.width) { Object.assign(this.view, { x: 0, y: 0, k: 1 }); return this.applyView(); }
     const pad = 60, k = Math.max(0.15, Math.min(1, (r.width - pad * 2) / (b.x1 - b.x0), (r.height - pad * 2) / (b.y1 - b.y0)));
-    Object.assign(this.view, { k, x: (r.width - (b.x1 - b.x0) * k) / 2 - b.x0 * k, y: (r.height - (b.y1 - b.y0) * k) / 2 - b.y0 * k });
-    this.applyView();
+    this.animateTo({ k, x: (r.width - (b.x1 - b.x0) * k) / 2 - b.x0 * k, y: (r.height - (b.y1 - b.y0) * k) / 2 - b.y0 * k }, animate ? 260 : 0);
+  }
+  // Bring nodes into view with as little movement as possible: no zoom change when they fit at the current zoom,
+  // and no movement at all when they are already visible.
+  reveal(nodes) {
+    const b = this.bounds(nodes), r = this.stage.getBoundingClientRect(), v = this.view, pad = 40;
+    if (!b) return;
+    if ((b.x1 - b.x0) * v.k > r.width - pad * 2 || (b.y1 - b.y0) * v.k > r.height - pad * 2) return this.fit(nodes);
+    const sx0 = b.x0 * v.k + v.x, sx1 = b.x1 * v.k + v.x, sy0 = b.y0 * v.k + v.y, sy1 = b.y1 * v.k + v.y;
+    const dx = sx0 < pad ? pad - sx0 : sx1 > r.width - pad ? r.width - pad - sx1 : 0;
+    const dy = sy0 < pad ? pad - sy0 : sy1 > r.height - pad ? r.height - pad - sy1 : 0;
+    if (dx || dy) this.animateTo({ k: v.k, x: v.x + dx, y: v.y + dy });
   }
   center() { const r = this.stage.getBoundingClientRect(); return this.toWorld(r.left + r.width / 2, r.top + r.height / 2); }
 
@@ -764,9 +795,20 @@ export class Canvas {
       const ta = e.target.closest('textarea, pre, .palette-list');
       if (ta && ta.scrollHeight > ta.clientHeight && !e.ctrlKey) return;
       e.preventDefault();
-      const trackpad = !e.ctrlKey && (e.deltaX !== 0 || !Number.isInteger(e.deltaY) || Math.abs(e.deltaY) < 40);
-      if (trackpad) { this.view.x -= e.deltaX; this.view.y -= e.deltaY; this.applyView(); }
-      else this.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
+      cancelAnimationFrame(this.viewAnim);
+      // Two fingers on a trackpad move the canvas; pinching, or scrolling with Ctrl/Cmd held, zooms. A mouse wheel zooms.
+      // Which device it is, is decided once at the start of a gesture and kept until the fingers rest, so a fast
+      // swipe never turns into a zoom halfway through.
+      const now = performance.now();
+      if (now - (this.wheelAt || 0) > 300) this.wheelMouse = e.deltaX === 0 && (e.deltaMode !== 0 || (Math.abs(e.wheelDeltaY || 0) >= 120 && e.wheelDeltaY % 120 === 0));
+      this.wheelAt = now;
+      const lines = e.deltaMode === 1 ? 33 : 1;
+      if (e.ctrlKey || e.metaKey) {
+        // Pinch reports small steps; Ctrl/Cmd + scroll reports large ones. Either way one event changes the zoom by at most a fifth.
+        const d = Math.max(-0.2, Math.min(0.2, e.deltaY * lines * (e.ctrlKey && !this.wheelMouse ? 0.01 : 0.004)));
+        this.zoomAt(e.clientX, e.clientY, Math.exp(-d));
+      } else if (this.wheelMouse) this.zoomAt(e.clientX, e.clientY, Math.exp(-Math.max(-240, Math.min(240, e.deltaY * lines)) * 0.0015));
+      else { this.view.x -= e.deltaX; this.view.y -= e.deltaY; this.applyView(); }
     }, { passive: false });
     st.addEventListener('pointermove', (e) => { this.lastPointer = { x: e.clientX, y: e.clientY }; });
     st.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -805,6 +847,7 @@ export class Canvas {
     target.addEventListener('pointermove', mv); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
   }
   onDown(e) {
+    cancelAnimationFrame(this.viewAnim);
     if (e.button === 2) return;
     const port = e.target.closest('.port');
     if (port && e.button === 0) return this.startConnect(e, port);

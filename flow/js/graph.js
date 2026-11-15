@@ -53,7 +53,7 @@ export class Graph {
   restore(json) {
     const s = JSON.parse(json);
     this.doc.nodes = s.nodes; this.doc.edges = s.edges;
-    for (const n of this.doc.nodes) { if (n.status === 'running' || n.status === 'queued') n.status = 'idle'; delete n.writing; delete n.startedAt; delete n.busy; delete n.again; }
+    for (const n of this.doc.nodes) { if (n.status === 'running' || n.status === 'queued') n.status = 'idle'; delete n.writing; delete n.startedAt; delete n.busy; delete n.again; delete n.pending; }
     this.emit('reset');
   }
   undo() { if (!this.undoStack.length) return false; this.redoStack.push(this.snapshot()); this.restore(this.undoStack.pop()); return true; }
@@ -153,7 +153,7 @@ export class Graph {
     if (!doc || !Array.isArray(doc.nodes) || !Array.isArray(doc.edges)) throw new Error('워크플로우 파일 형식이 아닙니다');
     const nodes = doc.nodes.filter((n) => NODE_TYPES[n.type]).map((n) => {
       const d = NODE_TYPES[n.type];
-      return { id: n.id || uid('n'), type: n.type, x: +n.x || 0, y: +n.y || 0, w: +n.w || d.width || 280, data: { ...structuredClone(d.defaults || {}), ...(n.data || {}) }, status: n.result ? 'done' : 'idle', result: n.result || null, sig: n.result ? n.sig || null : null, history: Array.isArray(n.history) ? n.history : [], vmax: +n.vmax || 0 };
+      return { id: n.id || uid('n'), type: n.type, x: +n.x || 0, y: +n.y || 0, w: +n.w || d.width || 280, data: { ...structuredClone(d.defaults || {}), ...(n.data || {}) }, status: n.result ? 'done' : 'idle', result: n.result || null, sig: n.result ? n.sig || null : null, history: Array.isArray(n.history) ? n.history : [], vmax: +n.vmax || 0, ...(n.pending?.ids?.length ? { pending: n.pending } : {}) };
     });
     // Results saved before versions existed are numbered oldest first.
     for (const n of nodes) {

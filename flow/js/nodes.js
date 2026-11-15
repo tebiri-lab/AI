@@ -123,8 +123,10 @@ export function buildRequest(node, inputs) {
 async function runGenerate(kind, ctx) {
   const req = buildRequest(ctx.node, ctx.inputs);
   touchModel(req.model);
+  // Known before the result arrives, so it can be kept with a generation that is still running when the page is reloaded.
+  ctx.request = { model: req.model, prompt: req.prompt, draft: !!req.params.draft, resolution: req.params.resolution, aspect: req.aspect, duration: req.duration, refs: describeRefs(req.medias) };
   const items = await ctx.provider.generate(req, ctx);
-  return { items, request: { model: req.model, prompt: req.prompt, draft: !!req.params.draft, resolution: req.params.resolution, aspect: req.aspect, duration: req.duration, refs: describeRefs(req.medias) } };
+  return { items, request: ctx.request };
 }
 
 // Finishing a draft: models with a draft mode can render a completed draft again at full resolution

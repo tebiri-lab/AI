@@ -1,7 +1,7 @@
 // Runs nodes in dependency order. Generating nodes (the ones that spend credits) are never re-run implicitly:
 // running one node reuses the existing results of the generating nodes above it and only fills in missing ones.
 import { NODE_TYPES } from './nodes.js';
-import { currentProvider, settings } from './providers.js';
+import { currentProvider, settings, PROVIDERS } from './providers.js';
 
 const HISTORY_MAX = 12;
 
@@ -153,23 +153,33 @@ export class Engine {
     const from = node.result.v;
     return this.exec(node, async (ctx) => {
       const req = buildReq(node, item, resolution);
+      ctx.request = { ...node.result.request, draft: false, resolution, finalOf: from };
       const items = await ctx.provider.generate(req, ctx);
-      return { items, request: { ...node.result.request, draft: false, resolution, finalOf: from } };
+      return { items, request: ctx.request };
     });
   }
 
-  async exec(node, runner) {
+  // A generation that was submitted before the page was reloaded: wait for its jobs and take the result in.
+  resume(node) {
+    const pend = node.pending;
+    if (!pend || this.active.has(node.id)) return null;
+    return this.exec(node, async (ctx) => ({ items: await PROVIDERS.bridge.collect(pend.ids, pend.kind, ctx, pend.server), request: pend.request }), { sig: pend.sig, startedAt: pend.at });
+  }
+
+  async exec(node, runner, resumed) {
     const g = this.graph, def = NODE_TYPES[node.type];
     const ctrl = new AbortController();
     this.active.set(node.id, ctrl);
-    node.status = 'running'; node.message = ''; node.startedAt = Date.now();
+    node.status = 'running'; node.message = ''; node.startedAt = resumed?.startedAt || Date.now();
     g.emit('node:status', node);
     const ctx = {
       node, inputs: this.inputsOf(node), provider: currentProvider(), signal: ctrl.signal,
       progress: (msg) => { node.message = msg; g.emit('node:status', node); },
       ask: this.hooks.ask, relay: this.hooks.relay,
+      // Once the server has accepted the jobs, they are written on the node and saved at once.
+      onJobs: (ids, kind, server) => { node.pending = { ids, kind, server, at: node.startedAt, sig, request: ctx.request }; g.onSave?.(g.doc); },
     };
-    const sig = this.signature(node);
+    const sig = resumed?.sig ?? this.signature(node);
     try {
       const res = await (runner || def.run)(ctx);
       if (ctrl.signal.aborted) throw new DOMException('중단됨', 'AbortError');
@@ -181,11 +191,15 @@ export class Engine {
       node.result = { items: res.items, at: Date.now(), request: res.request, sig, ...(v ? { v } : {}) };
       node.sig = sig; node.data.pick = 0;
       node.status = 'done'; node.message = '';
+      delete node.pending;
       return true;
     } catch (e) {
       const aborted = e?.name === 'AbortError';
-      node.status = aborted ? (node.result ? 'done' : 'idle') : 'error';
-      node.message = aborted ? '중단함' : (e?.message || String(e));
+      // Lost contact with the bridge while the jobs keep running on the server: keep them, to be picked up again later.
+      const offline = !aborted && node.pending && /fetch|브리지|network|연결/i.test(e?.message || '');
+      if (!offline) delete node.pending;
+      node.status = aborted || offline ? (node.result ? 'done' : 'idle') : 'error';
+      node.message = aborted ? '중단함' : offline ? '연결이 끊겨 결과를 받지 못했습니다. 다시 연결되면 이어서 받습니다.' : (e?.message || String(e));
       return false;
     } finally {
       this.active.delete(node.id);
