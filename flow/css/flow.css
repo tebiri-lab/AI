@@ -300,3 +300,6 @@ button.small.final { color: var(--accent-2); border-color: #5a4f1c; }
 
 /* Two-finger sideways swipes pan the canvas; they must not turn into the browser's back/forward. */
 html, body { overscroll-behavior: none; }
+
+.help-opt { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-2); cursor: pointer; }
+.help-opt small { display: block; color: var(--muted); margin-top: 2px; line-height: 1.45; }
