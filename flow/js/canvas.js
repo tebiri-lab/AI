@@ -498,7 +498,7 @@ export class Canvas {
     const versions = def.spends ? this.engine.versions(node).filter((r) => r.v) : [];
     if (versions.length) {
       const cur = node.result;
-      const about = (r) => [`v${r.v}`, r.request?.finalOf ? `v${r.request.finalOf} 드래프트를 ${r.request.resolution}로 완성` : r.request?.draft ? '드래프트' : '', r.request?.model, r.at ? new Date(r.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''].filter(Boolean).join(' · ');
+      const about = (r) => [`v${r.v}`, r.request?.finalOf ? `v${r.request.finalOf} 드래프트를 ${r.request.resolution}로 완성` : r.request?.draft ? '드래프트' : '', r.adopted ? '기록에서 가져옴' : '', r.request?.model, r.at ? new Date(r.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''].filter(Boolean).join(' · ');
       box.prepend(h('div.versions', { role: 'group', 'aria-label': '버전' },
         versions.map((r) => h(`button${r === cur ? '.on' : ''}`, { title: about(r), 'aria-pressed': String(r === cur), onclick: () => { if (r !== cur) this.engine.showVersion(node, r.v); } }, `v${r.v}`)),
         h('span', {}, about(cur).replace(/^v\d+ · /, ''))));
@@ -756,6 +756,7 @@ export class Canvas {
       (node.type === 'image' || node.type === 'video') && { label: '보낼 요청 미리 보기', run: () => this.actions.preview(node) },
       def.spends && { label: '예상 크레딧 확인', run: () => this.actions.cost(node) },
       def.spends && node.result && { label: node.data.locked ? '결과 잠금 풀기' : '결과 잠금 (다시 생성하지 않음)', run: () => { this.graph.checkpoint(); node.data.locked = !node.data.locked; this.graph.emit('node:data', node); } },
+      (node.type === 'image' || node.type === 'video') && { label: '생성 기록에서 결과 가져오기…', run: () => this.actions.adopt(node) },
       node.result && !def.instant && { label: '결과 지우기', run: () => { this.graph.checkpoint(); node.result = null; node.history = []; node.status = 'idle'; node.message = ''; this.graph.emit('node:result', node); } },
       '-',
       { label: node.data.collapsed ? '펼치기' : '접기 (제목과 결과만)', key: 'H', run: () => this.setCollapsed(this.selectedNodes(), !node.data.collapsed) },
