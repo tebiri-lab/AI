@@ -89,7 +89,7 @@ export class Canvas {
   }
   afterChange() {
     this.empty.hidden = this.graph.doc.nodes.length > 0;
-    for (const n of this.graph.doc.nodes) { this.paintPorts(n); this.paintStatus(n); this.paintTags(n); if (NODE_TYPES[n.type].liveFields && !this.cropping) this.paintFields(n); if (NODE_TYPES[n.type].preview === 'review') this.paintPreview(n); }
+    for (const n of this.graph.doc.nodes) { this.paintPorts(n); this.paintStatus(n); this.paintTags(n); if (NODE_TYPES[n.type].liveFields && !this.cropping) this.paintFields(n); if (NODE_TYPES[n.type].preview === 'review' || n.type === 'text') { this.paintPreview(n); this.paintStatus(n); } }
     this.queueEdges(); this.actions.onSelection?.(); this.queueCost();
   }
   // Expected credits are asked for a moment after things settle, not on every keystroke.
@@ -403,7 +403,10 @@ export class Canvas {
     el.dataset.status = state;
     // The instruction was edited after the AI wrote from it: the text below no longer matches what is asked.
     const d = node.data;
-    const askChanged = !node.writing && ((node.type === 'text' && d.askUsed != null && (d.ask || '').trim() !== d.askUsed) || (node.type === 'review' && d.noteUsed != null && (d.note || '').trim() !== d.noteUsed));
+    const askEdited = (node.type === 'text' && d.askUsed != null && (d.ask || '').trim() !== d.askUsed) || (node.type === 'review' && d.noteUsed != null && (d.note || '').trim() !== d.noteUsed);
+    // …or the reference texts / pictures it was written from were changed or reconnected.
+    const refsChanged = node.type === 'text' && d.askUsed != null && d.ctxUsed != null && d.ctxUsed !== this.engine.writeKey(node);
+    const askChanged = !node.writing && (askEdited || refsChanged);
     el.classList.toggle('stale', stale || askChanged);
     el.classList.toggle('ask-changed', askChanged);
     el.classList.toggle('locked', !!node.data.locked);
@@ -411,7 +414,7 @@ export class Canvas {
     let text = def.instant ? '' : STATUS[node.status] || '';
     if (node.status === 'running' && node.startedAt) text = `${node.message || '실행 중'} · ${Math.round((Date.now() - node.startedAt) / 1000)}초`;
     else if (node.writing) text = `${node.type === 'review' ? '결과를 보는 중' : node.type === 'frame' ? '프레임 추출 중' : 'AI가 쓰는 중'} · ${Math.round((Date.now() - (node.startedAt || Date.now())) / 1000)}초`;
-    else if (askChanged) text = node.type === 'review' ? '요청 바뀜 · 다시 받기' : '지시 바뀜 · 다시 쓰기';
+    else if (askChanged) text = node.type === 'review' ? '요청 바뀜 · 다시 받기' : askEdited ? '지시 바뀜 · 다시 쓰기' : '참고 바뀜 · 다시 쓰기';
     else if (def.instant && node.wrote) text = node.type === 'review' ? '피드백 완료' : 'AI 작성 완료';
     else if (node.data.locked) text = '잠금';
     else if (stale) text = '설정 바뀜';
@@ -432,8 +435,8 @@ export class Canvas {
     const items = node.result?.items || [];
     box.replaceChildren();
     // The feedback node shows what is attached to it (the results it will look at), not its own output.
-    if (def.preview === 'review') {
-      const attached = this.engine.sourcesOf(node, 'media');
+    if (def.preview === 'review' || node.type === 'text') {
+      const attached = this.engine.sourcesOf(node, node.type === 'text' ? 'img' : 'media');
       box.hidden = !attached.length;
       if (attached.length) box.append(h('div.strip.small', {}, attached.map(({ src, item }) => this.thumb(item, { info: this.infoOf(src) }))));
       return;

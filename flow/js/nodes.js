@@ -202,11 +202,14 @@ export const NODE_TYPES = {
   text: {
     title: '텍스트', category: 'input', hint: '프롬프트, 캐릭터 설명, 스타일 문장. AI에게 시켜서 쓸 수도 있음', instant: true, width: 300,
     defaults: { ask: '', text: '' },
-    inputs: [{ key: 'ctx', label: '참고 (AI 작성용)', type: 'text', multi: true }],
+    inputs: [
+      { key: 'ctx', label: '참고 글 (AI 작성용)', type: 'text', multi: true },
+      { key: 'img', label: '참고 이미지·영상 (AI가 보고 씀)', type: 'any', accepts: ['image', 'video'], multi: true, max: 4 },
+    ],
     outputs: [{ key: 'out', label: '텍스트', type: 'text' }],
     fields: () => [
-      { key: 'ask', label: 'AI에게 시킬 내용', kind: 'textarea', rows: 3, placeholder: '예: 비 오는 밤 횡단보도에 선 30대 여성, 미디엄 샷.\n쓰지 않아도 됩니다. 아래 칸에 직접 써도 됩니다.' },
-      { kind: 'action', action: 'write', label: 'AI로 쓰기', hint: '위 내용(과 왼쪽에 연결된 참고 글)으로 프롬프트를 써서 아래 칸에 넣습니다' },
+      { key: 'ask', label: 'AI에게 시킬 내용', kind: 'textarea', rows: 3, placeholder: '예: 비 오는 밤 횡단보도에 선 30대 여성, 미디엄 샷.\n왼쪽에 이미지를 연결하면 AI가 그 이미지를 보고 씁니다 (예: 이 사진의 조명과 구도를 묘사해 줘).' },
+      { kind: 'action', action: 'write', label: 'AI로 쓰기', hint: '위 내용과 왼쪽에 연결된 참고 글·이미지로 프롬프트를 써서 아래 칸에 넣습니다' },
       { key: 'text', label: '결과 — 다음 노드로 넘어가는 글', kind: 'textarea', rows: 6, placeholder: '프롬프트나 설명. 직접 써도 되고, AI가 쓴 뒤에 고쳐도 됩니다.' },
     ],
     run: async ({ node }) => ({ items: node.data.text.trim() ? [{ type: 'text', text: node.data.text.trim() }] : [] }),

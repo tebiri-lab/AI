@@ -96,20 +96,7 @@ const actions = {
     node.writing = true; node.wrote = false; node.startedAt = Date.now(); canvas.paintStatus(node);
     let answer = null;
     try {
-      // Pictures for Claude: images as they are (scaled down), three frames per video.
-      const images = [], lines = [];
-      for (const [i, { src, item }] of attached.entries()) {
-        const name = `${src.data.label || NODE_TYPES[src.type].title}${src.result?.v ? ` v${src.result.v}` : ''}`;
-        if (item.type === 'video' && !item.still) {
-          const frames = await frameBlobs(item.url, ['first', { part: 0.5 }, 'last']);
-          for (const [k, blob] of frames.entries()) { const pic = await pictureData(blob); if (pic) images.push({ ...pic, label: `result ${i + 1} (${name}), video frame: ${['start', 'middle', 'end'][k]}` }); }
-          lines.push(`Result ${i + 1}: a generated video (${name}); you get its start, middle and end frame.`);
-        } else {
-          const pic = await pictureData(item.url);
-          images.push(pic ? { ...pic, label: `result ${i + 1} (${name})` } : { url: item.url, label: `result ${i + 1} (${name})` });
-          lines.push(`Result ${i + 1}: a generated image (${name}).`);
-        }
-      }
+      const { images, lines } = await picturesOf(attached, 'Result', 'generated');
       const refTags = [...new Set(attached.flatMap(({ src }) => (src.result?.request?.refs || []).map((r) => r.label).filter((l) => l.startsWith('@'))))];
       const prompt = [
         'You are reviewing the output of an AI image/video generation for a filmmaker who wants photorealistic, live-action looking footage.',
@@ -164,49 +151,59 @@ const actions = {
   // "AI로 쓰기" on a text node: Claude writes the prompt from the instruction and the connected reference texts.
   async write(node) {
     const ask = (node.data.ask || '').trim();
-    if (!ask) return toast('"AI에게 시킬 내용"을 먼저 쓰세요', 'error');
+    const pictures = engine.sourcesOf(node, 'img');
+    if (!ask && !pictures.length) return toast('"AI에게 시킬 내용"을 쓰거나 왼쪽에 참고 이미지를 연결하세요', 'error');
     const refs = (engine.inputsOf(node).ctx || []).map((i) => i.text).filter(Boolean);
+    const writeKey = engine.writeKey(node);
     let prompt = [
       'You write prompts for AI image and video generation (photorealistic, live-action look unless told otherwise).',
       'Write the prompt asked for below. Output only the prompt text itself, in English, with no preface, no quotes, no markdown and no explanation.',
       'If the request or the draft contains reference tags such as @Image 1, @Video 1 or @Audio 1, keep each tag exactly as written and say what it is used for.',
       refs.length ? `\nReference texts that this prompt must stay consistent with (do not repeat them verbatim):\n${refs.map((r, i) => `[${i + 1}] ${r}`).join('\n')}` : '',
       node.data.text.trim() ? `\nCurrent draft to revise:\n${node.data.text.trim()}` : '',
-      `\nRequest${node.data.label ? ` (this text is used as: ${node.data.label})` : ''}:\n${ask}`,
+      `\nRequest${node.data.label ? ` (this text is used as: ${node.data.label})` : ''}:\n${ask || '(no instruction given: write a prompt that would recreate what the attached pictures show — subject, setting, light, lens and framing)'}`,
     ].filter(Boolean).join('\n');
     // Tags this text can use: the references connected to the generation node(s) it feeds (directly or through a join).
-    const tagLines = [];
+    const tagLines = [], tagOf = new Map(); // node id -> the tag its picture has in the generation this text feeds
     for (const id of graph.downstream(node.id)) {
       const gen = graph.node(id);
       if (gen.type !== 'image' && gen.type !== 'video') continue;
       for (const [key, name] of Object.entries(TAG_PORTS)) {
         graph.edgesInto(gen.id, key).map((e) => graph.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x)
-          .forEach((src, i) => tagLines.push(`@${name} ${i + 1} = ${src.data.label || NODE_TYPES[src.type].title}`));
+          .forEach((src, i) => { tagLines.push(`@${name} ${i + 1} = ${src.data.label || NODE_TYPES[src.type].title}`); tagOf.set(src.id, `@${name} ${i + 1}`); });
       }
       if (tagLines.length) break;
     }
     if (tagLines.length) prompt += `\n\nReference tags available to this prompt (write a tag exactly like "@Image 1" when the prompt should point at that reference; use only these):\n${tagLines.join('\n')}`;
     const asked = [...new Set((`${ask} ${node.data.text}`.match(/@\s?(?:image|video|audio|이미지|영상|비디오|오디오)\s?\d+/gi) || []).map(tagKey))];
     const btn = canvas.els.get(node.id)?.querySelector('.action');
-    if (btn) { btn.disabled = true; btn.textContent = '쓰는 중…'; }
+    if (btn) { btn.disabled = true; btn.textContent = pictures.length ? '이미지를 보는 중…' : '쓰는 중…'; }
     node.writing = true; node.wrote = false; node.startedAt = Date.now(); canvas.paintStatus(node);
     let text = null;
     try {
+      // Pictures connected to this text: Claude looks at them while writing. A picture that is also a reference of the
+      // generation this text feeds is named by its tag, so the prompt can point at it instead of describing it again.
+      let images = [];
+      if (pictures.length) {
+        const seen = await picturesOf(pictures, 'Picture', 'reference', (src) => (tagOf.has(src.id) ? ` In the generation it is attached as ${tagOf.get(src.id)}: refer to it by that tag rather than describing it in full.` : ' It is not attached to the generation, so put what matters from it into words.'));
+        images = seen.images;
+        prompt += `\n\nPictures attached for you to look at before writing:\n${seen.lines.join('\n')}`;
+      }
       if (bridge.online) {
-        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) });
+        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images }) });
         const body = await res.json().catch(() => ({}));
         if (res.ok) text = body.text;
         // Claude Code on this computer could not write (not installed, or signed out): say why and fall back to the chat hand-off below.
         else if (res.status !== 501) toast(/authenticat|OAuth|login|log in/i.test(body.error || '') ? '이 컴퓨터의 Claude Code 로그인이 만료되었습니다. 터미널에서 claude 를 실행해 /login 하면 바로 쓰기가 됩니다. 지금은 Claude 채팅 전달로 진행합니다.' : `이 컴퓨터의 Claude Code로 쓰지 못했습니다 (${(body.error || '알 수 없는 오류').slice(0, 120)}). Claude 채팅 전달로 진행합니다.`, 'error');
       }
       // No bridge, or no Claude Code on this computer: hand the request to a Claude chat by copy and paste.
-      if (text == null) text = await relayBox(prompt, 'text');
+      if (text == null) text = await relayBox(pictures.length ? `${prompt}\n\n(참고 이미지·영상은 이 채팅에 직접 첨부해 주세요.)` : prompt, 'text');
     } catch (e) { toast(e.message, 'error'); }
     node.writing = false; delete node.startedAt; node.wrote = !!text?.trim();
     if (text?.trim()) {
       graph.checkpoint();
       node.data.text = text.trim();
-      node.data.askUsed = ask; // the instruction this text was written from (to show when it is edited afterwards)
+      node.data.askUsed = ask; node.data.ctxUsed = writeKey; // what this text was written from (to show when any of it changes afterwards)
       // Tags the request mentioned must still be in what came back; say so if one was dropped.
       const kept = new Set((node.data.text.match(/@\[?\s?(?:image|video|audio|이미지|영상|비디오|오디오)\s?\d+/gi) || []).map(tagKey));
       const lost = asked.filter((t) => !kept.has(t));
@@ -220,6 +217,25 @@ const actions = {
   onView(k) { $('zoomLabel').textContent = `${Math.round(k * 100)}%`; },
   onRunState() { updateRunState(); },
 };
+// Pictures for Claude to look at: images as they are (scaled down), three frames (start, middle, end) per video.
+// Returns what to send and one line per item describing it. `extra(src)` may add a note about an item.
+async function picturesOf(attached, word, kind, extra = () => '') {
+  const images = [], lines = [];
+  for (const [i, { src, item }] of attached.entries()) {
+    const name = `${src.data.label || NODE_TYPES[src.type].title}${src.result?.v ? ` v${src.result.v}` : ''}`;
+    const tail = extra(src);
+    if (item.type === 'video' && !item.still) {
+      const frames = await frameBlobs(item.url, ['first', { part: 0.5 }, 'last']);
+      for (const [k, blob] of frames.entries()) { const pic = await pictureData(blob); if (pic) images.push({ ...pic, label: `${word.toLowerCase()} ${i + 1} (${name}), video frame: ${['start', 'middle', 'end'][k]}` }); }
+      lines.push(`${word} ${i + 1}: a ${kind} video (${name}); you get its start, middle and end frame.${tail}`);
+    } else {
+      const pic = await pictureData(item.url);
+      images.push(pic ? { ...pic, label: `${word.toLowerCase()} ${i + 1} (${name})` } : { url: item.url, label: `${word.toLowerCase()} ${i + 1} (${name})` });
+      lines.push(`${word} ${i + 1}: a ${kind} image (${name}).${tail}`);
+    }
+  }
+  return { images, lines };
+}
 const costCache = new Map();
 // "@image1", "@Image 1", "@[Image 1", "@이미지 1" -> "Image 1"
 const TAG_NAMES = { image: 'Image', 이미지: 'Image', video: 'Video', 영상: 'Video', 비디오: 'Video', audio: 'Audio', 오디오: 'Audio' };
