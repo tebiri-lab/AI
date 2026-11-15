@@ -89,7 +89,7 @@ export class Canvas {
   }
   afterChange() {
     this.empty.hidden = this.graph.doc.nodes.length > 0;
-    for (const n of this.graph.doc.nodes) { this.paintPorts(n); this.paintStatus(n); this.paintTags(n); if (NODE_TYPES[n.type].preview === 'review') this.paintPreview(n); }
+    for (const n of this.graph.doc.nodes) { this.paintPorts(n); this.paintStatus(n); this.paintTags(n); if (NODE_TYPES[n.type].liveFields && !this.cropping) this.paintFields(n); if (NODE_TYPES[n.type].preview === 'review') this.paintPreview(n); }
     this.queueEdges(); this.actions.onSelection?.(); this.queueCost();
   }
   // Expected credits are asked for a moment after things settle, not on every keystroke.
@@ -101,9 +101,12 @@ export class Canvas {
       if (NODE_TYPES[n.type].instant && !this.engine.isRunning(id) && n.type !== 'frame') this.recompute(n);
       else this.paintStatus(n);
       this.paintTags(n);
+      if (NODE_TYPES[n.type].liveFields) this.paintFields(n); // its controls show what is connected to it
     }
   }
   async recompute(n) {
+    // Nodes that make a new file each time (crop) are left alone while what they would make has not changed.
+    if (NODE_TYPES[n.type].cache && n.result && n.sig === this.engine.signature(n)) return;
     try {
       const res = await NODE_TYPES[n.type].run({ node: n, inputs: this.engine.inputsOf(n) });
       n.result = { items: res.items, at: Date.now() }; n.sig = this.engine.signature(n); n.status = 'done'; n.message = '';
@@ -227,6 +230,7 @@ export class Canvas {
   field(node, f) {
     if (f.kind === 'info') return f.label ? h('div.field.wide', {}, h('span', {}, f.label), h('p.info.boxed', {}, f.text)) : h('p.info', {}, f.text);
     if (f.kind === 'tags') return h('div.tags', { hidden: true });
+    if (f.kind === 'crop') return this.cropField(node);
     if (f.kind === 'action') return h('button.action', { title: f.hint || '', onclick: () => this.actions[f.action](node) }, f.label);
     if (f.kind === 'model') return this.modelField(node, f);
     let v = getPath(node.data, f.key);
@@ -269,6 +273,75 @@ export class Canvas {
     return wrap;
   }
 
+  // Crop editor: the connected picture with a frame on it. Drag inside the frame to move it, a corner to resize it,
+  // outside it to draw a new one. The frame is kept in fractions of the picture, so it holds when the picture is replaced.
+  cropField(node) {
+    const src = this.engine.inputsOf(node).image?.[0];
+    const url = src && displayUrl(src.url);
+    if (!url) return h('p.info', {}, '왼쪽 "이미지" 포트에 이미지를 연결하세요. 영상에서 자르려면 영상 → 프레임 추출 → 크롭 순서로 연결합니다.');
+    const img = h('img', { src: url, alt: '', draggable: false });
+    const frame = h('div.crop-rect', {}, ['nw', 'ne', 'sw', 'se'].map((c) => h(`i.crop-handle.${c}`, { dataset: { corner: c } })));
+    const size = h('small.crop-size');
+    const box = h('div.crop-box', {}, img, frame);
+    const ratioOf = () => { const m = /^(\d+):(\d+)$/.exec(node.data.ratio || ''); return m ? +m[1] / +m[2] : 0; };
+    const clamp = (r) => {
+      r.w = Math.min(1, Math.max(0.02, r.w)); r.h = Math.min(1, Math.max(0.02, r.h));
+      r.x = Math.min(1 - r.w, Math.max(0, r.x)); r.y = Math.min(1 - r.h, Math.max(0, r.y));
+      return r;
+    };
+    // Make the frame match the chosen ratio (in real pixels), keeping its centre and as much of its size as fits.
+    const fit = (r) => {
+      const want = ratioOf(), W = img.naturalWidth, H = img.naturalHeight;
+      if (!want || !W) return clamp(r);
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      let w = r.w * W, hh = w / want;
+      if (hh > r.h * H) { hh = r.h * H; w = hh * want; }
+      if (w > W) { w = W; hh = w / want; } if (hh > H) { hh = H; w = hh * want; }
+      return clamp({ x: cx - w / W / 2, y: cy - hh / H / 2, w: w / W, h: hh / H });
+    };
+    const draw = () => {
+      const r = node.data.rect;
+      Object.assign(frame.style, { left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` });
+      size.textContent = img.naturalWidth ? `${Math.round(r.w * img.naturalWidth)} × ${Math.round(r.h * img.naturalHeight)}px (원본 ${img.naturalWidth} × ${img.naturalHeight})` : '';
+    };
+    const apply = (r, done) => {
+      node.data.rect = { x: +r.x.toFixed(4), y: +r.y.toFixed(4), w: +r.w.toFixed(4), h: +r.h.toFixed(4) };
+      draw();
+      if (done) { this.cropping = false; this.graph.emit('node:data', node); this.recompute(node).then(() => this.refreshDependents(node)); }
+    };
+    img.addEventListener('load', () => { const before = JSON.stringify(node.data.rect); const r = fit({ ...node.data.rect }); if (JSON.stringify(r) !== before && ratioOf()) apply(r, true); else draw(); });
+    box.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation(); e.preventDefault();
+      const b = box.getBoundingClientRect(), start = { ...node.data.rect };
+      const at = (ev) => ({ x: Math.min(1, Math.max(0, (ev.clientX - b.left) / b.width)), y: Math.min(1, Math.max(0, (ev.clientY - b.top) / b.height)) });
+      // A frame that still covers the whole picture cannot be moved, so dragging on it draws a new one.
+      const p0 = at(e), corner = e.target.dataset?.corner, inside = !corner && e.target === frame && !(start.w >= 0.999 && start.h >= 0.999);
+      // The corner opposite the one being dragged stays where it is; drawing a new frame anchors at the first point.
+      const anchor = corner ? { x: corner.includes('w') ? start.x + start.w : start.x, y: corner.includes('n') ? start.y + start.h : start.y } : p0;
+      let moved = false;
+      this.cropping = true;
+      this.graph.checkpoint();
+      this.drag(e, (ev) => {
+        const p = at(ev);
+        if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return;
+        moved = true;
+        if (inside) return apply(clamp({ ...start, x: start.x + p.x - p0.x, y: start.y + p.y - p0.y }));
+        let w = Math.abs(p.x - anchor.x), hh = Math.abs(p.y - anchor.y);
+        const want = ratioOf(), W = img.naturalWidth, H = img.naturalHeight;
+        if (want && W) {
+          // Follow the pointer along the wider side, then keep inside the picture on the anchored side.
+          if ((w * W) / Math.max(1e-6, hh * H) > want) hh = (w * W) / want / H; else w = (hh * H * want) / W;
+          const maxW = p.x < anchor.x ? anchor.x : 1 - anchor.x, maxH = p.y < anchor.y ? anchor.y : 1 - anchor.y;
+          const k = Math.min(1, maxW / w, maxH / hh); w *= k; hh *= k;
+        }
+        apply(clamp({ x: p.x < anchor.x ? anchor.x - w : anchor.x, y: p.y < anchor.y ? anchor.y - hh : anchor.y, w, h: hh }));
+      }, () => { if (moved) apply(node.data.rect, true); else { this.cropping = false; this.graph.undoStack.pop(); } });
+    });
+    const whole = h('button.small', { onclick: () => { this.graph.checkpoint(); apply(fit({ x: 0, y: 0, w: 1, h: 1 }), true); } }, '전체로');
+    draw();
+    return h('div.field.wide.crop', {}, h('span', {}, '자를 부분 — 안쪽을 끌면 이동, 모서리를 끌면 크기, 바깥을 끌면 새로 그리기'), box, h('div.crop-foot', {}, size, whole));
+  }
   // Model chooser: a button that opens a list with a tab per company and the recently used models first.
   modelField(node, f) {
     const kind = f.modelKind, all = listModels(kind);

@@ -2,7 +2,7 @@
 // A result is { items: [{ type, url?, text?, jobId?, mediaId?, name? }], at }. Downstream nodes receive the picked item.
 import { listModels, getModel, modelRoles, modelDurations, modelParams, touchModel } from './models.js';
 import { bridge } from './providers.js';
-import { grabFrame } from './media.js';
+import { grabFrame, cropImage } from './media.js';
 
 const PROMPT_IN = { key: 'prompt', label: '프롬프트', type: 'text', multi: true };
 
@@ -276,6 +276,27 @@ export const NODE_TYPES = {
       const item = ctx.inputs.image?.[0];
       if (!item) throw new Error('이미지를 연결하세요');
       return { items: await ctx.provider.upscale({ item, resolution: ctx.node.data.resolution }, ctx) };
+    },
+  },
+  crop: {
+    title: '크롭', category: 'edit', hint: '이미지(추출한 프레임 등)에서 필요한 부분만 잘라 내기', instant: true, cache: true, liveFields: true, width: 340,
+    defaults: { ratio: 'free', rect: { x: 0, y: 0, w: 1, h: 1 } },
+    inputs: [{ key: 'image', label: '이미지', type: 'image' }],
+    outputs: [{ key: 'out', label: '이미지', type: 'image' }],
+    fields: () => [
+      { key: 'ratio', label: '비율', kind: 'select', options: [{ value: 'free', label: '자유' }, ...['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '4:5'].map((r) => ({ value: r, label: r }))] },
+      { kind: 'crop' },
+    ],
+    onChange: (node, key) => key === 'ratio',
+    preview: 'media',
+    run: async ({ node, inputs }) => {
+      const item = inputs.image?.[0];
+      if (!item) return { items: [] };
+      const r = node.data.rect;
+      // Nothing cut off: hand the picture on as it is (keeps its server id, so it is not uploaded again).
+      if (r.x <= 0 && r.y <= 0 && r.w >= 1 && r.h >= 1) return { items: [item] };
+      const out = await cropImage(item.url, r);
+      return { items: [{ type: 'image', url: out.url, name: 'crop.png', local: true }] };
     },
   },
   frame: {
