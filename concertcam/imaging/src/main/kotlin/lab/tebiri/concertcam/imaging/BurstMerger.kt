@@ -10,7 +10,7 @@ import kotlin.math.min
  * - 기준 프레임은 항상 가중치 [REF_WEIGHT]로 들어간다.
  * - 다른 프레임은 정합 후 기준과 밝기 차이가 노이즈 수준이면 같은 가중치로, 크게 다르면(피사체가 움직인 부분)
  *   가중치 0으로 더한다. 그래서 움직인 부분은 기준 프레임 그대로 남고 잔상이 생기지 않는다.
- * - scale=2면 2배 격자에 쌓는다. 손떨림으로 프레임마다 소수점 단위로 어긋난 샘플이 모여 확대 화질이 좋아진다.
+ * - scale이 2~4면 그 배수의 격자에 쌓는다. 손떨림으로 프레임마다 소수점 단위로 어긋난 샘플이 모여 확대 화질이 좋아진다.
  */
 class BurstMerger(private val w: Int, private val h: Int, ref: IntArray, val scale: Int) {
     val outW = w * scale
@@ -24,7 +24,7 @@ class BurstMerger(private val w: Int, private val h: Int, ref: IntArray, val sca
     private var frames = 0
 
     init {
-        require(scale == 1 || scale == 2)
+        require(scale in 1..4)
         Parallel.ranges(outH) { y0, y1 ->
             for (i in y0 * outW until y1 * outW) {
                 val c = refUp[i]

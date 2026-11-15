@@ -41,6 +41,14 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("autoFrame", true)
         set(v) = prefs.edit().putBoolean("autoFrame", v).apply()
 
+    /**
+     * 망원 배율을 넘는 줌을 누가 확대할지. true = 카메라는 망원 원래 배율까지만 쓰고 나머지는 앱이 잘라 합성,
+     * false = 카메라(기기)의 디지털 줌을 최대한 쓴다.
+     */
+    var appZoom: Boolean
+        get() = prefs.getBoolean("appZoom", true)
+        set(v) = prefs.edit().putBoolean("appZoom", v).apply()
+
     /** LED 스크린 모드 여부. */
     var ledMode: Boolean
         get() = prefs.getBoolean("led", false)

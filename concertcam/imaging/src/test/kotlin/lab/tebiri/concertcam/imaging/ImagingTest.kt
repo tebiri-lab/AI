@@ -197,6 +197,23 @@ class ImagingTest {
     }
 
     @Test
+    fun sharpenDoesNotOvershootEdges() {
+        val w = 64
+        val h = 16
+        // 어두운 면(60)과 밝은 면(180) 사이의 부드러운 경계
+        val px = IntArray(w * h) { gray(60 + 120 / (1 + Math.exp(-((it % w) - 32) / 2.0))) }
+        val before = px.copyOf()
+        Sharpen.unsharp(px, w, h, amount = 1.5f, sigma = 2f)
+        var steeper = false
+        for (i in px.indices) {
+            val v = px[i] and 255
+            assertTrue(v in 60..180, "overshoot $v")
+            if (i % w == 30 && v < (before[i] and 255)) steeper = true
+        }
+        assertTrue(steeper, "edge was not sharpened")
+    }
+
+    @Test
     fun geometryRoundTrip() {
         val a = FloatArray(2)
         val b = FloatArray(2)

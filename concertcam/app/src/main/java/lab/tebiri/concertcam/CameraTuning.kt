@@ -57,6 +57,8 @@ class CameraTuning(private val camera: Camera) {
     @Volatile var liveIso = 0
     @Volatile var liveExposureNs = 0L
     @Volatile var liveFocus = 0f
+    @Volatile var liveFocalLength = 0f
+    @Volatile var livePhysicalId: String? = null
 
     val fixedShutter: Boolean get() = shutterDenominator > 0 && canFixShutter
 
@@ -69,10 +71,8 @@ class CameraTuning(private val camera: Camera) {
                 else -> pick(nrModes, CameraMetadata.NOISE_REDUCTION_MODE_MINIMAL, CameraMetadata.NOISE_REDUCTION_MODE_FAST)
             }
             if (nr != null) b.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, nr)
-            val edge = when (noiseReduction) {
-                2 -> pick(edgeModes, CameraMetadata.EDGE_MODE_OFF, CameraMetadata.EDGE_MODE_FAST)
-                else -> pick(edgeModes, CameraMetadata.EDGE_MODE_FAST)
-            }
+            // 기기의 윤곽 강조는 끈다. 확대하면 흰 테로 보이고, 선명도 보정은 앱이 테 없이 따로 한다.
+            val edge = pick(edgeModes, CameraMetadata.EDGE_MODE_OFF, CameraMetadata.EDGE_MODE_FAST)
             if (edge != null) b.setCaptureRequestOption(CaptureRequest.EDGE_MODE, edge)
         }
         if (oisModes?.contains(CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON) == true) {

@@ -119,6 +119,8 @@ class MainActivity : ComponentActivity() {
             result.get(CaptureResult.SENSOR_SENSITIVITY)?.let { t.liveIso = it }
             result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { t.liveExposureNs = it }
             result.get(CaptureResult.LENS_FOCUS_DISTANCE)?.let { t.liveFocus = it }
+            result.get(CaptureResult.LENS_FOCAL_LENGTH)?.let { t.liveFocalLength = it }
+            t.livePhysicalId = result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID)
         }
     }
 
@@ -324,7 +326,9 @@ class MainActivity : ComponentActivity() {
 
     private fun setZoom(total: Float) {
         totalZoom = total.coerceIn(halMin, maxTotalZoom())
-        halZoom = (totalZoom / reserve(totalZoom)).coerceIn(halMin, halMax)
+        // 망원 배율을 넘는 구간: 앱 확대 방식이면 카메라 줌을 망원 원래 배율에 묶어 기기의 디지털 확대 처리를 피한다.
+        val cap = if (settings.appZoom && halMax > TELE_ZOOM) TELE_ZOOM else halMax
+        halZoom = if (totalZoom > cap) cap else (totalZoom / reserve(totalZoom)).coerceIn(halMin, cap)
         extra = max(1f, totalZoom / halZoom)
         camera?.cameraControl?.setZoomRatio(halZoom)
         for (i in 0 until zoomRow.childCount) {
@@ -514,7 +518,8 @@ class MainActivity : ComponentActivity() {
             " · ISO ${t.liveIso} · 1/$den" + if (t.fixedShutter) " 고정" else ""
         } else ""
         val busy = processor.pending.get().let { if (it > 0) " · 처리 중 $it" else "" }
-        status.text = "$zoom$exposure · $trackLabel$busy"
+        val lens = if (t != null && t.liveFocalLength > 0f) " · 렌즈 %.1fmm".format(t.liveFocalLength) else ""
+        status.text = "$zoom$lens$exposure · $trackLabel$busy"
     }
 
     // ───────────── 촬영 ─────────────
@@ -585,6 +590,36 @@ class MainActivity : ComponentActivity() {
             thumb.setImageBitmap(contentResolver.loadThumbnail(uri, Size(160, 160), null))
         } catch (_: Exception) {
         }
+    }
+
+    /** 기기가 앱에 내주는 카메라 구성과 현재 상태를 글로 정리한다. */
+    private fun diagnostics(): String {
+        val sb = StringBuilder()
+        val t = tuning
+        sb.append("현재: 줌 %.1f = 카메라 %.2f × 크롭 %.2f (카메라 줌 범위 %.2f~%.2f)\n".format(totalZoom, halZoom, extra, halMin, halMax))
+        sb.append("현재 렌즈: 초점거리 ${t?.liveFocalLength ?: 0f}mm, 물리 카메라 ${t?.livePhysicalId ?: "표시 안 됨"}\n")
+        sb.append("현재 노출: ISO ${t?.liveIso ?: 0}, ${t?.liveExposureNs ?: 0}ns\n")
+        sb.append("마지막 사진: ${processor.lastInfo}\n")
+        try {
+            val cm = getSystemService(android.hardware.camera2.CameraManager::class.java)
+            for (id in cm.cameraIdList) {
+                val c = cm.getCameraCharacteristics(id)
+                val facing = when (c.get(CameraCharacteristics.LENS_FACING)) {
+                    CameraCharacteristics.LENS_FACING_BACK -> "후면"
+                    CameraCharacteristics.LENS_FACING_FRONT -> "전면"
+                    else -> "기타"
+                }
+                val focal = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.joinToString("/") ?: "?"
+                val zoom = c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+                val jpeg = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                    ?.getOutputSizes(android.graphics.ImageFormat.JPEG)?.maxByOrNull { it.width.toLong() * it.height }
+                val sensor = c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                sb.append("카메라 $id ($facing): 초점거리 ${focal}mm, 줌 ${zoom?.lower}~${zoom?.upper}, 센서 $sensor, 최대 JPEG $jpeg, 물리 ${c.physicalCameraIds}\n")
+            }
+        } catch (e: Exception) {
+            sb.append("카메라 목록 읽기 실패: ${e.message}\n")
+        }
+        return sb.toString()
     }
 
     // ───────────── 설정 화면 ─────────────
@@ -700,6 +735,25 @@ class MainActivity : ComponentActivity() {
                 applySettings()
             }
         }
+
+        choice(
+            "망원 배율(5배)을 넘는 줌의 확대 방식 — 두 방식으로 찍어 비교해 보세요",
+            listOf("앱이 확대 (기기 확대 처리 안 거침)", "기기 디지털 줌 사용"),
+            if (settings.appZoom) 0 else 1,
+        ) {
+            val app = it == 0
+            if (app != settings.appZoom) {
+                settings.appZoom = app
+                applySettings()
+            }
+        }
+
+        label("진단 정보 (문제가 있을 때 이 부분을 캡처해 보내 주세요)")
+        box.addView(TextView(this).apply {
+            text = diagnostics()
+            textSize = 11f
+            setTextIsSelectable(true)
+        })
 
         AlertDialog.Builder(this)
             .setTitle("설정")

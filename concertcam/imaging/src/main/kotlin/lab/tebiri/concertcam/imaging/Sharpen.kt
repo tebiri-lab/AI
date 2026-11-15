@@ -23,6 +23,7 @@ object Sharpen {
         }
         for (i in kernel.indices) kernel[i] /= ks
 
+        val halo = ceil(sigma).toInt().coerceIn(1, 3)
         val luma = FloatArray(w * h)
         val tmp = FloatArray(w * h)
         Parallel.ranges(h) { y0, y1 ->
@@ -50,7 +51,19 @@ object Sharpen {
                     var hp = luma[i] - s
                     val a = abs(hp)
                     if (a < threshold) hp *= a / threshold
-                    val d = amount * hp
+                    var d = amount * hp
+                    // 윤곽 옆에 흰/검은 테가 생기지 않도록, 결과 밝기를 주변 원래 밝기의 최소~최대 범위로 제한한다.
+                    var lo = luma[i]
+                    var hi = lo
+                    for (dy in -halo..halo) {
+                        val row = (y + dy).coerceIn(0, h - 1) * w
+                        for (dx in -halo..halo) {
+                            val v = luma[row + (x + dx).coerceIn(0, w - 1)]
+                            if (v < lo) lo = v
+                            if (v > hi) hi = v
+                        }
+                    }
+                    d = (luma[i] + d).coerceIn(lo, hi) - luma[i]
                     val c = argb[i]
                     val r = ((c shr 16 and 255) + d + 0.5f).toInt().coerceIn(0, 255)
                     val g = ((c shr 8 and 255) + d + 0.5f).toInt().coerceIn(0, 255)

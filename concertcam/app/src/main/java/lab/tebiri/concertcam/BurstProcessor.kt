@@ -65,7 +65,8 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
                 val result = process(job)
                 uri = saveBitmap(result.bitmap)
                 result.bitmap.recycle()
-                message = "저장됨 · ${result.used}장 합성 · ${(System.currentTimeMillis() - t0) / 100 / 10f}초"
+                message = "저장됨 · ${result.used}장 합성 · ${result.info} · ${(System.currentTimeMillis() - t0) / 100 / 10f}초"
+                lastInfo = "원본 JPEG ${result.source} · ${result.info} · ${result.used}/${job.jpegs.size}장 사용"
             } catch (t: Throwable) {
                 // 메모리 부족 등으로 처리에 실패해도 사진은 잃지 않도록 원본 한 장을 그대로 저장한다.
                 Log.e(TAG, "processing failed", t)
@@ -77,7 +78,10 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
         }
     }
 
-    private class Result(val bitmap: Bitmap, val used: Int)
+    private class Result(val bitmap: Bitmap, val used: Int, val info: String, val source: String)
+
+    /** 마지막으로 처리한 사진의 요약(진단용). */
+    @Volatile var lastInfo = "아직 없음"
 
     private fun decoder(bytes: ByteArray): BitmapRegionDecoder =
         BitmapRegionDecoder.newInstance(bytes, 0, bytes.size)
@@ -149,7 +153,10 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
 
         val refPixels = decode(job.jpegs[ref], rect, sample)
         // 많이 잘라 낸(고배율) 사진은 2배 격자에 쌓아 해상도를 보강한다. LED 모드는 화면 자체가 저해상도라 제외.
-        val scale = if (job.descreen == 0 && cw.toLong() * ch <= UPSCALE_BELOW && n > 1) 2 else 1
+        var scale = 1
+        if (job.descreen == 0 && n > 1) {
+            while (scale < 4 && cw.toLong() * ch * scale * scale < UPSCALE_BELOW) scale++
+        }
         val merger = BurstMerger(cw, ch, refPixels, scale)
         var used = 1
         val refL = lumas[ref]!!
@@ -171,7 +178,7 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
 
         if (job.descreen > 0) Descreen.process(out, ow, oh, job.descreen)
         if (job.sharpen > 0) {
-            Sharpen.unsharp(out, ow, oh, amount = job.sharpen * 0.15f, sigma = if (scale == 2) 1.6f else 0.9f)
+            Sharpen.unsharp(out, ow, oh, amount = job.sharpen * 0.12f, sigma = 0.8f * scale)
         }
 
         var bmp = Bitmap.createBitmap(out, ow, oh, Bitmap.Config.ARGB_8888)
@@ -182,7 +189,7 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
             if (rotated !== bmp) bmp.recycle()
             bmp = rotated
         }
-        return Result(bmp, used)
+        return Result(bmp, used, "${cw}×${ch} → ${ow}×${oh}", "${fullW}×${fullH}")
     }
 
     private fun roiRect(job: CaptureJob, crop: Rect, fullW: Int, fullH: Int, sample: Int): Rect {
@@ -254,7 +261,7 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
         /** 한 번에 처리하는 최대 픽셀 수(메모리 한도). */
         const val MAX_PIXELS = 13_000_000L
 
-        /** 잘라 낸 영역이 이보다 작으면 2배로 키워 합성한다. */
+        /** 잘라 낸 영역이 이보다 작으면 이 크기에 이를 때까지(최대 4배) 키워 합성한다. */
         const val UPSCALE_BELOW = 3_200_000L
 
         /** 정합에 쓰는 영역의 최대 한 변(px). */
