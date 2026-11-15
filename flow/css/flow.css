@@ -297,3 +297,6 @@ button.small.final { color: var(--accent-2); border-color: #5a4f1c; }
 /* The instruction changed since the AI wrote from it: point at the button that redoes it. */
 .node.ask-changed { border-color: var(--accent-2); border-style: dashed; }
 .node.ask-changed .fields .action:first-of-type { background: var(--accent-2); border-color: var(--accent-2); color: #111; font-weight: 600; }
+
+/* Two-finger sideways swipes pan the canvas; they must not turn into the browser's back/forward. */
+html, body { overscroll-behavior: none; }
