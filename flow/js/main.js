@@ -336,7 +336,7 @@ $('btnZoomOut').onclick = () => canvas.zoomBy(0.8);
 $('btnZoomReset').onclick = () => canvas.zoomBy(1 / graph.doc.view.k);
 $('btnFit').onclick = () => canvas.fit(canvas.selectedNodes());
 $('btnLayout').onclick = () => canvas.autoLayout();
-$('btnHelp').onclick = () => modal('단축키와 조작', h('dl', {}, [
+$('btnHelp').onclick = () => modal('단축키와 조작', h('div', {}, h('dl', {}, [
   ['빈 곳 더블클릭 · 우클릭 · A', '노드 추가 (이름으로 찾기)'],
   ['포트에서 끌기', '연결. 빈 곳에 놓으면 이어 붙일 노드를 고릅니다'],
   ['연결선 클릭 → Delete', '연결 끊기'],
@@ -351,7 +351,9 @@ $('btnHelp').onclick = () => modal('단축키와 조작', h('dl', {}, [
   ['] / [', '선택한 노드를 한 칸 위로 / 아래로 (겹친 노드 기준)'],
   ['Shift+] / Shift+[', '맨 위로 / 맨 아래로'],
   ['제목 더블클릭', '노드 이름 바꾸기 (예: 샷 1)'],
-].flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])), [{ label: '닫기', primary: true }]);
+].flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
+  h('label.help-opt', {}, h('input', { type: 'checkbox', checked: settings.wheelZoom ?? !/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent), onchange: (e) => { settings.wheelZoom = e.target.checked; saveSettings(); } }),
+    h('span', {}, '마우스 휠로 확대·축소', h('small', {}, '끄면 스크롤은 항상 화면 이동이고, 확대·축소는 핀치나 Ctrl/Cmd+스크롤로만 합니다. 트랙패드를 쓰면 꺼 두세요.')))), [{ label: '닫기', primary: true }]);
 
 document.addEventListener('keydown', (e) => {
   if (document.querySelector('.modal-back, .lightbox')) return;

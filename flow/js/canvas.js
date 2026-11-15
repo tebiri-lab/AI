@@ -4,6 +4,11 @@ import { TYPE_LABEL } from './graph.js';
 import { displayUrl, saveBlob } from './media.js';
 import { h, toast, menu, palette, tabPicker, copyText, lightbox, modal } from './ui.js';
 import { listModels, getModel, recentModels, touchModel } from './models.js';
+import { settings } from './providers.js';
+
+// Whether a plain mouse wheel zooms. On a Mac scrolling is nearly always a trackpad or a touch mouse, where it should
+// move the canvas (zoom is the pinch, or Ctrl/Cmd + scroll), so it is off there unless switched on in the help window.
+const wheelZooms = () => settings.wheelZoom ?? !/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const SVG = 'http://www.w3.org/2000/svg';
 const INTERACTIVE = 'input,textarea,select,button,video,a,.port,[contenteditable="true"],.thumb,.resize';
@@ -800,7 +805,10 @@ export class Canvas {
       // Which device it is, is decided once at the start of a gesture and kept until the fingers rest, so a fast
       // swipe never turns into a zoom halfway through.
       const now = performance.now();
-      if (now - (this.wheelAt || 0) > 300) this.wheelMouse = e.deltaX === 0 && (e.deltaMode !== 0 || (Math.abs(e.wheelDeltaY || 0) >= 120 && e.wheelDeltaY % 120 === 0));
+      if (now - (this.wheelAt || 0) > 300) this.wheelMouse = wheelZooms() && e.deltaX === 0 && (e.deltaMode !== 0 || (Math.abs(e.wheelDeltaY || 0) >= 120 && e.wheelDeltaY % 120 === 0));
+      // A trackpad that is pressed down while two fingers slide reports its scroll in big whole steps, which looks
+      // exactly like a mouse wheel. A held button gives it away: that is a trackpad, so it moves the canvas.
+      if (e.buttons) this.wheelMouse = false;
       this.wheelAt = now;
       const lines = e.deltaMode === 1 ? 33 : 1;
       if (e.ctrlKey || e.metaKey) {
@@ -808,7 +816,7 @@ export class Canvas {
         const d = Math.max(-0.2, Math.min(0.2, e.deltaY * lines * (e.ctrlKey && !this.wheelMouse ? 0.01 : 0.004)));
         this.zoomAt(e.clientX, e.clientY, Math.exp(-d));
       } else if (this.wheelMouse) this.zoomAt(e.clientX, e.clientY, Math.exp(-Math.max(-240, Math.min(240, e.deltaY * lines)) * 0.0015));
-      else { this.view.x -= e.deltaX; this.view.y -= e.deltaY; this.applyView(); }
+      else { this.view.x -= e.deltaX * lines; this.view.y -= e.deltaY * lines; this.applyView(); }
     }, { passive: false });
     st.addEventListener('pointermove', (e) => { this.lastPointer = { x: e.clientX, y: e.clientY }; });
     st.addEventListener('pointerdown', (e) => this.onDown(e));
