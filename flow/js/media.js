@@ -125,3 +125,24 @@ export async function pictureData(source, max = 1400) {
     return { data: btoa(bin), type: 'image/jpeg' };
   } catch { return null; }
 }
+
+// The bytes of a picture: a stored file, or a remote one (through the bridge when its server does not allow reading from a page).
+async function pictureBlob(url) {
+  let blob = getBlob(url);
+  const src = displayUrl(url);
+  if (!blob && src) { try { const r = await fetch(src); if (r.ok) blob = await r.blob(); } catch { blob = null; } }
+  if (!blob && /^https:/.test(src) && bridge.online) { try { const r = await fetch(`${bridge.base}/api/proxy?url=${encodeURIComponent(src)}`); if (r.ok) blob = await r.blob(); } catch { blob = null; } }
+  if (!blob) throw new Error('이미지를 읽을 수 없습니다. 브리지를 켜면 브리지를 거쳐 읽습니다.');
+  return blob;
+}
+// Part of a picture as a stored PNG. `rect` is { x, y, w, h } in fractions of the picture (0..1).
+export async function cropImage(url, rect) {
+  const bmp = await createImageBitmap(await pictureBlob(url));
+  const x = Math.round(rect.x * bmp.width), y = Math.round(rect.y * bmp.height);
+  const w = Math.max(1, Math.min(bmp.width - x, Math.round(rect.w * bmp.width))), h = Math.max(1, Math.min(bmp.height - y, Math.round(rect.h * bmp.height)));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(bmp, x, y, w, h, 0, 0, w, h);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  return { url: await saveBlob(blob), width: w, height: h };
+}
