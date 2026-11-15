@@ -38,6 +38,11 @@ export class Engine {
     return g.edgesInto(node.id, portKey).map((e) => g.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x)
       .flatMap((src) => this.outItems(src).filter((i) => accepts.includes('any') || accepts.includes(i.type)).map((item) => ({ src, item })));
   }
+  // What an AI-written text depends on besides its instruction: the reference texts and pictures connected to it.
+  writeKey(node) {
+    const ins = this.inputsOf(node);
+    return JSON.stringify([(ins.ctx || []).map((i) => i.text || ''), (ins.img || []).map((i) => i.jobId || i.url)]);
+  }
   // What the node would run with right now. A result made with the same signature is still current.
   signature(node) {
     const { pick, label, locked, collapsed, ...data } = node.data; // naming, locking, folding or picking a variant does not change what would be generated
