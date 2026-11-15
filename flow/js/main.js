@@ -518,6 +518,20 @@ async function drawConn() {
 }
 $('btnConn').onclick = async () => { const p = $('connPanel'); p.hidden = !p.hidden; if (!p.hidden && settings.mode === 'bridge') await refreshBridge(); drawConn(); };
 
+// Sideways two-finger swipes outside the canvas (top bar, panels, dialogs) would otherwise reach the browser and
+// trigger back/forward. They are let through only to something that can still scroll sideways in that direction.
+addEventListener('wheel', (e) => {
+  if (e.ctrlKey || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+  for (let el = e.target; el && el !== document.documentElement; el = el.parentElement) {
+    if (el.id === 'stage') return; // the canvas handles its own panning
+    if (el.scrollWidth > el.clientWidth + 1 && /(auto|scroll)/.test(getComputedStyle(el).overflowX)) {
+      const max = el.scrollWidth - el.clientWidth;
+      if ((e.deltaX < 0 && el.scrollLeft > 0) || (e.deltaX > 0 && el.scrollLeft < max - 1)) return;
+    }
+  }
+  e.preventDefault();
+}, { passive: false });
+
 // ---- start
 (async () => {
   await initMedia();
