@@ -140,6 +140,7 @@ const actions = {
       node.data.feedback = (cut >= 0 ? text.slice(0, cut) : '').replace(/\[\s*진단\s*\]/, '').trim();
       node.data.revised = (cut >= 0 ? text.slice(cut).replace(/\[\s*수정\s*프롬프트\s*\]/, '') : text).trim();
       node.wrote = true;
+      node.data.noteUsed = node.data.note.trim();
       canvas.paintFields(node);
       await canvas.recompute(node); canvas.refreshDependents(node);
       graph.emit('node:data', node);
@@ -205,6 +206,7 @@ const actions = {
     if (text?.trim()) {
       graph.checkpoint();
       node.data.text = text.trim();
+      node.data.askUsed = ask; // the instruction this text was written from (to show when it is edited afterwards)
       // Tags the request mentioned must still be in what came back; say so if one was dropped.
       const kept = new Set((node.data.text.match(/@\[?\s?(?:image|video|audio|이미지|영상|비디오|오디오)\s?\d+/gi) || []).map(tagKey));
       const lost = asked.filter((t) => !kept.has(t));
