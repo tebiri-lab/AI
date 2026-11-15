@@ -540,6 +540,7 @@ class MainActivity : ComponentActivity() {
         val turn = deviceRotation
         val descreen = if (settings.ledMode) settings.descreen else 0
         val sharpen = settings.sharpen
+        val merge = settings.merge
         var rotation = 90
         var taken = 0
 
@@ -550,8 +551,8 @@ class MainActivity : ComponentActivity() {
                 if (frames.isEmpty()) {
                     showHint("촬영 실패")
                 } else {
-                    processor.submit(CaptureJob(frames, rotation, crop, box, turn, descreen, sharpen))
-                    showHint("${frames.size}장 촬영 · 합성 중")
+                    processor.submit(CaptureJob(frames, rotation, crop, box, turn, descreen, sharpen, merge))
+                    showHint("${frames.size}장 촬영 · 처리 중")
                 }
                 updateStatus()
                 return
@@ -677,10 +678,12 @@ class MainActivity : ComponentActivity() {
         }
 
         choice(
-            "한 번에 찍어 합성할 장수 (많을수록 노이즈가 줄고 고배율이 선명해지지만 오래 걸림)",
-            Settings.BURSTS.map { if (it == 1) "1장 (합성 안 함)" else "${it}장" },
+            "한 번에 찍을 장수 (그중 가장 선명한 한 장을 저장)",
+            Settings.BURSTS.map { "${it}장" },
             Settings.BURSTS.indexOf(settings.burst),
         ) { settings.burst = Settings.BURSTS[it] }
+
+        toggle("찍은 장들을 겹쳐 합성 (가만히 있는 피사체 전용 · 움직이면 잔상)", settings.merge) { settings.merge = it }
 
         slider({ "선명도 보정: $it" }, 10, settings.sharpen) { settings.sharpen = it }
 

@@ -36,6 +36,7 @@ import kotlin.math.min
  * @param deviceRotation 촬영 순간 기기를 돌려 쥔 각도(0/90/180/270)
  * @param descreen LED 패턴 제거 세기(0이면 하지 않음)
  * @param sharpen 선명도 보정 세기 0..10
+ * @param merge true면 프레임을 겹쳐 합성, false면 가장 선명한 한 장만 쓴다
  */
 class CaptureJob(
     val jpegs: List<ByteArray>,
@@ -45,6 +46,7 @@ class CaptureJob(
     val deviceRotation: Int,
     val descreen: Int,
     val sharpen: Int,
+    val merge: Boolean,
 )
 
 /** 프레임 묶음을 정합·합성·보정해 갤러리에 저장한다. 한 번에 한 묶음씩 처리한다. */
@@ -65,7 +67,7 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
                 val result = process(job)
                 uri = saveBitmap(result.bitmap)
                 result.bitmap.recycle()
-                message = "저장됨 · ${result.used}장 합성 · ${result.info} · ${(System.currentTimeMillis() - t0) / 100 / 10f}초"
+                message = "저장됨 · ${if (job.merge) "${result.used}장 합성" else "${job.jpegs.size}장 중 가장 선명한 장"} · ${result.info} · ${(System.currentTimeMillis() - t0) / 100 / 10f}초"
                 lastInfo = "원본 JPEG ${result.source} · ${result.info} · ${result.used}/${job.jpegs.size}장 사용"
             } catch (t: Throwable) {
                 // 메모리 부족 등으로 처리에 실패해도 사진은 잃지 않도록 원본 한 장을 그대로 저장한다.
@@ -154,19 +156,21 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
         val refPixels = decode(job.jpegs[ref], rect, sample)
         // 많이 잘라 낸(고배율) 사진은 2배 격자에 쌓아 해상도를 보강한다. LED 모드는 화면 자체가 저해상도라 제외.
         var scale = 1
-        if (job.descreen == 0 && n > 1) {
+        if (job.descreen == 0) {
             while (scale < 4 && cw.toLong() * ch * scale * scale < UPSCALE_BELOW) scale++
         }
         val merger = BurstMerger(cw, ch, refPixels, scale)
         var used = 1
         val refL = lumas[ref]!!
         for (i in 0 until n) {
-            if (i == ref) continue
+            if (i == ref || !job.merge) continue
             // 기준보다 한참 흐린 프레임은 더해도 화질만 떨어진다.
             if (sharp[i] < sharp[ref] * 0.35) continue
             val l = lumas[i]!!
             val shift = Align.estimate(refL, l, rw, rh, min(rw, rh) / 3)
-            val sigma = Align.noiseSigma(refL, l, rw, rh, shift)
+            // 피사체가 움직였으면 차이의 중앙값도 커져 노이즈로 오인된다. 상한을 두고, 정합 오차가 큰 프레임은 버린다.
+            val sigma = min(Align.noiseSigma(refL, l, rw, rh, shift), MAX_SIGMA)
+            if (shift.error > 6f * max(sigma, 1.5f) * max(sigma, 1.5f)) continue
             lumas[i] = null
             val px = decode(job.jpegs[i], rect, sample)
             merger.add(px, shift.dx, shift.dy, sigma)
@@ -263,6 +267,9 @@ class BurstProcessor(private val context: Context, private val onDone: (uri: Uri
 
         /** 잘라 낸 영역이 이보다 작으면 이 크기에 이를 때까지(최대 4배) 키워 합성한다. */
         const val UPSCALE_BELOW = 3_200_000L
+
+        /** 합성에서 노이즈로 인정하는 밝기 차이의 상한. */
+        const val MAX_SIGMA = 5f
 
         /** 정합에 쓰는 영역의 최대 한 변(px). */
         const val MAX_ROI = 768

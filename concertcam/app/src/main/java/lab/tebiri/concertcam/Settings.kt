@@ -11,6 +11,14 @@ class Settings(context: Context) {
         get() = prefs.getInt("burst", 6)
         set(v) = prefs.edit().putInt("burst", v).apply()
 
+    /**
+     * true = 찍은 장들을 겹쳐 합성(가만히 있는 피사체용), false = 가장 선명한 한 장만 골라 저장.
+     * 움직이는 사람을 합성하면 잔상이 생기므로 기본은 고르기다.
+     */
+    var merge: Boolean
+        get() = prefs.getBoolean("merge", false)
+        set(v) = prefs.edit().putBoolean("merge", v).apply()
+
     /** 선명도 보정 세기 0..10. */
     var sharpen: Int
         get() = prefs.getInt("sharpen", 5)
