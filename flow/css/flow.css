@@ -287,3 +287,9 @@ button.small.final { color: var(--accent-2); border-color: #5a4f1c; }
 .crop-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .crop-foot small { color: var(--muted); font-size: 11px; }
 .crop-foot .small { margin: 4px 0 0; }
+
+.modal.wide { width: min(1100px, 100%); }
+.modal .crop-box img { height: 68vh; width: auto; max-width: 100%; object-fit: contain; margin: 0 auto; }
+.modal .crop-box { width: fit-content; max-width: 100%; margin: 0 auto; }
+.modal .field.crop > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+.crop-foot span { display: flex; gap: 6px; }

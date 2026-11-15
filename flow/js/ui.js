@@ -109,11 +109,11 @@ export function tabPicker(x, y, tabs, current, onPick) {
 }
 
 // ---- modal dialogs
-export function modal(title, body, buttons) {
+export function modal(title, body, buttons, size) {
   return new Promise((resolve) => {
     const done = (v) => { back.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
     const onKey = (e) => { if (e.key === 'Escape' && !document.querySelector('.lightbox')) { e.stopPropagation(); done(undefined); } };
-    const box = h('div.modal', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+    const box = h(`div.modal${size ? `.${size}` : ''}`, { role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       h('h2', {}, title), h('div.modal-body', {}, body),
       h('div.modal-foot', {}, buttons.map((b) => h('button', { className: b.primary ? 'primary' : '', onclick: () => done(typeof b.value === 'function' ? b.value() : b.value) }, b.label))));
     const back = h('div.modal-back', { onpointerdown: (e) => { if (e.target === back) done(undefined); } }, box);
