@@ -338,3 +338,18 @@ html, body { overscroll-behavior: none; }
 .edges g.lit .line { opacity: 1; stroke-width: 2.6; }
 .foot.hintish { color: var(--accent-2); }
 .thumb .no { white-space: nowrap; }
+
+/* ---- stepping through results in the full-size view */
+.lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 72px; padding: 0; font-size: 34px; line-height: 1; border-radius: 10px; background: rgba(23,26,31,.78); border-color: var(--line-2); color: var(--text); z-index: 2; }
+.lightbox-nav:hover:not(:disabled) { background: #2b313a; }
+/* The shared button style nudges a pressed button with a transform, which would replace the centring one and move this button out from under the pointer. */
+.lightbox-nav:active { transform: translateY(-50%); }
+.lightbox-nav:disabled { opacity: .25; }
+.lightbox-nav.prev { left: 14px; }
+.lightbox-nav.next { right: 14px; }
+.lightbox.with-info .lightbox-nav.next { right: calc(min(360px, 34vw) + 34px); }
+.lightbox-count { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px; background: rgba(0,0,0,.65); color: var(--text); font-size: 12px; white-space: nowrap; }
+.lightbox.with-info .lightbox-count { left: calc((100% - min(360px, 34vw)) / 2); }
+.lightbox-media .missing { color: var(--muted); }
+.lightbox-info[hidden] { display: none; }
+@media (max-width: 760px) { .lightbox.with-info .lightbox-nav.next { right: 14px; } .lightbox.with-info .lightbox-count { left: 50%; } }

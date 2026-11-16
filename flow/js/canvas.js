@@ -500,7 +500,7 @@ export class Canvas {
     if (def.preview === 'review' || node.type === 'text') {
       const attached = this.engine.sourcesOf(node, node.type === 'text' ? 'img' : 'media');
       box.hidden = !attached.length;
-      if (attached.length) box.append(h('div.strip.small', {}, attached.map(({ src, item }, i) => this.thumb(item, { info: this.infoOf(src), index: node.type === 'review' ? `결과 ${i + 1}` : undefined }))));
+      if (attached.length) box.append(h('div.strip.small', {}, attached.map(({ src, item }, i) => this.thumb(item, { info: this.infoOf(src), index: node.type === 'review' ? `결과 ${i + 1}` : undefined, gallery: () => ({ list: attached.map((a, k) => ({ item: a.item, url: displayUrl(a.item.url), info: this.infoOf(a.src), label: node.type === 'review' ? `결과 ${k + 1}` : a.src.data.label || '' })), index: i }) }))));
       return;
     }
     if (!def.preview || !items.length) { box.hidden = true; return; }
@@ -510,7 +510,7 @@ export class Canvas {
     if (media.length) {
       const pick = Math.min(media.length - 1, +node.data.pick || 0);
       box.append(h(`div.thumbs.n${Math.min(4, media.length)}`, {}, media.map((it, i) => this.thumb(it, {
-        info: this.infoOf(node),
+        info: this.infoOf(node), gallery: () => this.galleryOf(node, it),
         picked: media.length > 1 && i === pick,
         onPick: media.length > 1 && !def.outAll && node.type !== 'tool' ? () => { node.data.pick = i; this.paintPreview(node); this.refreshDependents(node); this.graph.emit('node:data', node); } : null,
       }))));
@@ -559,13 +559,21 @@ export class Canvas {
     return '';
   }
   // What the viewer shows next to a result of this node: name, version, the request and the references it was made with.
-  infoOf(node) {
-    const request = node.result?.request;
-    return { title: node.data.label || NODE_TYPES[node.type].title, v: node.result?.v, request, refs: (request?.refs || []).map((r) => ({ ...r, url: displayUrl(r.url) })) };
+  infoOf(node, result = node.result) {
+    const request = result?.request;
+    return { title: node.data.label || NODE_TYPES[node.type].title, v: result?.v, request, refs: (request?.refs || []).map((r) => ({ ...r, url: displayUrl(r.url) })) };
   }
-  thumb(item, { picked, onPick, index, info } = {}) {
+  // Everything that can be stepped through from one result of a node: all its versions, oldest first, with every
+  // variant of each. For nodes without versions, just the items it shows.
+  galleryOf(node, item) {
+    const def = NODE_TYPES[node.type];
+    const results = def.spends ? this.engine.versions(node) : [node.result].filter(Boolean);
+    const list = results.flatMap((r) => { const media = (r.items || []).filter((i) => i.type !== 'text'); return media.map((it, k) => ({ item: it, url: displayUrl(it.url), info: this.infoOf(node, r), label: [r.v ? `v${r.v}` : '', media.length > 1 ? `변형 ${k + 1}` : ''].filter(Boolean).join(' · ') })); });
+    return { list, index: list.findIndex((x) => x.item === item) };
+  }
+  thumb(item, { picked, onPick, index, info, gallery } = {}) {
     const url = displayUrl(item.url);
-    const open = () => (url ? lightbox(item, url, info) : toast('이 브라우저에 파일이 없습니다', 'error'));
+    const open = () => (url ? lightbox(item, url, info, undefined, gallery?.()) : toast('이 브라우저에 파일이 없습니다', 'error'));
     let media;
     if (!url) media = h('div.missing', {}, '파일 없음');
     else if (item.type === 'video' && !item.still) media = h('video', { src: url, preload: 'metadata', muted: true, loop: true, playsInline: true, onpointerenter: (e) => e.target.play().catch(() => {}), onpointerleave: (e) => e.target.pause() });
@@ -631,7 +639,7 @@ export class Canvas {
       return [`## 샷 ${i + 1}${src?.data.label ? ` — ${src.data.label}` : ''}`, `- 종류: ${it.type === 'video' ? '영상' : '이미지'}${src?.result?.request?.model ? ` · ${src.result.request.model}` : ''}`, it.local ? null : `- 파일: ${it.url}`, src?.result?.request?.prompt ? `- 프롬프트:\n\n${src.result.request.prompt}` : null, ''].filter((x) => x != null).join('\n');
     })].join('\n');
     return h('div', {},
-      h('div.strip', {}, items.map((it, i) => { const src = sources.find((s) => this.engine.outItems(s).includes(it)); return this.thumb(it, { index: i + 1, info: src && this.infoOf(src) }); })),
+      h('div.strip', {}, items.map((it, i) => { const src = sources.find((s) => this.engine.outItems(s).includes(it)); return this.thumb(it, { index: i + 1, info: src && this.infoOf(src), gallery: () => ({ list: items.map((x, k) => { const from = sources.find((q) => this.engine.outItems(q).includes(x)); return { item: x, url: displayUrl(x.url), info: from && this.infoOf(from), label: `샷 ${k + 1}${from?.data.label && from.data.label !== `샷 ${k + 1}` ? ` · ${from.data.label}` : ''}` }; }), index: i }) }); })),
       h('p.hint', {}, '순서는 연결된 노드의 위→아래 위치를 따릅니다.'),
       h('button.small', { onclick: async () => toast((await copyText(listText())) ? '샷리스트를 복사했습니다' : '복사하지 못했습니다') }, '샷리스트 복사 (.md)'));
   }
