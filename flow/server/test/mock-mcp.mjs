@@ -72,9 +72,10 @@ function tool(name, a) {
   if (name === 'balance') return ok({ credits: 1234, plan: 'mock' });
   if (name === 'list_workspaces') return ok({ workspaces: SPACES.map((w) => ({ ...w, is_selected: w.id === space })) });
   if (name === 'select_workspace') { if (a.clear) space = null; else if (SPACES.some((w) => w.id === a.workspace_id)) space = a.workspace_id; else return ok({ error: 'workspace not found' }); return ok({ ok: true }); }
+  // The real history list leaves some models out (seen with Seedream 5.5): MOCK_HIDE_MODEL imitates that.
   // Same shape as the real server: results.rawUrl / results.minUrl, params.prompt, params.input_images, next_cursor.
   if (name === 'show_generations') {
-    const all = [...jobs.entries()].filter(([, j]) => j.space === spaceNow() && j.kind === (a.type || j.kind) && !j.fail && Date.now() >= j.readyAt).reverse();
+    const all = [...jobs.entries()].filter(([, j]) => j.model !== process.env.MOCK_HIDE_MODEL && j.space === spaceNow() && j.kind === (a.type || j.kind) && !j.fail && Date.now() >= j.readyAt).reverse();
     const from = a.cursor ? all.findIndex(([id]) => id === String(a.cursor)) + 1 : 0, size = a.size || 24;
     const page = all.slice(from, from + size);
     return ok({ items: page.map(([id, j]) => ({ id, type: j.kind, status: 'completed', model: j.model, params: { prompt: j.prompt, aspect_ratio: '16:9', resolution: '2k', input_images: (j.medias || []).map((m) => ({ id: m.value, type: 'media_input', url: `${BASE}/media/${m.value}.svg` })) },

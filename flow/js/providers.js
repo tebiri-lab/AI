@@ -247,6 +247,20 @@ const mcp = {
     const err = failure(data);
     if (err) throw new Error(err);
   },
+  // Results of known jobs, by job number (works for every model, unlike the history list). Unfinished or failed ones are left out.
+  async lookup(ids, kind) {
+    this.ready();
+    const out = [];
+    for (let i = 0; i < ids.length; i += 12) {
+      const data = await call(settings.server, 'jobs_wait', { jobs: ids.slice(i, i + 12).map((job_id, index) => ({ index, job_id })), timeout_seconds: 0 });
+      for (const j of data.jobs || []) {
+        if (!/complete|success|done|finish/i.test(String(j.status || ''))) continue;
+        const urls = findUrls(j, kind);
+        if (urls.length) out.push({ id: j.job_id, url: urls[0] });
+      }
+    }
+    return out;
+  },
   // One page of the account's finished generations (newest first), for attaching a result that already exists to a node.
   async history(kind, cursor) {
     this.ready();

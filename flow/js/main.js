@@ -12,7 +12,13 @@ import { library } from './library.js';
 
 const $ = (id) => document.getElementById(id);
 const graph = new Graph();
-const engine = new Engine(graph, { ask: askBox, relay: relayBox });
+// Every job this canvas submits is remembered in the browser (job numbers, model, prompt). Higgsfield's own history
+// list leaves some models out, so this is what lets a result be found again whatever model made it.
+const JOBS_KEY = 'flow.jobs.v1';
+const jobLog = { all() { try { return JSON.parse(localStorage.getItem(JOBS_KEY) || '[]'); } catch { return []; } },
+  add(e) { try { localStorage.setItem(JOBS_KEY, JSON.stringify([e, ...this.all()].slice(0, 300))); } catch { /* not remembered */ } } };
+const engine = new Engine(graph, { ask: askBox, relay: relayBox,
+  onJobs: ({ ids, kind, at, request, node }) => jobLog.add({ ids, kind, at, model: request?.model, prompt: request?.prompt || '', resolution: request?.resolution, aspect: request?.aspect, duration: request?.duration, refs: (request?.refs || []).filter((r) => /^https?:/.test(r.url || '')), label: node.data.label || NODE_TYPES[node.type].title }) });
 
 // ---- running, with a check before several generating nodes spend credits at once
 async function guarded(targetIds, force, what) {
@@ -89,36 +95,78 @@ const actions = {
         el.classList.toggle('on', picked.has(g.id)); el.setAttribute('aria-pressed', String(picked.has(g.id))); sync();
       } },
         /\.(mp4|webm|mov)(\?|$)/i.test(g.thumb) ? h('video', { src: g.thumb, muted: true, preload: 'metadata' }) : h('img', { src: g.thumb, alt: '', loading: 'lazy' }),
-        h('span', {}, h('b', {}, g.model || ''), h('small', {}, `${when(g.at)}${same ? ' · 이 노드의 프롬프트와 같음' : ''}`)));
+        h('span', {}, h('b', {}, g.model || g.from || ''), h('small', {}, `${[g.model && g.from, when(g.at)].filter(Boolean).join(' · ')}${same ? ' · 이 노드의 프롬프트와 같음' : ''}`)));
       return el;
+    };
+    const seen = new Set();
+    const addCards = (list, front) => {
+      const fresh = list.filter((g) => !seen.has(g.id));
+      for (const g of fresh) seen.add(g.id);
+      const els = fresh.map(card);
+      if (front) grid.prepend(...els); else grid.append(...els);
+      return els;
+    };
+    const say = () => { status.textContent = grid.children.length ? '가져올 결과를 누르세요. 여러 개를 고르면 한 버전의 변형으로 함께 들어옵니다.' : `찾은 ${kind === 'video' ? '영상이' : '이미지가'} 없습니다. 아래에 결과 주소나 작업 번호를 붙여넣어 연결할 수 있습니다.`; };
+    // Results made from exactly this node's prompt come first: those are most likely the ones looked for.
+    const mineFirst = (list) => [...list.filter((g) => mine && g.prompt.trim() === mine), ...list.filter((g) => !(mine && g.prompt.trim() === mine))];
+    // 1) what this canvas itself submitted (any model), 2) Higgsfield's history list (which leaves some models out)
+    const loadLog = async () => {
+      const entries = jobLog.all().filter((e) => e.kind === kind).slice(0, 40);
+      if (!entries.length) return;
+      try {
+        const found = new Map((await PROVIDERS.bridge.lookup(entries.flatMap((e) => e.ids), kind)).map((r) => [r.id, r.url]));
+        addCards(mineFirst(entries.flatMap((e) => e.ids.filter((id) => found.has(id)).map((id) => ({ id, type: kind, model: e.model, at: e.at, url: found.get(id), thumb: found.get(id), prompt: e.prompt, resolution: e.resolution, aspect: e.aspect, duration: e.duration, refs: e.refs || [], from: `이 캔버스 · ${e.label}` })))), true);
+      } catch { /* the log is a convenience; the history list below still loads */ }
+      say();
     };
     const load = async () => {
       more.disabled = true;
       try {
         const page = await PROVIDERS.bridge.history(kind, cursor);
-        // Results made from exactly this node's prompt come first: those are most likely the ones looked for.
-        const list = cursor == null ? [...page.items.filter((g) => mine && g.prompt.trim() === mine), ...page.items.filter((g) => !(mine && g.prompt.trim() === mine))] : page.items;
-        grid.append(...list.map(card));
+        addCards(cursor == null ? mineFirst(page.items) : page.items);
         cursor = page.next; more.hidden = cursor == null; more.disabled = false;
-        status.textContent = grid.children.length ? '가져올 결과를 누르세요. 여러 개를 고르면 한 버전의 변형으로 함께 들어옵니다.' : `이 작업 공간의 생성 기록에 ${kind === 'video' ? '영상이' : '이미지가'} 없습니다.${spaces.list.length > 1 ? ' 위에서 다른 작업 공간으로 바꿔 보세요.' : ''}`;
+        say();
       } catch (e) { status.textContent = `생성 기록을 불러오지 못했습니다: ${e.message}`; more.hidden = true; }
     };
     more.onclick = load;
+    // 3) anything else: paste the address of a result (or its job number) copied from Higgsfield
+    const paste = h('input', { type: 'text', placeholder: '결과 이미지·영상 주소(https://…) 또는 작업 번호를 붙여넣기 (여러 개 가능)', 'aria-label': '결과 주소 또는 작업 번호' });
+    const addPasted = async () => {
+      const text = paste.value;
+      const ids = [...new Set(text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi) || [])];
+      const urls = [...new Set(text.match(/https?:\/\/[^\s"'<>]+/g) || [])];
+      if (!ids.length && !urls.length) return toast('주소(https://…)나 작업 번호를 찾지 못했습니다', 'error');
+      const list = [];
+      // A Higgsfield result address carries its job number in the file name: with it the result keeps its server id.
+      for (const url of urls) { const id = (url.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i) || [])[0]; list.push({ id: id || url, noJob: !id, type: kind, model: '', at: Date.now(), url, thumb: url, prompt: '', refs: [], from: '붙여넣은 주소' }); }
+      const rest = ids.filter((id) => !list.some((g) => g.id === id));
+      if (rest.length) {
+        try { for (const r of await PROVIDERS.bridge.lookup(rest, kind)) list.push({ id: r.id, type: kind, model: '', at: Date.now(), url: r.url, thumb: r.url, prompt: '', refs: [], from: '붙여넣은 작업 번호' }); }
+        catch (e) { return toast(`작업 번호를 조회하지 못했습니다: ${e.message}`, 'error'); }
+        if (list.length < urls.length + rest.length) toast('완료된 결과를 찾지 못한 작업 번호가 있습니다', 'error');
+      }
+      for (const el of addCards(list, true)) el.click(); // pasted on purpose: start selected
+      for (const g of list) if (seen.has(g.id) && !picked.has(g.id)) { /* already listed: leave the choice to the person */ }
+      paste.value = ''; say();
+    };
+    paste.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addPasted(); } });
+    const pasteRow = h('div.row.history-paste', {}, paste, h('button', { onclick: addPasted }, '추가'));
     // History only covers the active workspace: say which one, and let it be switched right here.
     await loadSpaces();
     const where = h('div.row.history-space');
     const drawWhere = () => where.replaceChildren(...(spaces.list.length > 1
-      ? [h('span', {}, '작업 공간'), spacePicker(() => { picked.clear(); sync(); grid.replaceChildren(); cursor = null; status.textContent = '불러오는 중…'; drawWhere(); load(); }), h('small', {}, '찾는 결과가 없으면 다른 작업 공간에서 만든 것일 수 있습니다.')]
+      ? [h('span', {}, '작업 공간'), spacePicker(() => { picked.clear(); sync(); grid.replaceChildren(); seen.clear(); cursor = null; status.textContent = '불러오는 중…'; drawWhere(); loadLog().then(load); })]
       : []));
     drawWhere();
-    const shown = modal(`생성 기록에서 가져오기 — ${node.data.label || NODE_TYPES[node.type].title}`, h('div', {}, where, status, grid, h('div.history-more', {}, more)), [{ label: '취소', value: false }, { label: '가져오기', value: true, primary: true }], 'wide');
+    const note = h('p.hint', {}, 'Higgsfield의 생성 기록 목록에는 일부 모델(예: Seedream 5.5)의 결과가 나오지 않습니다. 이 캔버스에서 보낸 작업은 모델과 관계없이 위쪽에 나오고, 그 밖의 결과는 Higgsfield에서 이미지 주소를 복사해 아래 칸에 붙여넣으면 연결됩니다.');
+    const shown = modal(`생성 기록에서 가져오기 — ${node.data.label || NODE_TYPES[node.type].title}`, h('div', {}, where, status, grid, h('div.history-more', {}, more), pasteRow, note), [{ label: '취소', value: false }, { label: '가져오기', value: true, primary: true }], 'wide');
     take = [...document.querySelectorAll('.modal-back')].pop().querySelector('.primary');
-    sync(); load();
+    sync(); loadLog().then(load);
     if (!(await shown)) return;
     if (!picked.size) return;
     const list = [...picked.values()], first = list[0];
     graph.checkpoint();
-    engine.adopt(node, list.map((g) => ({ type: g.type, url: g.url, jobId: g.id })), { model: first.model, prompt: first.prompt, resolution: first.resolution, aspect: first.aspect, duration: first.duration, refs: first.refs });
+    engine.adopt(node, list.map((g) => ({ type: g.type, url: g.url, ...(g.noJob ? {} : { jobId: g.id }) })), { model: first.model, prompt: first.prompt, resolution: first.resolution, aspect: first.aspect, duration: first.duration, refs: first.refs });
     toast(`생성 기록의 결과 ${list.length}개를 v${node.result.v} 버전으로 가져왔습니다`);
   },
   // "1080p로 완성 / 4K로 완성": render the picked draft again at full resolution. Shows the price first when it is known.
