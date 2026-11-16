@@ -484,7 +484,8 @@ export class Canvas {
     if (run) { const on = node.status === 'running' || node.status === 'queued'; run.textContent = on ? '■' : '▶'; run.title = on ? '중단' : '이 노드 실행 (Ctrl+Enter)'; run.setAttribute('aria-label', on ? '중단' : '실행'); }
     const foot = el.querySelector('.foot');
     const msg = node.status === 'error' ? node.message : node.status === 'running' ? '' : node.message;
-    foot.textContent = msg || ''; foot.hidden = !msg; foot.classList.toggle('err', node.status === 'error');
+    const hint = msg ? '' : this.looseWording(node);
+    foot.textContent = msg || hint || ''; foot.hidden = !(msg || hint); foot.classList.toggle('err', node.status === 'error'); foot.classList.toggle('hintish', !!hint);
     const cost = el.querySelector('.cost');
     cost.textContent = node.cost || ''; cost.hidden = !node.cost;
     this.drawMini();
@@ -499,7 +500,7 @@ export class Canvas {
     if (def.preview === 'review' || node.type === 'text') {
       const attached = this.engine.sourcesOf(node, node.type === 'text' ? 'img' : 'media');
       box.hidden = !attached.length;
-      if (attached.length) box.append(h('div.strip.small', {}, attached.map(({ src, item }) => this.thumb(item, { info: this.infoOf(src) }))));
+      if (attached.length) box.append(h('div.strip.small', {}, attached.map(({ src, item }, i) => this.thumb(item, { info: this.infoOf(src), index: node.type === 'review' ? `결과 ${i + 1}` : undefined }))));
       return;
     }
     if (!def.preview || !items.length) { box.hidden = true; return; }
@@ -532,6 +533,30 @@ export class Canvas {
     for (const res of finalResolutions(node, picked)) {
       box.append(h('button.small.final', { title: '드래프트를 이 해상도로 다시 생성합니다 (업스케일이 아니라 Higgsfield의 Generate in 1080p/4K). 크레딧이 듭니다.', onclick: () => this.actions.finalize(node, picked, res) }, `${res === '4k' ? '4K' : res}로 완성`));
     }
+  }
+  // Reference tags a text can use: those of the first generation node it feeds (directly or through other nodes).
+  tagsFor(node) {
+    for (const id of this.graph.downstream(node.id)) {
+      const gen = this.graph.node(id);
+      if (gen.type !== 'image' && gen.type !== 'video') continue;
+      const tags = Object.entries(TAG_PORTS).flatMap(([key, name]) => this.engine.sourceNodes(gen, key).map((src, i) => ({ tag: `@${name} ${i + 1}`, name: src.data.label || NODE_TYPES[src.type].title, src })));
+      if (tags.length) return tags;
+    }
+    return [];
+  }
+  // "이미지 1" written without the @ can mean two different things: a reference tag of the prompt, or (in a feedback
+  // node) one of the attached results. Say which reading applies, with the real names, while it is being written.
+  looseWording(node) {
+    const loose = (t) => /(^|[^@\w가-힣])(이미지|image|img)\s?\d/i.test(t || '');
+    if (node.type === 'text' && loose(node.data.ask)) {
+      const tags = this.tagsFor(node);
+      return tags.length ? `지시의 "이미지 N"은 레퍼런스 태그로 읽힙니다 — ${tags.map((t) => `${t.tag} = ${t.name}`).join(', ')}. 다르면 생성 노드의 칩을 끌어 순서를 바꾸세요.` : '';
+    }
+    if (node.type === 'review' && loose(node.data.note)) {
+      const res = this.engine.sourcesOf(node, 'media').map(({ src }, i) => `결과 ${i + 1} = ${src.data.label || NODE_TYPES[src.type].title}`);
+      return `메모의 "이미지 N"은 두 가지로 읽힐 수 있습니다. 연결한 결과는 "결과 1"처럼(${res.join(', ') || '연결된 결과 없음'}), 프롬프트의 레퍼런스는 "@Image 1"처럼 써 주세요.`;
+    }
+    return '';
   }
   // What the viewer shows next to a result of this node: name, version, the request and the references it was made with.
   infoOf(node) {
@@ -620,8 +645,24 @@ export class Canvas {
     return this.toWorld(r.left + r.width / 2, r.top + r.height / 2);
   }
   static curve(a, b) { const dx = Math.max(50, Math.abs(b.x - a.x) / 2); return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`; }
+  // The flow of the selected nodes: everything they depend on and everything that depends on them.
+  // Returns null when nothing is selected (then nothing is dimmed).
+  focus() {
+    const picked = this.selectedNodes();
+    if (!picked.length) return null;
+    const up = new Set(picked.map((n) => n.id)), down = new Set(up);
+    for (const n of picked) { this.graph.upstream(n.id, up); this.graph.downstream(n.id, down); }
+    return { up, down, has: (id) => up.has(id) || down.has(id), edge: (e) => (up.has(e.from.node) && up.has(e.to.node)) || (down.has(e.from.node) && down.has(e.to.node)) };
+  }
+  paintFocus() {
+    const f = this.focus();
+    for (const [id, el] of this.els) el.classList.toggle('dim', !!f && !f.has(id));
+    this.stage.classList.toggle('focusing', !!f);
+    return f;
+  }
   drawEdges() {
     const frag = document.createDocumentFragment();
+    const f = this.paintFocus();
     for (const e of this.graph.doc.edges) {
       const a = this.portPos(e.from.node, 'out', e.from.port), b = this.portPos(e.to.node, 'in', e.to.port);
       if (!a || !b) continue;
@@ -630,6 +671,7 @@ export class Canvas {
       const g = document.createElementNS(SVG, 'g');
       g.dataset.edge = e.id; g.dataset.type = type;
       if (e.id === this.selEdge) g.classList.add('sel');
+      if (f) g.classList.add(f.edge(e) ? 'lit' : 'dim');
       if (src.status === 'running') g.classList.add('flow');
       const d = Canvas.curve(a, b);
       for (const cls of ['hit', 'line']) { const p = document.createElementNS(SVG, 'path'); p.setAttribute('d', d); p.setAttribute('class', cls); g.append(p); }

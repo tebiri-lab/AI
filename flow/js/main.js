@@ -230,12 +230,32 @@ const actions = {
     let answer = null;
     try {
       const { images, lines } = await picturesOf(attached, 'Result', 'generated');
-      const refTags = [...new Set(attached.flatMap(({ src }) => (src.result?.request?.refs || []).map((r) => r.label).filter((l) => l.startsWith('@'))))];
+      // What each @Image tag of that generation actually was: its name, and (while there is room) the picture itself,
+      // so a result can be checked against the right reference and mixed-up roles can be spotted.
+      const refs = [], refSeen = new Set();
+      for (const { src } of attached) {
+        const feeders = graph.edgesInto(src.id).map((e) => graph.node(e.from.node)).filter(Boolean);
+        for (const r of src.result?.request?.refs || []) {
+          if (!r.label.startsWith('@') || refSeen.has(r.label)) continue;
+          refSeen.add(r.label);
+          const from = feeders.find((n) => [n.result, ...(n.history || [])].some((x) => (x?.items || []).some((it) => it.url === r.url)));
+          refs.push({ ...r, name: from ? from.data.label || NODE_TYPES[from.type].title : '' });
+        }
+      }
+      const refTags = refs.map((r) => r.label);
+      for (const r of refs) {
+        if (images.length >= 8 || r.type !== 'image') break;
+        const pic = await pictureData(r.url);
+        images.push({ ...(pic || { url: r.url }), label: `reference ${r.label}${r.name ? ` (${r.name})` : ''} — an input of the generation, not a result` });
+      }
+      const sentRefs = images.filter((x) => x.label.startsWith('reference')).length;
       const prompt = [
         'You are reviewing the output of an AI image/video generation for a filmmaker who wants photorealistic, live-action looking footage.',
         'Look at the result pictures, compare them with the prompt that produced them and with what the filmmaker says, then answer.',
         '', ...lines, '',
         `Prompt that was used:\n${used || '(not available)'}`, '',
+        'Two different numberings are in play. "결과 1", "결과 2" (Result 1, 2) are the generated outputs listed above. "@Image 1", "@Image 2" are the reference inputs of the prompt. When the filmmaker writes "이미지 1" without the @, decide from the context which of the two is meant and say in the diagnosis how you read it.', '',
+        ...(refs.length ? [`What each reference tag of that generation actually is: ${refs.map((r) => `${r.label}${r.name ? ` = ${r.name}` : ''}`).join(', ')}.${sentRefs ? ' Their pictures are attached too, labelled "reference".' : ''} Check that the prompt gives each tag the role its reference can really play (a person photo cannot be the layout template, a style sheet cannot be the identity); if roles are attached to the wrong tag, say so first in the diagnosis and fix it in the revised prompt.`, ''] : []),
         ...(refTags.length ? [`References that were attached to that generation: ${refTags.join(', ')}. The revised prompt is used with the same references, so point at them with these tags (and say what each is used for) instead of describing a person or place from scratch.`, ''] : []),
         `What the filmmaker is unhappy with or wants instead:\n${node.data.note.trim() || '(nothing written: find where the result fails the prompt or looks artificial)'}`, '',
         'Answer in exactly this format and nothing else:',
@@ -321,17 +341,9 @@ const actions = {
       `\nRequest${node.data.label ? ` (this text is used as: ${node.data.label})` : ''}:\n${ask || '(no instruction given: write a prompt that would recreate what the attached pictures show — subject, setting, light, lens and framing)'}`,
     ].filter(Boolean).join('\n');
     // Tags this text can use: the references connected to the generation node(s) it feeds (directly or through a join).
-    const tagLines = [], tagOf = new Map(); // node id -> the tag its picture has in the generation this text feeds
-    for (const id of graph.downstream(node.id)) {
-      const gen = graph.node(id);
-      if (gen.type !== 'image' && gen.type !== 'video') continue;
-      for (const [key, name] of Object.entries(TAG_PORTS)) {
-        engine.sourceNodes(gen, key)
-          .forEach((src, i) => { tagLines.push(`@${name} ${i + 1} = ${src.data.label || NODE_TYPES[src.type].title}`); tagOf.set(src.id, `@${name} ${i + 1}`); });
-      }
-      if (tagLines.length) break;
-    }
-    if (tagLines.length) prompt += `\n\nReference tags available to this prompt (write a tag exactly like "@Image 1" when the prompt should point at that reference; use only these):\n${tagLines.join('\n')}`;
+    const tags = canvas.tagsFor(node), tagLines = tags.map((t) => `${t.tag} = ${t.name}`);
+    const tagOf = new Map(tags.map((t) => [t.src.id, t.tag])); // node id -> the tag its picture has in the generation this text feeds
+    if (tagLines.length) prompt += `\n\nReference tags available to this prompt (write a tag exactly like "@Image 1" when the prompt should point at that reference; use only these):\n${tagLines.join('\n')}\nThis list is the truth about what each number is. If the request says "이미지 1" / "image 1" without the @, it means the tag with that number in this list. If the request describes a numbered image as something this list (or an attached picture) shows it is not — for example it calls image 1 the person when @Image 1 is a style sheet — do not guess silently: write each role onto the tag whose reference really is that thing.`;
     const asked = [...new Set((`${ask} ${node.data.text}`.match(/@\s?(?:image|video|audio|이미지|영상|비디오|오디오)\s?\d+/gi) || []).map(tagKey))];
     const btn = canvas.els.get(node.id)?.querySelector('.action');
     if (btn) { btn.disabled = true; btn.textContent = pictures.length ? '이미지를 보는 중…' : '쓰는 중…'; }
