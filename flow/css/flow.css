@@ -319,3 +319,6 @@ html, body { overscroll-behavior: none; }
 .history-space { margin-bottom: 8px; flex-wrap: wrap; }
 .history-space select { width: auto; flex: 0 1 auto; }
 .history-space small { color: var(--muted); flex-basis: 100%; }
+
+.history-paste { margin-top: 12px; }
+.history-grid:empty { display: none; }

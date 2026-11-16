@@ -190,7 +190,7 @@ export class Engine {
       progress: (msg) => { node.message = msg; g.emit('node:status', node); },
       ask: this.hooks.ask, relay: this.hooks.relay,
       // Once the server has accepted the jobs, they are written on the node and saved at once.
-      onJobs: (ids, kind, server) => { node.pending = { ids, kind, server, at: node.startedAt, sig, request: ctx.request }; g.onSave?.(g.doc); },
+      onJobs: (ids, kind, server) => { node.pending = { ids, kind, server, at: node.startedAt, sig, request: ctx.request }; g.onSave?.(g.doc); this.hooks.onJobs?.({ ids, kind, at: Date.now(), request: ctx.request, node }); },
     };
     const sig = resumed?.sig ?? this.signature(node);
     try {
