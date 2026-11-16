@@ -21,12 +21,19 @@ export class Engine {
     return items.length ? [items[pick]] : [];
   }
   // Inputs by port key. Several edges into one port are ordered top to bottom by the position of their source node.
+  // The nodes feeding one input port, in the order their items are sent. An order set by hand on the node
+  // (data.order[port] = source ids, e.g. by dragging the reference chips) comes first; anything not in it follows,
+  // top to bottom by position.
+  sourceNodes(node, portKey) {
+    const g = this.graph, order = node.data.order?.[portKey] || [];
+    const rank = (s) => { const i = order.indexOf(s.id); return i < 0 ? order.length : i; };
+    return g.edgesInto(node.id, portKey).map((e) => g.node(e.from.node)).filter(Boolean).sort((a, b) => rank(a) - rank(b) || a.y - b.y || a.x - b.x);
+  }
   inputsOf(node) {
     const g = this.graph, out = {};
     for (const port of g.ports(node, 'in')) {
       const accepts = port.accepts || [port.type];
-      const edges = g.edgesInto(node.id, port.key).map((e) => ({ e, src: g.node(e.from.node) })).filter((x) => x.src).sort((a, b) => a.src.y - b.src.y || a.src.x - b.src.x);
-      out[port.key] = edges.flatMap(({ src }) => this.outItems(src).filter((i) => accepts.includes('any') || accepts.includes(i.type)));
+      out[port.key] = this.sourceNodes(node, port.key).flatMap((src) => this.outItems(src).filter((i) => accepts.includes('any') || accepts.includes(i.type)));
     }
     return out;
   }
@@ -35,7 +42,7 @@ export class Engine {
     const g = this.graph, port = g.port(node, 'in', portKey);
     if (!port) return [];
     const accepts = port.accepts || [port.type];
-    return g.edgesInto(node.id, portKey).map((e) => g.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x)
+    return this.sourceNodes(node, portKey)
       .flatMap((src) => this.outItems(src).filter((i) => accepts.includes('any') || accepts.includes(i.type)).map((item) => ({ src, item })));
   }
   // What an AI-written text depends on besides its instruction: the reference texts and pictures connected to it.
@@ -45,7 +52,7 @@ export class Engine {
   }
   // What the node would run with right now. A result made with the same signature is still current.
   signature(node) {
-    const { pick, label, locked, collapsed, ...data } = node.data; // naming, locking, folding or picking a variant does not change what would be generated
+    const { pick, label, locked, collapsed, order, ...data } = node.data; // (the order itself shows in the inputs below) // naming, locking, folding or picking a variant does not change what would be generated
     const ins = Object.entries(this.inputsOf(node)).map(([k, items]) => [k, items.map((i) => i.jobId || i.url || i.text)]);
     return JSON.stringify([node.type, data, ins]);
   }
