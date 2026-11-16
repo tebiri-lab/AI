@@ -4,7 +4,7 @@ import { Engine } from './engine.js';
 import { Canvas } from './canvas.js';
 import { NODE_TYPES, buildRequest, finalizeRequest, describeRefs, TAG_PORTS } from './nodes.js';
 import { TEMPLATES } from './templates.js';
-import { initMedia, sweepMedia, displayUrl, frameBlobs, pictureData } from './media.js';
+import { initMedia, sweepMedia, displayUrl, frameBlobs, pictureData, saveBlob } from './media.js';
 import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS } from './providers.js';
 import { setModels, isLiveCatalog, listModels } from './models.js';
 import { h, toast, menu, modal, confirmBox, askBox, relayBox, refStrip } from './ui.js';
@@ -12,6 +12,30 @@ import { library } from './library.js';
 
 const $ = (id) => document.getElementById(id);
 const graph = new Graph();
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi;
+// Turn addresses and job numbers (pasted, or dragged in from the Higgsfield site) into results. A Higgsfield address
+// carries its job number in the file name; with it the result is looked up on the server, which gives the full-size
+// file even when the address was a small preview, and keeps the server id so it is never uploaded again.
+async function resolveResults(text, kind) {
+  const urls = [...new Set(text.match(/https?:\/\/[^\s"'<>]+/g) || [])];
+  const ids = [...new Set(text.match(UUID_RE) || [])];
+  let found = new Map(), failed = '';
+  if (ids.length && settings.mode === 'bridge' && serverReady(settings.server)) {
+    try { found = new Map((await PROVIDERS.bridge.lookup(ids, kind)).map((r) => [r.id, r.url])); } catch (e) { failed = e.message; }
+  }
+  const list = [], used = new Set();
+  for (const url of urls) {
+    const id = (url.match(UUID_RE) || [])[0];
+    if (id && used.has(id)) continue;
+    if (id) used.add(id);
+    const known = id && found.has(id);
+    list.push({ id: known ? id : url, noJob: !known, type: kind, model: '', at: Date.now(), url: known ? found.get(id) : url, thumb: known ? found.get(id) : url, prompt: '', refs: [], from: '붙여넣은 주소' });
+  }
+  for (const id of ids) if (!used.has(id) && found.has(id)) list.push({ id, type: kind, model: '', at: Date.now(), url: found.get(id), thumb: found.get(id), prompt: '', refs: [], from: '붙여넣은 작업 번호' });
+  const missing = ids.filter((id) => !used.has(id) && !found.has(id)).length;
+  return { list, missing, failed };
+}
+
 // Every job this canvas submits is remembered in the browser (job numbers, model, prompt). Higgsfield's own history
 // list leaves some models out, so this is what lets a result be found again whatever model made it.
 const JOBS_KEY = 'flow.jobs.v1';
@@ -98,7 +122,7 @@ const actions = {
         h('span', {}, h('b', {}, g.model || g.from || ''), h('small', {}, `${[g.model && g.from, when(g.at)].filter(Boolean).join(' · ')}${same ? ' · 이 노드의 프롬프트와 같음' : ''}`)));
       return el;
     };
-    const seen = new Set();
+    const seen = new Set(), served = new Map(), tally = h('p.hint.history-tally');
     const addCards = (list, front) => {
       const fresh = list.filter((g) => !seen.has(g.id));
       for (const g of fresh) seen.add(g.id);
@@ -123,6 +147,9 @@ const actions = {
       more.disabled = true;
       try {
         const page = await PROVIDERS.bridge.history(kind, cursor);
+        // Say what Higgsfield's list actually returned, so a missing result can be told apart from a filtered one.
+        for (const g of page.items) served.set(g.model || '모델 없음', (served.get(g.model || '모델 없음') || 0) + 1);
+        tally.textContent = `Higgsfield 기록 목록이 돌려준 것${spaces.active ? ` (작업 공간: ${spaces.active.name})` : ''}: ${served.size ? [...served].map(([m, n]) => `${m} ${n}개`).join(', ') : '없음'}${page.next != null ? ' · 더 있음' : ''}`;
         addCards(cursor == null ? mineFirst(page.items) : page.items);
         cursor = page.next; more.hidden = cursor == null; more.disabled = false;
         say();
@@ -132,21 +159,11 @@ const actions = {
     // 3) anything else: paste the address of a result (or its job number) copied from Higgsfield
     const paste = h('input', { type: 'text', placeholder: '결과 이미지·영상 주소(https://…) 또는 작업 번호를 붙여넣기 (여러 개 가능)', 'aria-label': '결과 주소 또는 작업 번호' });
     const addPasted = async () => {
-      const text = paste.value;
-      const ids = [...new Set(text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi) || [])];
-      const urls = [...new Set(text.match(/https?:\/\/[^\s"'<>]+/g) || [])];
-      if (!ids.length && !urls.length) return toast('주소(https://…)나 작업 번호를 찾지 못했습니다', 'error');
-      const list = [];
-      // A Higgsfield result address carries its job number in the file name: with it the result keeps its server id.
-      for (const url of urls) { const id = (url.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i) || [])[0]; list.push({ id: id || url, noJob: !id, type: kind, model: '', at: Date.now(), url, thumb: url, prompt: '', refs: [], from: '붙여넣은 주소' }); }
-      const rest = ids.filter((id) => !list.some((g) => g.id === id));
-      if (rest.length) {
-        try { for (const r of await PROVIDERS.bridge.lookup(rest, kind)) list.push({ id: r.id, type: kind, model: '', at: Date.now(), url: r.url, thumb: r.url, prompt: '', refs: [], from: '붙여넣은 작업 번호' }); }
-        catch (e) { return toast(`작업 번호를 조회하지 못했습니다: ${e.message}`, 'error'); }
-        if (list.length < urls.length + rest.length) toast('완료된 결과를 찾지 못한 작업 번호가 있습니다', 'error');
-      }
+      const { list, missing, failed } = await resolveResults(paste.value, kind);
+      if (failed) toast(`작업 번호를 조회하지 못했습니다: ${failed}`, 'error');
+      else if (missing) toast('완료된 결과를 찾지 못한 작업 번호가 있습니다', 'error');
+      if (!list.length) { if (!failed && !missing) toast('주소(https://…)나 작업 번호를 찾지 못했습니다', 'error'); return; }
       for (const el of addCards(list, true)) el.click(); // pasted on purpose: start selected
-      for (const g of list) if (seen.has(g.id) && !picked.has(g.id)) { /* already listed: leave the choice to the person */ }
       paste.value = ''; say();
     };
     paste.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addPasted(); } });
@@ -155,11 +172,11 @@ const actions = {
     await loadSpaces();
     const where = h('div.row.history-space');
     const drawWhere = () => where.replaceChildren(...(spaces.list.length > 1
-      ? [h('span', {}, '작업 공간'), spacePicker(() => { picked.clear(); sync(); grid.replaceChildren(); seen.clear(); cursor = null; status.textContent = '불러오는 중…'; drawWhere(); loadLog().then(load); })]
+      ? [h('span', {}, '작업 공간'), spacePicker(() => { picked.clear(); sync(); grid.replaceChildren(); seen.clear(); served.clear(); cursor = null; status.textContent = '불러오는 중…'; drawWhere(); loadLog().then(load); })]
       : []));
     drawWhere();
-    const note = h('p.hint', {}, 'Higgsfield의 생성 기록 목록에는 일부 모델(예: Seedream 5.5)의 결과가 나오지 않습니다. 이 캔버스에서 보낸 작업은 모델과 관계없이 위쪽에 나오고, 그 밖의 결과는 Higgsfield에서 이미지 주소를 복사해 아래 칸에 붙여넣으면 연결됩니다.');
-    const shown = modal(`생성 기록에서 가져오기 — ${node.data.label || NODE_TYPES[node.type].title}`, h('div', {}, where, status, grid, h('div.history-more', {}, more), pasteRow, note), [{ label: '취소', value: false }, { label: '가져오기', value: true, primary: true }], 'wide');
+    const note = h('p.hint', {}, 'Higgsfield 사이트(이미지·에셋 탭)에는 보이는데 여기 목록에 없는 결과가 있을 수 있습니다. 사이트는 자체 목록을 쓰고, 외부 앱에는 위의 기록 목록만 제공하기 때문입니다. 그런 결과는 사이트에서 이미지를 이 노드 위로 끌어다 놓거나, 이미지 주소를 복사해 위 칸에 붙여넣으면 연결됩니다. 이 캔버스에서 보낸 작업은 모델과 관계없이 목록 맨 위에 나옵니다.');
+    const shown = modal(`생성 기록에서 가져오기 — ${node.data.label || NODE_TYPES[node.type].title}`, h('div', {}, where, status, grid, h('div.history-more', {}, more), tally, pasteRow, note), [{ label: '취소', value: false }, { label: '가져오기', value: true, primary: true }], 'wide');
     take = [...document.querySelectorAll('.modal-back')].pop().querySelector('.primary');
     sync(); loadLog().then(load);
     if (!(await shown)) return;
@@ -168,6 +185,24 @@ const actions = {
     graph.checkpoint();
     engine.adopt(node, list.map((g) => ({ type: g.type, url: g.url, ...(g.noJob ? {} : { jobId: g.id }) })), { model: first.model, prompt: first.prompt, resolution: first.resolution, aspect: first.aspect, duration: first.duration, refs: first.refs });
     toast(`생성 기록의 결과 ${list.length}개를 v${node.result.v} 버전으로 가져왔습니다`);
+  },
+  // A picture or video dropped on a generation node (from the Higgsfield site in another tab or window, or a file
+  // from the computer) becomes that node's result, as a new version.
+  async attach(node, { files, link }) {
+    const kind = node.type, items = [];
+    for (const file of files) if (file.type.startsWith(`${kind}/`)) items.push({ type: kind, url: await saveBlob(file), name: file.name, local: true });
+    let request = { model: '', prompt: '' };
+    if (link) {
+      const { list } = await resolveResults(link, kind);
+      for (const g of list) items.push({ type: kind, url: g.url, ...(g.noJob ? {} : { jobId: g.id }) });
+      // A job this canvas sent itself: its model and prompt are known.
+      const mine = jobLog.all().find((e) => e.ids.some((id) => list.some((g) => g.id === id)));
+      if (mine) request = { model: mine.model, prompt: mine.prompt, resolution: mine.resolution, aspect: mine.aspect, duration: mine.duration, refs: mine.refs };
+    }
+    if (!items.length) return toast(`${kind === 'video' ? '영상' : '이미지'} 생성 노드에는 ${kind === 'video' ? '영상' : '이미지'}만 결과로 붙일 수 있습니다`, 'error');
+    graph.checkpoint();
+    engine.adopt(node, items, request);
+    toast(`${node.data.label || NODE_TYPES[node.type].title}에 결과 ${items.length}개를 v${node.result.v} 버전으로 붙였습니다`);
   },
   // "1080p로 완성 / 4K로 완성": render the picked draft again at full resolution. Shows the price first when it is known.
   async finalize(node, item, resolution) {

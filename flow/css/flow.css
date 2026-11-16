@@ -322,3 +322,6 @@ html, body { overscroll-behavior: none; }
 
 .history-paste { margin-top: 12px; }
 .history-grid:empty { display: none; }
+
+.node.drop-here { outline: 3px dashed var(--ok); outline-offset: 4px; }
+.history-tally { margin-top: 10px; }
