@@ -148,26 +148,60 @@ export function refStrip(refs) {
 }
 // Full-size view. With `info` (what the result was made from) a side panel shows the model, settings and the prompt that was sent.
 // `caption` names a picture opened from inside another view (a reference); its close button reads "돌아가기".
-export function lightbox(item, url, info, caption) {
+export function lightbox(item, url, info, caption, gallery) {
   const under = [...document.querySelectorAll('.lightbox, .modal-back')].pop();
   const paused = under ? [...under.querySelectorAll('video, audio')].filter((v) => !v.paused) : [];
   for (const v of paused) v.pause();
-  const media = item.type === 'audio' ? h('audio', { src: url, controls: true, autoplay: true }) : item.type === 'video' && !item.still ? h('video', { src: url, controls: true, autoplay: true, loop: true }) : h('img', { src: url, alt: '' });
-  const req = info?.request;
-  const facts = req ? [req.model, req.finalOf ? `v${req.finalOf} 드래프트를 ${req.resolution}로 완성` : req.draft ? '드래프트' : null, !req.finalOf && req.resolution ? req.resolution : null, req.aspect, req.duration ? `${req.duration}초` : null].filter(Boolean) : [];
-  const side = req ? h('aside.lightbox-info', {},
-    h('h2', {}, [info.title, info.v ? `v${info.v}` : null].filter(Boolean).join(' · ')),
-    facts.length ? h('p.facts', {}, facts.join(' · ')) : null,
-    info.refs?.length ? h('h3', {}, `첨부한 레퍼런스 ${info.refs.length}개`) : null,
-    info.refs?.length ? refStrip(info.refs) : null,
-    h('h3', {}, '사용한 프롬프트'),
-    h('pre', {}, req.prompt || '(프롬프트 없이 생성)'),
-    req.prompt ? h('button', { onclick: async (e) => { e.target.textContent = (await copyText(req.prompt)) ? '복사했습니다' : '복사하지 못했습니다'; } }, '프롬프트 복사') : null) : null;
+  // `gallery` = { list: [{ item, url, info, label }], index }: the other results that can be stepped through from here
+  // (the variants and versions of a generation node, or the shots of a board).
+  const list = gallery?.list?.length > 1 ? gallery.list : [{ item, url, info }];
+  let at = gallery?.list?.length > 1 ? Math.max(0, gallery.index) : 0;
+  const mediaBox = h('div.lightbox-media'), sideBox = h('aside.lightbox-info'), count = h('div.lightbox-count');
+  const prev = h('button.lightbox-nav.prev', { 'aria-label': '이전 결과', title: '이전 (←)', onclick: () => go(-1) }, '‹');
+  const next = h('button.lightbox-nav.next', { 'aria-label': '다음 결과', title: '다음 (→)', onclick: () => go(1) }, '›');
+  const show = () => {
+    const cur = list[at], it = cur.item, req = cur.info?.request;
+    for (const m of mediaBox.querySelectorAll('audio, video')) m.pause();
+    mediaBox.replaceChildren(!cur.url ? h('div.missing', {}, '이 브라우저에 파일이 없습니다')
+      : it.type === 'audio' ? h('audio', { src: cur.url, controls: true, autoplay: true }) : it.type === 'video' && !it.still ? h('video', { src: cur.url, controls: true, autoplay: true, loop: true }) : h('img', { src: cur.url, alt: '' }));
+    const facts = req ? [req.model, req.finalOf ? `v${req.finalOf} 드래프트를 ${req.resolution}로 완성` : req.draft ? '드래프트' : null, !req.finalOf && req.resolution ? req.resolution : null, req.aspect, req.duration ? `${req.duration}초` : null].filter(Boolean) : [];
+    sideBox.hidden = !req;
+    sideBox.replaceChildren(...(req ? [
+      h('h2', {}, [cur.info.title, cur.info.v ? `v${cur.info.v}` : null].filter(Boolean).join(' · ')),
+      facts.length ? h('p.facts', {}, facts.join(' · ')) : null,
+      cur.info.refs?.length ? h('h3', {}, `첨부한 레퍼런스 ${cur.info.refs.length}개`) : null,
+      cur.info.refs?.length ? refStrip(cur.info.refs) : null,
+      h('h3', {}, '사용한 프롬프트'),
+      h('pre', {}, req.prompt || '(프롬프트 없이 생성)'),
+      req.prompt ? h('button', { onclick: async (e) => { e.target.textContent = (await copyText(req.prompt)) ? '복사했습니다' : '복사하지 못했습니다'; } }, '프롬프트 복사') : null,
+    ].filter(Boolean) : []));
+    back.classList.toggle('with-info', !!req);
+    const many = list.length > 1;
+    prev.hidden = next.hidden = count.hidden = !many;
+    prev.disabled = at === 0; next.disabled = at === list.length - 1;
+    count.textContent = many ? `${at + 1} / ${list.length}${cur.label ? ` · ${cur.label}` : ''}` : '';
+  };
+  const go = (d) => { const to = Math.max(0, Math.min(list.length - 1, at + d)); if (to !== at) { at = to; show(); } };
   const close = () => { for (const m of back.querySelectorAll('audio, video')) m.pause(); back.remove(); document.removeEventListener('keydown', onKey, true); for (const v of paused) v.play().catch(() => {}); under?.querySelector('figure.can-open:focus, .lightbox-close, .primary')?.focus?.(); };
-  const back = h(`div.lightbox${side ? '.with-info' : ''}`, { onclick: (e) => { if (e.target === back || e.target.classList.contains('lightbox-media')) close(); } }, h('div.lightbox-media', {}, media), side, caption ? h('div.lightbox-caption', {}, caption) : null, h('button.lightbox-close', { 'aria-label': under ? '돌아가기' : '닫기', onclick: close }, under ? '← 돌아가기' : '닫기'));
-  // Escape closes only the view on top.
-  const onKey = (e) => { if (e.key === 'Escape' && [...document.querySelectorAll('.lightbox')].pop() === back) { close(); e.stopImmediatePropagation(); } };
+  const back = h('div.lightbox', { onclick: (e) => { if (e.target === back || e.target === mediaBox) close(); } }, mediaBox, sideBox, prev, next, count, caption ? h('div.lightbox-caption', {}, caption) : null, h('button.lightbox-close', { 'aria-label': under ? '돌아가기' : '닫기', onclick: close }, under ? '← 돌아가기' : '닫기'));
+  // Keys act only on the view on top: Escape closes it, the arrow keys step through the results.
+  const onKey = (e) => {
+    if ([...document.querySelectorAll('.lightbox')].pop() !== back) return;
+    if (e.key === 'Escape') { close(); e.stopImmediatePropagation(); }
+    else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && list.length > 1 && !e.target.closest?.('input, textarea')) { go(e.key === 'ArrowLeft' ? -1 : 1); e.preventDefault(); e.stopImmediatePropagation(); }
+  };
   document.addEventListener('keydown', onKey, true);
+  // Sideways two-finger swipe steps too (one step per swipe).
+  let swipe = 0, swipeAt = 0;
+  back.addEventListener('wheel', (e) => {
+    if (list.length < 2 || Math.abs(e.deltaX) <= Math.abs(e.deltaY) || e.target.closest('.lightbox-info')) return;
+    e.preventDefault();
+    const now = performance.now();
+    if (now - swipeAt > 350) swipe = 0;
+    swipeAt = now; swipe += e.deltaX;
+    if (Math.abs(swipe) > 60) { go(swipe > 0 ? 1 : -1); swipe = 0; swipeAt = now + 400; }
+  }, { passive: false });
   document.body.append(back);
+  show();
   back.querySelector('.lightbox-close').focus();
 }
