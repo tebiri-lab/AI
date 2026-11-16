@@ -14,6 +14,10 @@ const PORT = +(process.env.MOCK_PORT || 8799);
 const BASE = `http://localhost:${PORT}`;
 const DELAY = +(process.env.MOCK_DELAY_MS || 1200);
 const jobs = new Map(); // id -> { kind, prompt, readyAt, fail }
+// Two workspaces like a real account: with none selected the private one is used. Jobs and history belong to one.
+const SPACES = [{ id: 'ws-private', name: null, type: 'private', user_role: 'owner', plan_type: 'free', credits: 10 }, { id: 'ws-team', name: 'TEAM', type: 'shared', user_role: 'member', plan_type: 'team', credits: 1200 }];
+let space = null;
+const spaceNow = () => space || 'ws-private';
 const uploads = new Map(); // id -> { type, body }
 export const calls = [];
 
@@ -29,6 +33,8 @@ const TOOLS = [
   { name: 'media_import_url', description: 'Import a media URL.', inputSchema: obj({ url: { type: 'string' }, type: { type: 'string', enum: ['auto', 'image', 'video', 'audio'] } }, ['url']) },
   { name: 'models_explore', description: 'List models.', inputSchema: obj({ action: { type: 'string', enum: ['list', 'search', 'get', 'recommend'] }, type: { type: 'string' }, limit: { type: 'integer' }, after: { type: 'string' } }, ['action']) },
   { name: 'balance', description: 'Credits.', inputSchema: obj({}) },
+  { name: 'list_workspaces', description: 'Workspaces.', inputSchema: obj({}) },
+  { name: 'select_workspace', description: 'Choose the active workspace.', inputSchema: obj({ workspace_id: { type: 'string' }, clear: { type: 'boolean' } }) },
   { name: 'show_generations', description: 'Generation history.', inputSchema: obj({ type: { type: 'string' }, size: { type: 'integer' }, cursor: {} }) },
   { name: 'echo', description: 'Returns the text it is given. For trying the generic MCP tool node.', inputSchema: obj({ text: { type: 'string', description: 'Text to echo' }, shout: { type: 'boolean' }, times: { type: 'integer', minimum: 1, maximum: 5 }, tone: { type: 'string', enum: ['plain', 'fancy'] } }, ['text']) },
 ];
@@ -43,7 +49,7 @@ function tool(name, a) {
     if (p.draft_job_id && !jobs.has(p.draft_job_id)) return ok({ error: `unknown draft ${p.draft_job_id}` });
     for (const m of p.medias || []) if (!uploads.has(m.value) && !jobs.has(m.value)) return ok({ error: `unknown media ${m.value}` });
     const ids = Array.from({ length: p.count || 1 }, () => crypto.randomUUID());
-    for (const id of ids) jobs.set(id, { kind: name === 'generate_video' ? 'video' : 'image', prompt: p.prompt || '', model: p.model, medias: p.medias, readyAt: Date.now() + DELAY, fail: /FAIL/.test(p.prompt || '') });
+    for (const id of ids) jobs.set(id, { kind: name === 'generate_video' ? 'video' : 'image', prompt: p.prompt || '', model: p.model, medias: p.medias, space: spaceNow(), readyAt: Date.now() + DELAY, fail: /FAIL/.test(p.prompt || '') });
     return ok({ jobs: ids.map((job_id, index) => ({ index, job_id, status: 'queued' })) });
   }
   if (name === 'jobs_wait') {
@@ -64,9 +70,11 @@ function tool(name, a) {
     ? [{ id: 'mock_video', name: 'Mock Video', provider_name: 'Mock', output_type: 'video', parameters: [{ name: 'resolution', type: 'string', options: ['720p', '1080p'], default: '720p' }], medias: [{ roles: ['start_image', 'image_references'] }], aspect_ratios: ['16:9', '9:16'], duration_range: { min: 4, max: 10 } }]
     : [{ id: 'mock_image', name: 'Mock Image', provider_name: 'Mock', output_type: 'image', parameters: [], medias: [{ roles: ['image_references'] }], aspect_ratios: ['16:9', '1:1'] }], has_more: false });
   if (name === 'balance') return ok({ credits: 1234, plan: 'mock' });
+  if (name === 'list_workspaces') return ok({ workspaces: SPACES.map((w) => ({ ...w, is_selected: w.id === space })) });
+  if (name === 'select_workspace') { if (a.clear) space = null; else if (SPACES.some((w) => w.id === a.workspace_id)) space = a.workspace_id; else return ok({ error: 'workspace not found' }); return ok({ ok: true }); }
   // Same shape as the real server: results.rawUrl / results.minUrl, params.prompt, params.input_images, next_cursor.
   if (name === 'show_generations') {
-    const all = [...jobs.entries()].filter(([, j]) => j.kind === (a.type || j.kind) && !j.fail && Date.now() >= j.readyAt).reverse();
+    const all = [...jobs.entries()].filter(([, j]) => j.space === spaceNow() && j.kind === (a.type || j.kind) && !j.fail && Date.now() >= j.readyAt).reverse();
     const from = a.cursor ? all.findIndex(([id]) => id === String(a.cursor)) + 1 : 0, size = a.size || 24;
     const page = all.slice(from, from + size);
     return ok({ items: page.map(([id, j]) => ({ id, type: j.kind, status: 'completed', model: j.model, params: { prompt: j.prompt, aspect_ratio: '16:9', resolution: '2k', input_images: (j.medias || []).map((m) => ({ id: m.value, type: 'media_input', url: `${BASE}/media/${m.value}.svg` })) },

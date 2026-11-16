@@ -315,3 +315,7 @@ html, body { overscroll-behavior: none; }
 .history-card.same small { color: var(--t-image); }
 .history-card.on { border-color: var(--accent-2); box-shadow: 0 0 0 2px var(--accent-2); }
 .history-more { text-align: center; margin-top: 10px; }
+
+.history-space { margin-bottom: 8px; flex-wrap: wrap; }
+.history-space select { width: auto; flex: 0 1 auto; }
+.history-space small { color: var(--muted); flex-basis: 100%; }

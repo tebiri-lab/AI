@@ -231,6 +231,22 @@ const mcp = {
     ctx.progress('생성 결과를 이어받는 중');
     return waitJobs(ids, kind, ctx, server);
   },
+  // The account's workspaces. Everything (generating, credits, history) happens in the active one; with none chosen
+  // that is the private workspace.
+  async workspaces() {
+    this.ready();
+    const data = await call(settings.server, 'list_workspaces', {});
+    const list = (data.workspaces || []).map((w) => ({ id: w.id, name: w.name || (w.type === 'private' ? '개인' : '이름 없음'), type: w.type, credits: w.credits, plan: w.plan_type, selected: !!w.is_selected }));
+    const active = list.find((w) => w.selected) || list.find((w) => w.type === 'private') || list[0] || null;
+    return { list, active };
+  },
+  // Make a workspace the active one. The choice is kept by Higgsfield for this account (other apps included) until changed.
+  async selectWorkspace(ws) {
+    this.ready();
+    const data = await call(settings.server, 'select_workspace', ws.type === 'private' ? { clear: true } : { workspace_id: ws.id });
+    const err = failure(data);
+    if (err) throw new Error(err);
+  },
   // One page of the account's finished generations (newest first), for attaching a result that already exists to a node.
   async history(kind, cursor) {
     this.ready();
