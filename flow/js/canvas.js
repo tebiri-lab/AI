@@ -566,6 +566,9 @@ export class Canvas {
     const files = [...(e.dataTransfer.files || [])].filter((f) => kindOf(f.type));
     const link = !files.length && (e.dataTransfer.getData('text/uri-list') || '').split('\n').find((l) => /^https?:\/\//.test(l));
     if (!files.length && !link) return toast('이미지·영상·오디오 파일만 놓을 수 있습니다', 'error');
+    // Dropped on a generation node: it becomes that node's result instead of a separate reference node.
+    const over = this.graph.node(e.target.closest?.('.node')?.dataset.id);
+    if (over && (over.type === 'image' || over.type === 'video')) return this.actions.attach(over, { files, link });
     this.graph.checkpoint();
     let i = 0;
     for (const file of files) await this.addMedia({ kind: kindOf(file.type), url: await saveBlob(file), name: file.name, label: file.name.replace(/\.[^.]+$/, '') }, e.clientX + i * 28, e.clientY + i++ * 28, true);
@@ -831,10 +834,16 @@ export class Canvas {
     });
     // The browser's own drag of pictures and links would take over from the result drag below.
     this.nodeLayer.addEventListener('dragstart', (e) => e.preventDefault());
-    st.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].some((t) => t === 'Files' || t === 'text/uri-list')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; st.classList.add('dropping'); } });
-    st.addEventListener('dragleave', (e) => { if (e.target === st) st.classList.remove('dropping'); });
+    st.addEventListener('dragover', (e) => {
+      if (![...e.dataTransfer.types].some((t) => t === 'Files' || t === 'text/uri-list')) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; st.classList.add('dropping');
+      // Show which generation node would take the drop as its result.
+      const el = e.target.closest?.('.node[data-type="image"], .node[data-type="video"]');
+      if (el !== this.dropNode) { this.dropNode?.classList.remove('drop-here'); el?.classList.add('drop-here'); this.dropNode = el || null; }
+    });
+    st.addEventListener('dragleave', (e) => { if (e.target === st) { st.classList.remove('dropping'); this.dropNode?.classList.remove('drop-here'); this.dropNode = null; } });
     st.addEventListener('drop', (e) => {
-      st.classList.remove('dropping');
+      st.classList.remove('dropping'); this.dropNode?.classList.remove('drop-here'); this.dropNode = null;
       if (e.target.closest('input[type="file"]')) return; // a file field takes its own drop
       e.preventDefault(); this.dropFiles(e);
     });
