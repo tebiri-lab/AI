@@ -268,8 +268,32 @@ const actions = {
   },
   // "이 프롬프트로 다시 생성할 노드 만들기": a copy of the generation node the reviewed result came from
   // (same model, settings and references), with this feedback node's revised prompt as its only prompt.
-  retry(node) {
-    const src = engine.sourcesOf(node, 'media').map((x) => x.src).find((n) => n.type === 'image' || n.type === 'video');
+  // Which generation node a feedback is about. With several results attached, the person says which one.
+  async reviewed(node, what) {
+    const gens = [...new Set(engine.sourcesOf(node, 'media').map((x) => x.src))].filter((n) => n.type === 'image' || n.type === 'video');
+    if (gens.length < 2) return gens[0] || null;
+    const id = await askBox(`결과가 여러 노드에서 연결되어 있습니다. 어느 노드를 ${what}?`, gens.map((n) => ({ label: `${n.data.label || NODE_TYPES[n.type].title}${n.result?.v ? ` v${n.result.v}` : ''}`, value: n.id })));
+    return id ? graph.node(id) : undefined;
+  },
+  // "원래 노드에서 이 프롬프트로 다시 생성": the revised prompt goes into the generation node the result came from, and
+  // that node generates again. No new node: the result becomes its next version, and this feedback node stays attached
+  // to it for the next round. The node's connected prompt texts are switched off, because the revised prompt is complete.
+  async reapply(node) {
+    const src = await actions.reviewed(node, '다시 생성할까요');
+    if (src === undefined) return;
+    if (!src) return toast('원래 생성 노드를 찾지 못했습니다. 수정 프롬프트 포트를 원하는 생성 노드의 프롬프트에 직접 연결하세요.', 'error');
+    if (engine.isRunning(src.id)) return toast('그 노드는 지금 생성 중입니다');
+    if (src.data.locked) return toast('그 노드의 결과가 잠겨 있습니다. 노드 메뉴에서 잠금을 풀고 다시 누르세요.', 'error');
+    graph.checkpoint();
+    src.data.prompt = node.data.revised.trim(); src.data.solo = true;
+    canvas.paintFields(src);
+    graph.emit('node:data', src);
+    canvas.reveal([src]);
+    await guarded([src.id], true, '다시 생성');
+  },
+  async retry(node) {
+    const src = await actions.reviewed(node, '복사할까요');
+    if (src === undefined) return;
     if (!src) return toast('원래 생성 노드를 찾지 못했습니다. 수정 프롬프트 포트를 원하는 생성 노드의 프롬프트에 직접 연결하세요.', 'error');
     graph.checkpoint();
     const el = canvas.els.get(node.id);
@@ -302,7 +326,7 @@ const actions = {
       const gen = graph.node(id);
       if (gen.type !== 'image' && gen.type !== 'video') continue;
       for (const [key, name] of Object.entries(TAG_PORTS)) {
-        graph.edgesInto(gen.id, key).map((e) => graph.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x)
+        engine.sourceNodes(gen, key)
           .forEach((src, i) => { tagLines.push(`@${name} ${i + 1} = ${src.data.label || NODE_TYPES[src.type].title}`); tagOf.set(src.id, `@${name} ${i + 1}`); });
       }
       if (tagLines.length) break;

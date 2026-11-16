@@ -93,7 +93,8 @@ export function buildRequest(node, inputs) {
   const kind = node.type;
   const model = pickModel(node, kind);
   if (!model) throw new Error('모델을 고르세요');
-  const rawPrompt = [joinText(inputs.prompt), node.data.prompt?.trim()].filter(Boolean).join('\n\n');
+  // "이 칸의 프롬프트만 사용": the connected texts are left out (used when a complete revised prompt was applied to the node).
+  const rawPrompt = [node.data.solo ? '' : joinText(inputs.prompt), node.data.prompt?.trim()].filter(Boolean).join('\n\n');
   const medias = [];
   // References go first, in tag order, so "@Image 1" is the first reference whether or not a start/end frame is also connected.
   const ports = mediaPorts(model);
@@ -150,7 +151,7 @@ export function finalizeRequest(node, item, resolution) {
 function generatorFields(kind) {
   return (node) => {
     const model = pickModel(node, kind);
-    const fields = [modelField(kind), { key: 'prompt', label: '프롬프트', kind: 'textarea', rows: 4, placeholder: '여기에 쓰거나 텍스트 노드를 연결하세요. 둘 다 있으면 연결된 글 뒤에 붙습니다.' }, { kind: 'tags' }];
+    const fields = [modelField(kind), { key: 'prompt', label: '프롬프트', kind: 'textarea', rows: 4, placeholder: '여기에 쓰거나 텍스트 노드를 연결하세요. 둘 다 있으면 연결된 글 뒤에 붙습니다.' }, ...(node.data.solo || node.data.prompt ? [{ key: 'solo', label: '이 칸의 프롬프트만 사용 (연결된 텍스트는 보내지 않음)', kind: 'check', wide: true }] : []), { kind: 'tags' }];
     if (model?.aspect_ratios?.length) fields.push({ key: 'aspect', label: '화면비', kind: 'select', options: [{ value: 'auto', label: '자동' }, ...model.aspect_ratios.filter((a) => a !== 'auto').map((a) => ({ value: a, label: a }))], fallback: model.aspect_ratios.includes('16:9') ? '16:9' : 'auto' });
     if (kind === 'video') {
       const d = modelDurations(model);
@@ -334,7 +335,10 @@ export const NODE_TYPES = {
       { kind: 'action', action: 'review', label: '피드백 받기', hint: '연결된 결과를 Claude가 직접 보고, 원인 진단과 수정 프롬프트를 씁니다' },
       ...(node.data.feedback ? [{ kind: 'info', label: '진단', text: node.data.feedback }] : []),
       { key: 'revised', label: '수정 프롬프트 — 다음 노드로 넘어가는 글', kind: 'textarea', rows: 6, placeholder: '피드백을 받으면 여기에 들어옵니다. 고쳐 써도 됩니다.' },
-      ...(node.data.revised ? [{ kind: 'action', action: 'retry', label: '이 프롬프트로 다시 생성할 노드 만들기', hint: '원래 생성 노드를 복사해(모델·설정·레퍼런스 유지) 이 수정 프롬프트에 연결합니다' }] : []),
+      ...(node.data.revised ? [
+        { kind: 'action', action: 'reapply', label: '원래 노드에서 이 프롬프트로 다시 생성', hint: '결과를 만든 생성 노드에 이 수정 프롬프트를 넣고 바로 다시 생성합니다. 노드가 늘지 않고 그 노드의 새 버전(v2, v3…)으로 쌓입니다. 크레딧이 듭니다.' },
+        { kind: 'action', action: 'retry', label: '새 노드로 만들기', hint: '원래 생성 노드를 복사해(모델·설정·레퍼런스 유지) 이 수정 프롬프트에 연결합니다. 원래 것과 나란히 비교할 때 씁니다.' },
+      ] : []),
     ],
     preview: 'review',
     run: async ({ node }) => ({ items: node.data.revised.trim() ? [{ type: 'text', text: node.data.revised.trim() }] : [] }),

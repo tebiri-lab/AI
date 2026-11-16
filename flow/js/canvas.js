@@ -252,23 +252,48 @@ export class Canvas {
     const box = this.els.get(node.id)?.querySelector('.tags'); if (!box) return;
     const chips = [];
     for (const [key, name] of Object.entries(TAG_PORTS)) {
-      this.engine.sourcesOf(node, key).forEach(({ src, item }, i) => {
-        const tag = `@${name} ${i + 1}`, url = displayUrl(item.url);
-        chips.push(h('button.tag-chip', { title: `프롬프트에 ${tag} 넣기`, onclick: () => this.insertTag(node, tag) },
-          item.type === 'image' && url ? h('img', { src: url, alt: '', loading: 'lazy', draggable: false }) : null, h('b', {}, tag), h('span', {}, src.data.label || NODE_TYPES[src.type].title)));
+      // The number follows the order the references are sent in. A source that has no result yet still gets its number.
+      this.engine.sourceNodes(node, key).forEach((src, i) => {
+        const tag = `@${name} ${i + 1}`, item = this.engine.outItems(src).find((it) => it.type === name.toLowerCase());
+        const url = item && displayUrl(item.url);
+        const chip = h('button.tag-chip', { title: `누르면 프롬프트에 ${tag} 넣기 · 끌면 번호 순서 바꾸기`, dataset: { port: key, src: src.id } },
+          item?.type === 'image' && url ? h('img', { src: url, alt: '', loading: 'lazy', draggable: false }) : null, h('b', {}, tag), h('span', {}, src.data.label || NODE_TYPES[src.type].title));
+        chip.addEventListener('pointerdown', (e) => this.startChipDrag(e, node, chip, tag));
+        chips.push(chip);
       });
     }
-    // Connected but not generated yet: the number is known from the connection order, the picture is not there yet.
-    if (!chips.length) {
-      for (const [key, name] of Object.entries(TAG_PORTS)) {
-        this.graph.edgesInto(node.id, key).map((e) => this.graph.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x).forEach((src, i) => {
-          const tag = `@${name} ${i + 1}`;
-          chips.push(h('button.tag-chip', { title: `프롬프트에 ${tag} 넣기`, onclick: () => this.insertTag(node, tag) }, h('b', {}, tag), h('span', {}, src.data.label || NODE_TYPES[src.type].title)));
-        });
-      }
-    }
-    box.replaceChildren(...(chips.length ? [h('small', {}, '레퍼런스 태그 — 누르면 프롬프트에 들어갑니다'), ...chips] : []));
+    const fixed = Object.keys(TAG_PORTS).some((k) => node.data.order?.[k]?.length);
+    const many = chips.length > 1;
+    box.replaceChildren(...(chips.length ? [h('small', {}, many ? '레퍼런스 태그 — 누르면 프롬프트에 들어가고, 끌면 번호 순서가 바뀝니다' : '레퍼런스 태그 — 누르면 프롬프트에 들어갑니다',
+      fixed ? h('button.linkish', { title: '직접 정한 순서를 지우고 노드의 위→아래 위치 순서로 되돌립니다', onclick: () => { this.graph.checkpoint(); delete node.data.order; this.paintTags(node); this.graph.emit('node:data', node); } }, '위치 순서로 되돌리기') : null), ...chips] : []));
     box.hidden = !chips.length;
+  }
+  // A chip: a plain press types its tag; dragging it past another chip of the same kind changes the order the
+  // references are sent in (and so their numbers). The order is then kept on the node, whatever the nodes' positions.
+  startChipDrag(e, node, chip, tag) {
+    if (e.button !== 0) return;
+    e.stopPropagation(); e.preventDefault();
+    const port = chip.dataset.port, box = chip.parentElement;
+    const same = () => [...box.querySelectorAll(`.tag-chip[data-port="${port}"]`)];
+    let moved = false;
+    this.drag(e, (ev) => {
+      if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 6) return;
+      moved = true; chip.classList.add('dragging');
+      // Put the chip before the first sibling whose middle is past the pointer (reading order: rows, then left to right).
+      const others = same().filter((c) => c !== chip);
+      const next = others.find((c) => { const r = c.getBoundingClientRect(); return ev.clientY < r.top || (ev.clientY <= r.bottom && ev.clientX < r.left + r.width / 2); });
+      if (next) box.insertBefore(chip, next); else if (others.length) others.at(-1).after(chip);
+    }, () => {
+      chip.classList.remove('dragging');
+      if (!moved) return this.insertTag(node, tag);
+      const ids = same().map((c) => c.dataset.src);
+      if (ids.join() === this.engine.sourceNodes(node, port).map((n) => n.id).join()) return this.paintTags(node);
+      this.graph.checkpoint();
+      (node.data.order ||= {})[port] = ids;
+      this.paintTags(node); this.paintPorts(node);
+      this.graph.emit('node:data', node);
+      toast('레퍼런스 순서를 바꿨습니다. 프롬프트에 이미 쓴 태그 번호는 그대로이니 필요하면 고쳐 주세요.');
+    });
   }
   insertTag(node, tag) {
     const ta = this.els.get(node.id)?.querySelector('.fields textarea'); if (!ta) return;
@@ -575,7 +600,7 @@ export class Canvas {
     if (link) await this.addMedia({ kind: /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(link) ? 'video' : /\.(mp3|wav|m4a|ogg)(\?|#|$)/i.test(link) ? 'audio' : 'image', url: link.trim(), name: link.trim().split('/').pop().split('?')[0] }, e.clientX, e.clientY, true);
   }
   board(node, items) {
-    const sources = this.graph.edgesInto(node.id, 'shots').map((e) => this.graph.node(e.from.node)).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x);
+    const sources = this.engine.sourceNodes(node, 'shots');
     const listText = () => [`# ${node.data.title || '샷리스트'}`, '', ...items.map((it, i) => {
       const src = sources.find((s) => this.engine.outItems(s).includes(it));
       return [`## 샷 ${i + 1}${src?.data.label ? ` — ${src.data.label}` : ''}`, `- 종류: ${it.type === 'video' ? '영상' : '이미지'}${src?.result?.request?.model ? ` · ${src.result.request.model}` : ''}`, it.local ? null : `- 파일: ${it.url}`, src?.result?.request?.prompt ? `- 프롬프트:\n\n${src.result.request.prompt}` : null, ''].filter((x) => x != null).join('\n');
