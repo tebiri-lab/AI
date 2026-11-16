@@ -330,3 +330,11 @@ html, body { overscroll-behavior: none; }
 .tag-chip { cursor: grab; touch-action: none; }
 .tag-chip.dragging { cursor: grabbing; opacity: .6; border-color: var(--t-image); }
 .tags small .linkish { margin-left: 8px; padding: 0; border: 0; background: transparent; color: var(--blue); font-size: 11px; text-decoration: underline; }
+
+/* ---- focus: with nodes selected, their flow stays bright and the rest steps back */
+.node.dim { opacity: .32; transition: opacity .12s; }
+.node.dim:hover { opacity: .85; }
+.edges g.dim .line { opacity: .1; }
+.edges g.lit .line { opacity: 1; stroke-width: 2.6; }
+.foot.hintish { color: var(--accent-2); }
+.thumb .no { white-space: nowrap; }

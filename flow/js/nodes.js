@@ -331,7 +331,7 @@ export const NODE_TYPES = {
     ],
     outputs: [{ key: 'out', label: '수정 프롬프트', type: 'text' }],
     fields: (node) => [
-      { key: 'note', label: '마음에 안 드는 점 · 원하는 방향', kind: 'textarea', rows: 3, placeholder: '예: 얼굴이 레퍼런스와 다르고 조명이 너무 평평하다. 더 어둡고 대비가 강했으면.\n비워 두면 프롬프트와 결과가 어긋난 곳을 알아서 찾습니다.' },
+      { key: 'note', label: '마음에 안 드는 점 · 원하는 방향', kind: 'textarea', rows: 3, placeholder: '예: 결과 1의 얼굴이 @Image 1과 다르고 조명이 너무 평평하다. 더 어둡고 대비가 강했으면.\n연결한 결과는 "결과 1", 프롬프트의 레퍼런스는 "@Image 1"로 가리키세요. 비워 두면 알아서 찾습니다.' },
       { kind: 'action', action: 'review', label: '피드백 받기', hint: '연결된 결과를 Claude가 직접 보고, 원인 진단과 수정 프롬프트를 씁니다' },
       ...(node.data.feedback ? [{ kind: 'info', label: '진단', text: node.data.feedback }] : []),
       { key: 'revised', label: '수정 프롬프트 — 다음 노드로 넘어가는 글', kind: 'textarea', rows: 6, placeholder: '피드백을 받으면 여기에 들어옵니다. 고쳐 써도 됩니다.' },
