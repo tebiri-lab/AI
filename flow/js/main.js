@@ -100,11 +100,18 @@ const actions = {
         const list = cursor == null ? [...page.items.filter((g) => mine && g.prompt.trim() === mine), ...page.items.filter((g) => !(mine && g.prompt.trim() === mine))] : page.items;
         grid.append(...list.map(card));
         cursor = page.next; more.hidden = cursor == null; more.disabled = false;
-        status.textContent = grid.children.length ? '가져올 결과를 누르세요. 여러 개를 고르면 한 버전의 변형으로 함께 들어옵니다.' : `생성 기록에 ${kind === 'video' ? '영상' : '이미지'}이 없습니다.`;
+        status.textContent = grid.children.length ? '가져올 결과를 누르세요. 여러 개를 고르면 한 버전의 변형으로 함께 들어옵니다.' : `이 작업 공간의 생성 기록에 ${kind === 'video' ? '영상이' : '이미지가'} 없습니다.${spaces.list.length > 1 ? ' 위에서 다른 작업 공간으로 바꿔 보세요.' : ''}`;
       } catch (e) { status.textContent = `생성 기록을 불러오지 못했습니다: ${e.message}`; more.hidden = true; }
     };
     more.onclick = load;
-    const shown = modal(`생성 기록에서 가져오기 — ${node.data.label || NODE_TYPES[node.type].title}`, h('div', {}, status, grid, h('div.history-more', {}, more)), [{ label: '취소', value: false }, { label: '가져오기', value: true, primary: true }], 'wide');
+    // History only covers the active workspace: say which one, and let it be switched right here.
+    await loadSpaces();
+    const where = h('div.row.history-space');
+    const drawWhere = () => where.replaceChildren(...(spaces.list.length > 1
+      ? [h('span', {}, '작업 공간'), spacePicker(() => { picked.clear(); sync(); grid.replaceChildren(); cursor = null; status.textContent = '불러오는 중…'; drawWhere(); load(); }), h('small', {}, '찾는 결과가 없으면 다른 작업 공간에서 만든 것일 수 있습니다.')]
+      : []));
+    drawWhere();
+    const shown = modal(`생성 기록에서 가져오기 — ${node.data.label || NODE_TYPES[node.type].title}`, h('div', {}, where, status, grid, h('div.history-more', {}, more)), [{ label: '취소', value: false }, { label: '가져오기', value: true, primary: true }], 'wide');
     take = [...document.querySelectorAll('.modal-back')].pop().querySelector('.primary');
     sync(); load();
     if (!(await shown)) return;
@@ -428,6 +435,27 @@ const MODES = [
   { id: 'bridge', title: 'MCP 연결', text: '내 컴퓨터에서 브리지 서버를 켜고 Higgsfield MCP에 로그인해 캔버스에서 바로 생성합니다.' },
   { id: 'relay', title: 'Claude 전달', text: '서버 없이 씁니다. 노드가 만든 요청을 Higgsfield 커넥터가 켜진 Claude 채팅에 붙여넣고, 결과 주소를 다시 붙여넣습니다.' },
 ];
+// Higgsfield workspaces (an account can have a private one and team ones). Generating, credits and the generation
+// history all belong to the active workspace, so it is shown and can be switched from the canvas.
+const spaces = { list: [], active: null, loaded: false };
+async function loadSpaces() {
+  try { Object.assign(spaces, await PROVIDERS.bridge.workspaces(), { loaded: true }); } catch { Object.assign(spaces, { list: [], active: null, loaded: false }); }
+  return spaces;
+}
+const spaceLabel = (w) => `${w.name}${w.type === 'private' ? '' : ' (팀)'} · 크레딧 ${Math.round(w.credits ?? 0)}`;
+// A <select> of the workspaces. Switching asks first, because later generations are paid from the chosen one.
+function spacePicker(after) {
+  const sel = h('select', { 'aria-label': 'Higgsfield 작업 공간' }, spaces.list.map((w) => h('option', { value: w.id, selected: w.id === spaces.active?.id }, spaceLabel(w))));
+  sel.onchange = async () => {
+    const to = spaces.list.find((w) => w.id === sel.value), from = spaces.active;
+    if (!(await confirmBox('작업 공간 바꾸기', `"${to.name}" 작업 공간으로 바꿉니다. 이후 생성은 이 작업 공간의 크레딧(${Math.round(to.credits ?? 0)})으로 결제되고, 생성 기록도 이 작업 공간 것이 보입니다. 이 선택은 Higgsfield 계정에 저장되어 다른 앱에서도 적용됩니다.`, '바꾸기'))) { sel.value = from?.id; return; }
+    try { await PROVIDERS.bridge.selectWorkspace(to); await loadSpaces(); costCache.clear(); canvas.queueCost(); toast(`작업 공간을 "${to.name}"(으)로 바꿨습니다`); }
+    catch (e) { toast(`작업 공간을 바꾸지 못했습니다: ${e.message}`, 'error'); sel.value = from?.id; }
+    paintConn(); after?.();
+  };
+  return sel;
+}
+
 // Generations that were still running when the page was closed or reloaded: take their results in once the
 // server they run on is reachable. Until then the node says so.
 function resumePending() {
@@ -441,7 +469,7 @@ function paintConn() {
   resumePending();
   const btn = $('btnConn');
   const ready = serverReady(settings.server);
-  $('connLabel').textContent = settings.mode === 'demo' ? '데모' : settings.mode === 'relay' ? 'Claude 전달' : ready ? `${bridge.servers.find((x) => x.id === settings.server)?.name || 'MCP'} 연결됨` : bridge.online ? '로그인 필요' : '브리지 꺼짐';
+  $('connLabel').textContent = settings.mode === 'demo' ? '데모' : settings.mode === 'relay' ? 'Claude 전달' : ready ? `${bridge.servers.find((x) => x.id === settings.server)?.name || 'MCP'} 연결됨${spaces.list.length > 1 && spaces.active ? ` · ${spaces.active.name}` : ''}` : bridge.online ? '로그인 필요' : '브리지 꺼짐';
   btn.dataset.state = settings.mode === 'bridge' ? (ready ? 'on' : 'warn') : '';
 }
 async function loadCatalog() {
@@ -478,6 +506,7 @@ async function autoConnect() {
       await refreshBridge();
     }
     if (!serverReady(id)) { const srv = bridge.servers.find((s) => s.id === id); if (srv?.error) toast(`Higgsfield 연결 실패: ${srv.error}`, 'error'); return; }
+    await loadSpaces();
     const n = await loadCatalog();
     toast(`${bridge.servers.find((x) => x.id === id)?.name || 'MCP'}에 연결했고 모델 ${n}개를 받았습니다`);
   } catch (e) { toast(e.message, 'error'); }
@@ -556,6 +585,9 @@ async function drawConn() {
             balOut.textContent = d.credits != null ? `남은 크레딧 ${d.credits}${d.plan ? ` · ${typeof d.plan === 'string' ? d.plan : d.plan.name || ''}` : ''}` : (d.text || JSON.stringify(d)).slice(0, 200);
           } catch (e) { balOut.textContent = e.message; }
         };
+        if (!spaces.loaded) await loadSpaces();
+        if (spaces.list.length > 1) kids.push(h('h3', {}, 'Higgsfield 작업 공간'), h('div.row', {}, spacePicker(() => drawConn())),
+          h('p', {}, '생성 결제, 크레딧, 생성 기록이 모두 여기서 고른 작업 공간을 따릅니다.'));
         kids.push(h('h3', {}, 'Higgsfield'), h('div.row', {}, cat, bal), balOut,
           h('p', {}, isLiveCatalog() ? `서버에서 받은 모델 목록을 쓰는 중입니다 (이미지 ${listModels('image').length} · 영상 ${listModels('video').length}).` : '지금은 페이지에 들어 있는 기본 모델 목록을 씁니다.'));
       }
@@ -602,7 +634,7 @@ addEventListener('wheel', (e) => {
     doc = existing ? await library.get(existing.id) : asNew(made);
   } else doc = (await library.get(library.last())) || (list[0] && (await library.get(list[0].id))) || asNew(TEMPLATES[0].doc());
   await switchTo(doc, !doc.updatedAt);
-  if (settings.mode === 'bridge') { await refreshBridge(); repaintTools(); library.sync(); canvas.queueCost(); }
+  if (settings.mode === 'bridge') { await refreshBridge(); repaintTools(); library.sync(); canvas.queueCost(); if (serverReady(settings.server)) await loadSpaces(); }
   paintConn();
   window.flow = { graph, engine, canvas, settings, currentProvider, library };
 })();
