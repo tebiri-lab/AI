@@ -393,3 +393,5 @@ html, body { overscroll-behavior: none; }
 .agent-input textarea { width: 100%; resize: vertical; min-height: 64px; max-height: 40vh; }
 .agent-input .row { margin: 0; }
 .agent-input .grow { flex: 1; }
+.row.llm > span { width: 84px; flex: none; color: var(--muted); font-size: 12px; }
+.row.llm > select { flex: 1; min-width: 0; }

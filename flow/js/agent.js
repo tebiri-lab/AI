@@ -6,7 +6,7 @@
 // Nodes the agent made carry data.agent = their key in the plan; reference material is ref1, ref2, …
 import { NODE_TYPES, buildRequest, finalResolutions, UPSCALE_METHODS } from './nodes.js';
 import { listModels, getModel, modelRoles, modelDurations, modelParams, recentModels } from './models.js';
-import { settings, bridge, refreshBridge, serverReady, PROVIDERS } from './providers.js';
+import { settings, bridge, refreshBridge, serverReady, PROVIDERS, llmModel, llmName } from './providers.js';
 import { displayUrl, pictureData, frameBlobs, saveBlob } from './media.js';
 import { h, toast, relayBox, lightbox } from './ui.js';
 
@@ -172,7 +172,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     if (bridge.online) {
       const ctrl = new AbortController(); st.abort = ctrl;
       try {
-        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images }), signal: ctrl.signal });
+        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images, model: llmModel('agent') }), signal: ctrl.signal });
         const body = await res.json().catch(() => ({}));
         if (res.ok) text = body.text;
         else if (res.status !== 501) toast(/authenticat|OAuth|login|log in/i.test(body.error || '') ? '이 컴퓨터의 Claude Code 로그인이 만료되었습니다. 터미널에서 claude 를 실행해 /login 하세요. 지금은 Claude 채팅 전달로 진행합니다.' : `이 컴퓨터의 Claude Code가 답하지 못했습니다 (${(body.error || '알 수 없는 오류').slice(0, 120)}). Claude 채팅 전달로 진행합니다.`, 'error');
@@ -370,7 +370,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
 
   // ---- one turn of the conversation
   async function turn() {
-    setBusy('생각하는 중…', () => st.abort?.abort());
+    setBusy(`생각하는 중…${llmName('agent') ? ` (${llmName('agent')})` : ''}`, () => st.abort?.abort());
     let plan = null;
     try {
       const { prompt, images } = await brief();
