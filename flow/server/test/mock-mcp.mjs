@@ -27,6 +27,7 @@ const TOOLS = [
   { name: 'generate_image', description: 'Mock image generation.', inputSchema: PARAMS },
   { name: 'generate_video', description: 'Mock video generation.', inputSchema: PARAMS },
   { name: 'upscale_image', description: 'Mock upscale.', inputSchema: PARAMS },
+  { name: 'upscale_video', description: 'Mock video upscale.', inputSchema: PARAMS },
   { name: 'jobs_wait', description: 'Wait for jobs.', inputSchema: obj({ jobs: { type: 'array' }, timeout_seconds: { type: 'integer' } }, ['jobs']) },
   { name: 'media_upload', description: 'Get an upload URL.', inputSchema: obj({ filename: { type: 'string' }, content_type: { type: 'string' } }) },
   { name: 'media_confirm', description: 'Confirm an upload.', inputSchema: obj({ media_id: { type: 'string' }, type: { type: 'string', enum: ['image', 'video', 'audio', 'file'] } }, ['type']) },
@@ -43,13 +44,14 @@ const ok = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data) }] 
 function tool(name, a) {
   calls.push({ name, args: a });
   const p = a.params || {};
-  if (name === 'generate_image' || name === 'generate_video' || name === 'upscale_image') {
+  if (name === 'generate_image' || name === 'generate_video' || name === 'upscale_image' || name === 'upscale_video') {
     if (p.get_cost) { const c = p.draft_job_id ? (p.resolution === '4k' ? 272 : 128) : name === 'generate_video' ? 35 : 2; return ok({ cost: { credits: c, credits_exact: c } }); }
-    if (name !== 'upscale_image' && !p.model) return ok({ error: 'model is required' });
+    if (!name.startsWith('upscale_') && !p.model) return ok({ error: 'model is required' });
+    if (name === 'upscale_video' && !jobs.has(p.video_id) && !uploads.has(p.video_id)) return ok({ error: `unknown video ${p.video_id}` });
     if (p.draft_job_id && !jobs.has(p.draft_job_id)) return ok({ error: `unknown draft ${p.draft_job_id}` });
     for (const m of p.medias || []) if (!uploads.has(m.value) && !jobs.has(m.value)) return ok({ error: `unknown media ${m.value}` });
     const ids = Array.from({ length: p.count || 1 }, () => crypto.randomUUID());
-    for (const id of ids) jobs.set(id, { kind: name === 'generate_video' ? 'video' : 'image', prompt: p.prompt || '', model: p.model, medias: p.medias, space: spaceNow(), readyAt: Date.now() + DELAY, fail: /FAIL/.test(p.prompt || '') });
+    for (const id of ids) jobs.set(id, { kind: name.endsWith('_video') ? 'video' : 'image', prompt: p.prompt || '', model: p.model, medias: p.medias, space: spaceNow(), readyAt: Date.now() + DELAY, fail: /FAIL/.test(p.prompt || '') });
     return ok({ jobs: ids.map((job_id, index) => ({ index, job_id, status: 'queued' })) });
   }
   if (name === 'jobs_wait') {
@@ -94,6 +96,7 @@ function picture(id) {
 http.createServer(async (req, res) => {
   const url = new URL(req.url, BASE);
   res.setHeader('access-control-allow-origin', '*');
+  if (url.pathname === '/__calls') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(calls)); } // what was asked of the mock, for tests
   const m = /^\/(media|upload)\/([0-9a-f-]+)(?:\.(\w+))?$/.exec(url.pathname);
   if (m?.[1] === 'upload' && req.method === 'PUT') { const chunks = []; for await (const c of req) chunks.push(c); uploads.set(m[2], { type: req.headers['content-type'], body: Buffer.concat(chunks) }); return res.writeHead(200).end(); }
   if (m?.[1] === 'media') {

@@ -37,6 +37,10 @@ export const SEED_MODELS = [
   { id: 'flux_3_video', name: 'FLUX 3 Video', provider_name: 'Black Forest Labs', output_type: 'video', description: '시작·끝 프레임, 영상 이어가기',
     parameters: [RES(['720p', '1080p', '2k', '4k'], '720p'), AUDIO()],
     medias: [{ roles: ['start_image', 'end_image', 'image_references', 'video_references'] }], aspect_ratios: ['auto', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'], duration_range: { min: 5, max: 20 } },
+  { id: 'wan3_0', name: 'Wan 3.0', provider_name: 'Wan', output_type: 'video', description: '레퍼런스 영상·이미지, 시작/끝 프레임, 오디오',
+    parameters: [RES(['480p', '720p', '1080p'], '720p'), AUDIO(), { name: 'enable_thinking', type: 'bool', default: false }], medias: [{ roles: ALL_REFS }], aspect_ratios: ['auto', '16:9', '9:16', '1:1', '4:3', '3:4'], duration_range: { min: 2, max: 30 } },
+  { id: 'kling_video_edit', name: 'Kling 3.0 Omni Edit', provider_name: 'Kling', output_type: 'video', description: '영상을 글 지시로 편집',
+    parameters: [{ name: 'mode', type: 'string', options: ['std', 'pro', '4k'], default: 'pro' }], medias: [{ roles: ['video_references', 'image_references'] }], aspect_ratios: [] },
   { id: 'seedance1_5', name: 'Seedance 1.5 Pro', provider_name: 'Bytedance', output_type: 'video', description: '안정적인 모션',
     parameters: [RES(['480p', '720p', '1080p'], '720p'), AUDIO()], medias: [{ roles: ['start_image', 'end_image'] }], aspect_ratios: ['auto', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9'], durations: [4, 8, 12] },
 ];

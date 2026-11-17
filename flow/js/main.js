@@ -2,13 +2,14 @@
 import { Graph, emptyDoc } from './graph.js';
 import { Engine } from './engine.js';
 import { Canvas } from './canvas.js';
-import { NODE_TYPES, buildRequest, finalizeRequest, describeRefs, TAG_PORTS } from './nodes.js';
+import { NODE_TYPES, buildRequest, finalizeRequest, describeRefs, upscaleRequest, TAG_PORTS } from './nodes.js';
 import { TEMPLATES } from './templates.js';
 import { initMedia, sweepMedia, displayUrl, frameBlobs, pictureData, saveBlob } from './media.js';
 import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS } from './providers.js';
 import { setModels, isLiveCatalog, listModels } from './models.js';
 import { h, toast, menu, modal, confirmBox, askBox, relayBox, refStrip } from './ui.js';
 import { library } from './library.js';
+import { initAgent } from './agent.js';
 
 const $ = (id) => document.getElementById(id);
 const graph = new Graph();
@@ -57,11 +58,12 @@ async function guarded(targetIds, force, what) {
       const known = costs.filter((c) => c != null);
       if (known.length) costLine = ` 예상 크레딧: ${known.reduce((a, b) => a + b, 0)}${known.length < spend.length ? ` (${spend.length - known.length}개는 아직 계산할 수 없음)` : ''}.`;
     }
-    if (!(await confirmBox(what, `생성 노드 ${spend.length}개(${parts})를 실행합니다.${costLine} 결과가 이미 있고 설정이 그대로인 노드와 잠근 노드는 건너뜁니다.`))) return;
+    if (!(await confirmBox(what, `생성 노드 ${spend.length}개(${parts})를 실행합니다.${costLine} 결과가 이미 있고 설정이 그대로인 노드와 잠근 노드는 건너뜁니다.`))) return null;
   }
   updateRunState(true);
   const failed = await engine.run(targetIds, force);
   if (failed.length) toast(`${failed.length}개 노드가 실패했습니다. 빨간 노드의 아래쪽 글을 확인하세요.`, 'error');
+  return failed; // null = the person cancelled
 }
 const actions = {
   runNode(id) { if (engine.isRunning(id) || graph.node(id)?.status === 'queued') return engine.stop(id); guarded([id], true, '노드 실행'); },
@@ -92,7 +94,8 @@ const actions = {
     let text = '';
     if (settings.mode === 'bridge' && serverReady(settings.server)) {
       try {
-        const req = buildRequest(node, engine.inputsOf(node));
+        const req = node.type === 'vupscale' ? await upscaleRequest(node, engine.inputsOf(node)) : buildRequest(node, engine.inputsOf(node));
+        if (req.tool) throw new Error('no preflight'); // the dedicated upscalers do not quote a price beforehand
         const key = JSON.stringify({ ...req, prompt: req.prompt ? 1 : 0, medias: req.medias.map((m) => [m.role, m.item.jobId || m.item.mediaId || 0]) });
         if (!costCache.has(key)) costCache.set(key, PROVIDERS.bridge.cost(req, { signal: new AbortController().signal, progress() {} }).catch(() => null));
         const credits = await costCache.get(key);
@@ -411,6 +414,8 @@ const TAG_NAMES = { image: 'Image', 이미지: 'Image', video: 'Video', 영상: 
 const tagKey = (t) => { const m = /(image|video|audio|이미지|영상|비디오|오디오)\s?(\d+)/i.exec(t); return `${TAG_NAMES[m[1].toLowerCase()]} ${+m[2]}`; };
 const canvas = new Canvas({ stage: $('stage'), graph, engine, actions });
 
+const agent = initAgent({ graph, engine, canvas, actions, guarded, panel: $('agentPanel'), button: $('btnAgent') });
+
 function updateRunState(starting) {
   const n = graph.doc.nodes.filter((x) => x.status === 'running' || x.status === 'queued').length;
   $('runbar').hidden = !n && !starting;
@@ -723,7 +728,7 @@ async function drawConn() {
   panel.replaceChildren(...kids);
   paintConn();
 }
-$('btnConn').onclick = async () => { const p = $('connPanel'); p.hidden = !p.hidden; if (!p.hidden && settings.mode === 'bridge') await refreshBridge(); drawConn(); };
+$('btnConn').onclick = async () => { const p = $('connPanel'); p.hidden = !p.hidden; if (!p.hidden) agent.toggle(false); if (!p.hidden && settings.mode === 'bridge') await refreshBridge(); drawConn(); };
 
 // Sideways two-finger swipes outside the canvas (top bar, panels, dialogs) would otherwise reach the browser and
 // trigger back/forward. They are let through only to something that can still scroll sideways in that direction.
@@ -755,7 +760,7 @@ addEventListener('wheel', (e) => {
   await switchTo(doc, !doc.updatedAt);
   if (settings.mode === 'bridge') { await refreshBridge(); repaintTools(); library.sync(); canvas.queueCost(); if (serverReady(settings.server)) await loadSpaces(); }
   paintConn();
-  window.flow = { graph, engine, canvas, settings, currentProvider, library };
+  window.flow = { graph, engine, canvas, settings, currentProvider, library, agent };
 })();
 // Save at once when the page is being closed or hidden, not only after the short delay.
 addEventListener('pagehide', () => { if (graph.doc.id) library.put(graph.doc); });
