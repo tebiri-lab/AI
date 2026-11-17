@@ -11,6 +11,8 @@ import { displayUrl, pictureData, frameBlobs, saveBlob } from './media.js';
 import { h, toast, relayBox, lightbox } from './ui.js';
 
 const BUILDABLE = new Set(['image', 'video', 'frame', 'vupscale']);
+const EDITABLE = new Set(['text', 'image', 'video', 'frame', 'vupscale']); // existing nodes the agent may change
+const FIELD_KO = { text: '글', prompt: '프롬프트', model: '모델', aspect: '화면비', count: '변형 수', duration: '길이', params: '설정', at: '위치', method: '방식', resolution: '해상도' };
 const MEDIA = ['image', 'video', 'audio'];
 const isRef = (key) => /^ref\d+$/.test(key);
 const isCanvas = (key) => /^c\d+$/.test(key); // a node of the existing workflow, as named to Claude
@@ -25,8 +27,8 @@ Answer with exactly one JSON object and nothing else (no markdown fence, no comm
   - a choice that changes the cost or the result a lot and that you cannot settle with a sensible default.
   Ask for everything in one message, as a short numbered list, saying for each item what kind of file or answer you need. Do not ask about things you can decide yourself (aspect ratio defaults to 16:9, video length to 5 seconds). If the request is generic and needs no specific identity, do not ask: build.
 
-{"action":"build","message":"...","nodes":[...],"links":[...]}
-  "message": 1 to 3 sentences telling the filmmaker what you set up (or changed) and why.
+{"action":"build","message":"...","nodes":[...],"links":[...],"unlink":[...],"rerun":[...]}
+  "message": 1 to 3 sentences telling the filmmaker what you set up (or changed) and why. "unlink" and "rerun" are optional and only concern existing nodes (see "The existing workflow").
 
 "message" is always written in Korean, plain and short. Refer to nodes by their names ("캐릭터 시트", "샷 1"), never by keys such as c1, ref2 or shot1: the filmmaker does not see keys.
 
@@ -49,7 +51,11 @@ The existing workflow
   - Use what is there instead of making it again: an existing character sheet, approved still, extracted frame or uploaded picture can be a link source exactly like a reference (c3>shot1.refs, c5>shot1.start), and an existing video can go to vref or to a frame or vupscale node.
   - An existing text node (a look, a character description, a shot description) can be linked to the "prompt" port of your image or video node. Connected texts are sent first, in link order, followed by the node's own "prompt"; so write in "prompt" only what the connected texts do not already say.
   - Match what is there: when the filmmaker's existing shots share a model, aspect ratio, look text or character reference, a shot you add should use the same unless they ask otherwise.
-  - Existing nodes are read-only for you: never list a c-key under "nodes". To vary an existing node, make a new one. The only link you may make INTO an existing node is into a board's "shots" port (c9.shots), to add your shot to their board.
+  - You may change an existing node when the filmmaker asks for it, or when changing it is plainly the way to do what they ask. List it under "nodes" with its c-key and only the fields that change (no "type"). What can be changed: a text node ("text": the complete new text), an image or video node (prompt, model, aspect, count, duration, params), a frame node (at), a vupscale node (method, resolution, prompt). Their prompts were written or approved by the filmmaker: change the smallest part that does the job and keep the rest word for word. Never touch a node they did not ask about.
+  - A text or prompt shown ending in "… [shortened]" is not complete here: do not change that node. Ask the filmmaker to select it and send the request again.
+  - A text node that feeds several generation nodes changes all of them: say so in "message".
+  - "unlink":["fromKey>toKey.port", …] removes existing links (for example to swap a reference). Links into existing nodes are allowed; a port that takes one input replaces what was connected.
+  - "rerun":["c7", …] lists existing generation nodes to generate again. An existing generation node you changed is generated again by itself; nodes that only sit after a changed text are not, so list the ones the filmmaker wants regenerated. Use it also when they just ask for another take of an existing node.
   - An existing node marked "no result" has nothing to hand on yet; do not build on it unless the filmmaker asks, and say so in "message" if you do.
   - Nodes marked "selected" are the ones the filmmaker is pointing at with this message.
 
@@ -88,7 +94,7 @@ export function readPlan(raw) {
 }
 
 export function initAgent({ graph, engine, canvas, actions, guarded, panel, button }) {
-  const st = { log: [], files: [], busy: false, stage: [], abort: null, docId: null, keys: new Map(), seq: 0 };
+  const st = { log: [], files: [], busy: false, stage: [], abort: null, docId: null, keys: new Map(), seq: 0, edited: new Set(), force: new Set(), clipped: new Set() };
   const mine = () => graph.doc.nodes.filter((n) => n.data.agent);
   const built = () => mine().filter((n) => !isRef(n.data.agent));
   const refs = () => mine().filter((n) => isRef(n.data.agent)).sort((a, b) => +a.data.agent.slice(3) - +b.data.agent.slice(3));
@@ -99,6 +105,8 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
   const others = () => graph.doc.nodes.filter((n) => !n.data.agent && !NODE_TYPES[n.type].note);
   const canvasKey = (n) => { if (!st.keys.has(n.id)) st.keys.set(n.id, `c${++st.seq}`); return st.keys.get(n.id); };
   const keyOf = (n) => n.data.agent || canvasKey(n);
+  // What the agent generates and asks about: its own nodes, and existing nodes it changed or was told to run again.
+  const active = () => [...built(), ...others().filter((n) => st.edited.has(n.id) || st.force.has(n.id))];
   const picked = () => canvas.selectedNodes().filter((n) => !n.data.agent && !NODE_TYPES[n.type].note);
 
   // ---- panel
@@ -156,7 +164,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     if (st.busy) return toast('진행 중인 작업이 끝난 뒤에 새 작업을 시작할 수 있습니다');
     if (strip) for (const n of mine()) delete n.data.agent;
     if (strip) graph.scheduleSave();
-    st.log = []; st.files = []; st.stage = []; st.docId = graph.doc.id; st.keys = new Map(); st.seq = 0;
+    st.log = []; st.files = []; st.stage = []; st.docId = graph.doc.id; st.keys = new Map(); st.seq = 0; st.edited = new Set(); st.force = new Set(); st.clipped = new Set();
     intro(); drawFiles();
   }
   function toggle(open = panel.hidden) {
@@ -222,7 +230,8 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     }
     // The existing workflow. Pictures: the selected nodes first, then the others, while there is room.
     const rest = others(), sel = new Set(picked().map((n) => n.id));
-    const cut = rest.length > 40 ? 220 : 700, clip = (t) => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > cut ? `${x.slice(0, cut)}…` : x; };
+    const cut = rest.length > 40 ? 220 : 6000; st.clipped = new Set();
+    const clip = (n, t) => { const x = String(t || '').trim(); if (sel.has(n.id) || x.length <= cut) return x; st.clipped.add(n.id); return `${x.slice(0, cut)}… [shortened]`; };
     const seen = new Set();
     // Leave room for the latest results, which matter most when the filmmaker is reacting to them.
     const room = Math.min(6, 8 - Math.min(4, st.stage.filter((id) => graph.node(id)?.result).length));
@@ -233,7 +242,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       await look(item, `existing node ${canvasKey(n)} (${name(n)})`, images);
       if (images.length > before) seen.add(n.id);
     }
-    lines.push('', 'Existing workflow (read-only for you):');
+    lines.push('', 'Existing workflow:');
     if (!rest.length) lines.push('(the canvas has nothing else on it)');
     for (const n of rest) {
       const def = NODE_TYPES[n.type], item = engine.outItems(n)[0];
@@ -241,9 +250,9 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       const gives = n.type === 'board' ? 'collects shots (port: shots)' : item ? `gives ${item.type}${seen.has(n.id) ? ' (picture attached)' : MEDIA.includes(item.type) && item.type !== 'audio' ? ' (not attached)' : ''}` : def.spends ? 'no result' : 'empty';
       const gen = n.type === 'image' || n.type === 'video';
       const about = [gen ? `model ${n.data.model}, aspect ${n.data.aspect}${n.type === 'video' ? `, ${n.data.duration}s` : ''}${n.data.params?.resolution ? `, ${n.data.params.resolution}` : ''}` : '', n.type === 'media' ? `${n.data.kind} file "${n.data.name || n.data.url || ''}"` : '', n.type === 'vupscale' ? `${n.data.method} ${n.data.resolution}` : ''].filter(Boolean).join('');
-      lines.push(`- ${canvasKey(n)} | ${n.type} | "${name(n)}"${sel.has(n.id) ? ' | selected' : ''}${about ? ` | ${about}` : ''} | ${gives}${n.result?.v ? ` v${n.result.v}` : ''} | links in: ${ins.join(', ') || 'none'}`);
-      const text = item?.type === 'text' ? item.text : gen ? n.data.prompt : '';
-      if (text) lines.push(`  ${item?.type === 'text' ? 'text' : 'own prompt'}: ${clip(text)}`);
+      lines.push(`- ${canvasKey(n)} | ${n.type} | "${name(n)}"${sel.has(n.id) ? ' | selected' : ''}${about ? ` | ${about}` : ''} | ${gives}${n.result?.v ? ` v${n.result.v}` : ''}${n.status === 'error' ? ` | failed: ${n.message}` : ''}${st.edited.has(n.id) ? ' | changed by you' : ''} | links in: ${ins.join(', ') || 'none'}`);
+      const text = n.type === 'text' ? n.data.text : item?.type === 'text' ? item.text : gen || n.type === 'vupscale' ? n.data.prompt : '';
+      if (text) lines.push(`  ${gen || n.type === 'vupscale' ? 'own prompt' : 'text'}: ${clip(n, text)}`);
     }
     lines.push('', 'Current nodes (the ones you made in this conversation):');
     const nodes = built();
@@ -286,6 +295,8 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
         else if (params.resolution && params.resolution !== '480p' && known.has('draft') && params.draft == null && have?.data.params?.draft) params.draft = false;
         data.params = params;
       }
+    } else if (type === 'text') {
+      if (typeof spec.text === 'string') data.text = spec.text.trim();
     } else if (type === 'frame') {
       if (spec.at === 'first' || spec.at === 'last') data.at = spec.at;
     } else if (type === 'vupscale') {
@@ -295,35 +306,50 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     }
     return data;
   }
-  function apply(plan) {
-    const problems = [], made = [];
+  async function apply(plan) {
+    const problems = [], made = [], changed = [];
     const byKey = new Map(mine().map((n) => [n.data.agent, n]));
     for (const n of others()) if (st.keys.has(n.id)) byKey.set(st.keys.get(n.id), n);
     graph.checkpoint();
     const all = canvas.bounds(graph.doc.nodes), at = all ? { x: all.x0, y: all.y1 + 140 } : canvas.center();
     for (const spec of Array.isArray(plan.nodes) ? plan.nodes : []) {
       const key = String(spec?.key || '').trim();
-      if (isCanvas(key)) { problems.push(`${key}: 기존 노드는 바꾸지 않았습니다`); continue; }
+      const have = byKey.get(key);
+      if (isCanvas(key) && !have) { problems.push(`${key}: 없는 노드라 건너뛰었습니다`); continue; }
       if (!/^\w+$/.test(key) || isRef(key)) { problems.push(`이름(${key || '없음'})을 쓸 수 없는 노드는 건너뛰었습니다`); continue; }
-      const have = byKey.get(key), type = have?.type || spec.type;
-      if (!BUILDABLE.has(type)) { problems.push(`${key}: 만들 수 없는 노드 종류(${spec.type})라 건너뛰었습니다`); continue; }
-      const data = dataOf(type, { ...spec, key }, have, problems);
+      const type = have?.type || spec.type, own = !have || !!have.data.agent;
+      if (!(own ? BUILDABLE : EDITABLE).has(type)) { problems.push(have ? `${name(have)}: 이 종류의 노드(${NODE_TYPES[type].title})는 에이전트가 고치지 않습니다` : `${key}: 만들 수 없는 노드 종류(${spec.type})라 건너뛰었습니다`); continue; }
+      if (have && !own && st.clipped.has(have.id) && (spec.prompt != null || spec.text != null)) { problems.push(`${name(have)}: 글이 길어 일부만 읽은 상태라 고치지 않았습니다. 그 노드를 선택하고 다시 요청해 주세요`); continue; }
+      const data = dataOf(type, { ...spec, key: have && !own ? name(have) : key }, have, problems);
+      if (!own) delete data.label; // the filmmaker's names stay
       if (have) {
+        const was = JSON.stringify(have.data);
         Object.assign(have.data, data, data.params ? { params: { ...have.data.params, ...data.params } } : {});
-        graph.pruneEdges(have.id); canvas.renderNode(have); graph.emit('node:data', have);
+        if (JSON.stringify(have.data) === was) continue;
+        graph.pruneEdges(have.id); canvas.renderNode(have);
+        if (NODE_TYPES[type].instant) await canvas.recompute(have);
+        graph.emit('node:data', have);
+        if (!own) { changed.push(`${name(have)} (${Object.keys(data).map((k) => FIELD_KO[k] || k).join('·')})`); if (NODE_TYPES[type].spends) st.edited.add(have.id); }
       } else {
         const node = graph.addNode(type, at.x + made.length * 400, at.y, { ...data, agent: key });
         byKey.set(key, node); made.push(node);
       }
     }
+    const ends = (link) => { const m = /^\s*(\w+)(?:\.\w+)?\s*>\s*(\w+)\.(\w+)\s*$/.exec(String(link)); return m && byKey.get(m[1]) && byKey.get(m[2]) ? { from: byKey.get(m[1]), to: byKey.get(m[2]), port: m[3] } : null; };
+    for (const link of Array.isArray(plan.unlink) ? plan.unlink : []) {
+      const e = ends(link), edge = e && graph.doc.edges.find((x) => x.from.node === e.from.id && x.to.node === e.to.id && x.to.port === e.port);
+      if (!edge) { problems.push(`연결 끊기 ${link}: 그런 연결이 없습니다`); continue; }
+      graph.removeEdge(edge.id);
+      const order = e.to.data.order?.[e.port]; if (order) e.to.data.order[e.port] = order.filter((id) => id !== e.from.id);
+      if (!e.to.data.agent) { changed.push(`${name(e.to)} (${name(e.from)} 연결 끊음)`); if (NODE_TYPES[e.to.type].spends) st.edited.add(e.to.id); }
+    }
     for (const link of Array.isArray(plan.links) ? plan.links : []) {
-      const m = /^\s*(\w+)(?:\.\w+)?\s*>\s*(\w+)\.(\w+)\s*$/.exec(String(link));
-      const from = m && byKey.get(m[1]), to = m && byKey.get(m[2]);
-      if (!from || !to) { problems.push(`연결 ${link}: 없는 노드를 가리켜 건너뛰었습니다`); continue; }
-      // Into the existing workflow only where it adds and never replaces: a board's list of shots.
-      if (!to.data.agent && !(to.type === 'board' && m[3] === 'shots')) { problems.push(`연결 ${link}: 기존 노드의 입력은 바꾸지 않았습니다`); continue; }
+      const e = ends(link);
+      if (!e) { problems.push(`연결 ${link}: 없는 노드를 가리켜 건너뛰었습니다`); continue; }
+      const { from, to } = e, m = [0, 0, 0, e.port];
       const r = graph.connect({ node: from.id, port: 'out' }, { node: to.id, port: m[3] });
-      if (r.error && !/이미 연결/.test(r.error)) { problems.push(`연결 ${link}: ${r.error}`); continue; }
+      if (r.error) { if (!/이미 연결/.test(r.error)) problems.push(`연결 ${link}: ${r.error}`); continue; }
+      if (!to.data.agent && to.type !== 'board') { changed.push(`${name(to)} (${name(from)} 연결)`); if (NODE_TYPES[to.type].spends) st.edited.add(to.id); }
       // References are numbered (@Image 1, 2, …) in the order of the plan's links, wherever the nodes end up on the canvas.
       if (graph.port(to, 'in', m[3])?.multi) { const order = ((to.data.order ||= {})[m[3]] ||= []); if (!order.includes(from.id)) order.push(from.id); }
     }
@@ -335,13 +361,17 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       if (group.length > 1) canvas.autoLayout(); else canvas.reveal(group);
       canvas.select([]);
     }
-    return problems;
+    for (const key of Array.isArray(plan.rerun) ? plan.rerun : []) {
+      const n = byKey.get(String(key));
+      if (n && NODE_TYPES[n.type].spends) st.force.add(n.id); else problems.push(`다시 생성 ${key}: 생성 노드가 아니라 건너뛰었습니다`);
+    }
+    return { problems, changed };
   }
 
   // ---- generating in stages
   // Generating nodes of the agent that still have to run, and of those the ones whose inputs are ready.
   function nextStage() {
-    const need = built().filter((n) => NODE_TYPES[n.type].spends && !(n.data.locked && n.result) && (!n.result || engine.isStale(n) || n.status === 'error'));
+    const need = active().filter((n) => NODE_TYPES[n.type].spends && !(n.data.locked && n.result) && (!n.result || engine.isStale(n) || n.status === 'error' || st.force.has(n.id)));
     return need.filter((n) => ![...graph.upstream(n.id)].some((id) => need.some((m) => m.id === id)));
   }
   async function stageCost(nodes) {
@@ -361,6 +391,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     setBusy('생성 중…', () => engine.stop());
     let failed;
     try { failed = await guarded(st.stage, true, '에이전트 생성'); } finally { setBusy(''); }
+    if (failed !== null) for (const id of st.stage) st.force.delete(id);
     if (failed === null) return say('agent', '생성을 취소했습니다. 노드는 캔버스에 그대로 있습니다.', choices([{ label: '생성 시작', primary: true, run: () => runStage() }]));
     showResults();
   }
@@ -394,8 +425,8 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
   }
   // Nothing left to generate. Drafts can now be brought to full resolution.
   function finish() {
-    const drafts = built().filter((n) => n.type === 'video' && n.result?.request?.draft && finalResolutions(n, engine.outItems(n)[0]).includes('1080p'));
-    const upscaled = new Set(built().filter((n) => n.type === 'vupscale').flatMap((n) => graph.edgesInto(n.id).map((e) => e.from.node)));
+    const drafts = active().filter((n) => n.type === 'video' && n.result?.request?.draft && finalResolutions(n, engine.outItems(n)[0]).includes('1080p'));
+    const upscaled = new Set(graph.doc.nodes.filter((n) => n.type === 'vupscale').flatMap((n) => graph.edgesInto(n.id).map((e) => e.from.node)));
     const opts = drafts.flatMap((n) => [
       { label: `${name(n)} — 1080p로 완성`, title: '같은 모델이 이 드래프트를 1080p로 다시 생성합니다 (Generate in 1080p)', keep: true, run: () => actions.finalize(n, engine.outItems(n)[0], '1080p') },
       upscaled.has(n.id) ? null : { label: `${name(n)} — Wan 3.0으로 1080p`, title: '이 480p 영상을 레퍼런스로 넣고 Wan 3.0이 1080p로 다시 그립니다. 보통 더 싸지만 세부와 소리가 달라질 수 있습니다.', run: () => upscale(n) },
@@ -427,8 +458,10 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     setBusy('');
     const message = String(plan.message || '').trim();
     if (plan.action === 'ask') return say('agent', message || '조금 더 알려 주세요.');
-    const problems = apply(plan);
-    say('agent', message || '노드를 구성했습니다.', problems.length ? h('p.hint', {}, `참고: ${problems.join(' · ')}`) : null);
+    const { problems, changed } = await apply(plan);
+    say('agent', message || '노드를 구성했습니다.',
+      changed.length ? h('p.hint', {}, `바꾼 기존 노드: ${changed.join(', ')}. 원래대로 돌리려면 Ctrl+Z를 누르세요.`) : null,
+      problems.length ? h('p.hint', {}, `참고: ${problems.join(' · ')}`) : null);
     if (nextStage().length) await runStage();
   }
   async function send() {
