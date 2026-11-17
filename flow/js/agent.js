@@ -10,7 +10,7 @@ import { settings, bridge, refreshBridge, serverReady, PROVIDERS, llmModel, llmN
 import { displayUrl, pictureData, frameBlobs, saveBlob } from './media.js';
 import { h, toast, relayBox, lightbox } from './ui.js';
 
-const BUILDABLE = new Set(['image', 'video', 'frame', 'vupscale']);
+const BUILDABLE = new Set(['image', 'video', 'frame', 'vupscale', 'board']);
 const EDITABLE = new Set(['text', 'image', 'video', 'frame', 'vupscale']); // existing nodes the agent may change
 const FIELD_KO = { text: '글', prompt: '프롬프트', model: '모델', aspect: '화면비', count: '변형 수', duration: '길이', params: '설정', at: '위치', method: '방식', resolution: '해상도' };
 const MEDIA = ['image', 'video', 'audio'];
@@ -37,12 +37,13 @@ Nodes
   {"key":"shot1","type":"video","label":"샷 1","model":"<video model id>","prompt":"...","aspect":"16:9","duration":5,"count":2,"params":{}}
   {"key":"last1","type":"frame","label":"샷 1 마지막 프레임","at":"last"}   takes a video and gives its first or last frame as an image ("at": "first" or "last")
   {"key":"up1","type":"vupscale","label":"샷 1 1080p","method":"wan","resolution":"1080p"}   takes a video and renders it again at a higher resolution (methods: ${UPSCALE_METHODS.map((m) => m.id).join(', ')}). Only when the filmmaker asks for upscaling.
+  {"key":"board1","type":"board","title":"확정 샷"}   a shot board: collects images and videos in the order of your links into its "shots" port and shows them side by side. It generates nothing and costs nothing.
   - "key": short and unique, letters, digits and underscore only. "label": a short Korean name shown on the node.
   - "model" must be an id from the model list below. "params" may only use the parameter names and values listed for that model. Leave out what you do not need to set.
   - "prompt": the complete prompt, in English, written for that model: subject, action, setting, light, lens and framing, and for a video the camera move and what happens over time.
   - "count" is the number of variants (1 to 4). Use 2 unless the filmmaker says otherwise.
 
-Links: "fromKey>toKey.port". fromKey is a node key, a reference key (ref1, ref2, …) or the key of an existing node (c1, c2, …). Ports of image and video nodes, only those listed for the chosen model: start (first frame), end (last frame), refs (reference images), vref (reference videos), aref (reference audio), and prompt (takes text nodes only). frame and vupscale nodes have the one port "video".
+Links: "fromKey>toKey.port". fromKey is a node key, a reference key (ref1, ref2, …) or the key of an existing node (c1, c2, …). Ports of image and video nodes, only those listed for the chosen model: start (first frame), end (last frame), refs (reference images), vref (reference videos), aref (reference audio), and prompt (takes text nodes only). frame and vupscale nodes have the one port "video"; a board has the one port "shots" (any number of images and videos).
   - Images linked to "refs" of a node are numbered in the order of your links: the first is @Image 1, the second @Image 2 (likewise @Video N for vref and @Audio N for aref). In that node's prompt, point at each reference with its tag and say what it is used for ("the woman from @Image 1", "the room from @Image 2"). start and end have no tag.
   - Never write a tag that has no link behind it.
 
@@ -58,8 +59,11 @@ The existing workflow
   - "rerun":["c7", …] lists existing generation nodes to generate again. An existing generation node you changed is generated again by itself; nodes that only sit after a changed text are not, so list the ones the filmmaker wants regenerated. Use it also when they just ask for another take of an existing node.
   - An existing node marked "no result" has nothing to hand on yet; do not build on it unless the filmmaker asks, and say so in "message" if you do.
   - Nodes marked "selected" are the ones the filmmaker is pointing at with this message.
+  - A node marked "locked" has a result the filmmaker locked: that is how they mark a result as decided / approved ("결정된 것", "확정"). When they refer to the decided ones, take the locked nodes if there are any; if nothing is locked or selected and you cannot tell from the conversation, ask which nodes they mean in one short question.
 
 How to plan
+  - Organising is not generating. When the filmmaker asks to collect, arrange, sort, compare or put results on a board ("보드에 정리해줘", "모아줘", "결정된 것만 추려줘"), make a board node and link the existing result nodes into its "shots" port, in the order they should appear. Never make an image or video node for that: no collage, no contact sheet, no re-generation of what already exists. Each linked node hands over the variant the filmmaker has picked on it, so "the decided ones" are simply the nodes they mean, linked as they are. If you cannot tell which nodes they mean, ask.
+  - Generate only when the filmmaker asks for a new picture or video, or for a change to one.
   - Keep it minimal: the fewest nodes that do the job.
   - A video that needs a particular look, person or composition: make the still first (an image node) and link it to the video's start port; the video prompt then describes only the motion, the camera and what changes. A plain idea with no such need can be a single video node.
   - Use attached reference material the way the filmmaker says: a person goes to refs with identity wording, a style to refs with style wording, a first frame to start.
@@ -250,7 +254,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       const gives = n.type === 'board' ? 'collects shots (port: shots)' : item ? `gives ${item.type}${seen.has(n.id) ? ' (picture attached)' : MEDIA.includes(item.type) && item.type !== 'audio' ? ' (not attached)' : ''}` : def.spends ? 'no result' : 'empty';
       const gen = n.type === 'image' || n.type === 'video';
       const about = [gen ? `model ${n.data.model}, aspect ${n.data.aspect}${n.type === 'video' ? `, ${n.data.duration}s` : ''}${n.data.params?.resolution ? `, ${n.data.params.resolution}` : ''}` : '', n.type === 'media' ? `${n.data.kind} file "${n.data.name || n.data.url || ''}"` : '', n.type === 'vupscale' ? `${n.data.method} ${n.data.resolution}` : ''].filter(Boolean).join('');
-      lines.push(`- ${canvasKey(n)} | ${n.type} | "${name(n)}"${sel.has(n.id) ? ' | selected' : ''}${about ? ` | ${about}` : ''} | ${gives}${n.result?.v ? ` v${n.result.v}` : ''}${n.status === 'error' ? ` | failed: ${n.message}` : ''}${st.edited.has(n.id) ? ' | changed by you' : ''} | links in: ${ins.join(', ') || 'none'}`);
+      lines.push(`- ${canvasKey(n)} | ${n.type} | "${name(n)}"${sel.has(n.id) ? ' | selected' : ''}${n.data.locked && n.result ? ' | locked' : ''}${about ? ` | ${about}` : ''} | ${gives}${n.result?.v ? ` v${n.result.v}` : ''}${n.status === 'error' ? ` | failed: ${n.message}` : ''}${st.edited.has(n.id) ? ' | changed by you' : ''} | links in: ${ins.join(', ') || 'none'}`);
       const text = n.type === 'text' ? n.data.text : item?.type === 'text' ? item.text : gen || n.type === 'vupscale' ? n.data.prompt : '';
       if (text) lines.push(`  ${gen || n.type === 'vupscale' ? 'own prompt' : 'text'}: ${clip(n, text)}`);
     }
@@ -259,8 +263,8 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     if (!nodes.length) lines.push('(none yet)');
     for (const n of nodes) {
       const ins = graph.ports(n, 'in').flatMap((p) => engine.sourceNodes(n, p.key).map((x) => `${keyOf(x)}>${p.key}`));
-      const set = n.type === 'image' || n.type === 'video' ? { model: n.data.model, aspect: n.data.aspect, ...(n.type === 'video' ? { duration: +n.data.duration } : {}), count: +n.data.count, params: n.data.params } : n.type === 'frame' ? { at: n.data.at } : { method: n.data.method, resolution: n.data.resolution };
-      const state = n.status === 'error' ? `failed: ${n.message}` : n.result ? `generated v${n.result.v || 1}${engine.isStale(n) ? ' (settings changed since)' : ''}` : 'not generated yet';
+      const set = n.type === 'image' || n.type === 'video' ? { model: n.data.model, aspect: n.data.aspect, ...(n.type === 'video' ? { duration: +n.data.duration } : {}), count: +n.data.count, params: n.data.params } : n.type === 'frame' ? { at: n.data.at } : n.type === 'board' ? { title: n.data.title } : { method: n.data.method, resolution: n.data.resolution };
+      const state = n.type === 'board' ? `shows ${engine.outItems(n).length} item(s)` : n.status === 'error' ? `failed: ${n.message}` : n.result ? `generated v${n.result.v || 1}${engine.isStale(n) ? ' (settings changed since)' : ''}` : 'not generated yet';
       lines.push(`- ${n.data.agent} | ${n.type} | "${name(n)}" | ${JSON.stringify(set)} | links in: ${ins.join(', ') || 'none'} | ${state}${n.data.prompt ? `\n  prompt: ${n.data.prompt}` : ''}`);
     }
     // What the last stage produced, for Claude to look at when the filmmaker reacts to it.
@@ -297,6 +301,10 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       }
     } else if (type === 'text') {
       if (typeof spec.text === 'string') data.text = spec.text.trim();
+    } else if (type === 'board') {
+      const title = typeof spec.title === 'string' && spec.title.trim() ? spec.title : spec.label;
+      if (typeof title === 'string' && title.trim()) data.title = title.trim().slice(0, 60);
+      delete data.label;
     } else if (type === 'frame') {
       if (spec.at === 'first' || spec.at === 'last') data.at = spec.at;
     } else if (type === 'vupscale') {
@@ -354,6 +362,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       if (graph.port(to, 'in', m[3])?.multi) { const order = ((to.data.order ||= {})[m[3]] ||= []); if (!order.includes(from.id)) order.push(from.id); }
     }
     canvas.afterChange();
+    for (const n of made) if (NODE_TYPES[n.type].instant) { await canvas.recompute(n); canvas.paintPreview(n); }
     if (made.length) {
       // Lay the agent's nodes out together, references on the left.
       const group = mine();
