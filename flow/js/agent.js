@@ -11,8 +11,8 @@ import { displayUrl, pictureData, frameBlobs, saveBlob } from './media.js';
 import { h, toast, relayBox, lightbox } from './ui.js';
 
 const BUILDABLE = new Set(['image', 'video', 'frame', 'vupscale', 'board']);
-const EDITABLE = new Set(['text', 'image', 'video', 'frame', 'vupscale']); // existing nodes the agent may change
-const FIELD_KO = { text: '글', prompt: '프롬프트', model: '모델', aspect: '화면비', count: '변형 수', duration: '길이', params: '설정', at: '위치', method: '방식', resolution: '해상도' };
+const EDITABLE = new Set(['text', 'image', 'video', 'frame', 'vupscale', 'board']); // existing nodes the agent may change
+const FIELD_KO = { title: '시퀀스 이름', text: '글', prompt: '프롬프트', model: '모델', aspect: '화면비', count: '변형 수', duration: '길이', params: '설정', at: '위치', method: '방식', resolution: '해상도' };
 const MEDIA = ['image', 'video', 'audio'];
 // Conversations are kept in the browser, one per workflow, so a reload (or opening the workflow again) continues them.
 const TALK_KEY = 'flow.agent.v1', TALK_MAX = 30;
@@ -65,13 +65,13 @@ The existing workflow
   - Use what is there instead of making it again: an existing character sheet, approved still, extracted frame or uploaded picture can be a link source exactly like a reference (c3>shot1.refs, c5>shot1.start), and an existing video can go to vref or to a frame or vupscale node.
   - An existing text node (a look, a character description, a shot description) can be linked to the "prompt" port of your image or video node. Connected texts are sent first, in link order, followed by the node's own "prompt"; so write in "prompt" only what the connected texts do not already say.
   - Match what is there: when the filmmaker's existing shots share a model, aspect ratio, look text or character reference, a shot you add should use the same unless they ask otherwise.
-  - You may change an existing node when the filmmaker asks for it, or when changing it is plainly the way to do what they ask. List it under "nodes" with its c-key and only the fields that change (no "type"). What can be changed: a text node ("text": the complete new text), an image or video node (prompt, model, aspect, count, duration, params), a frame node (at), a vupscale node (method, resolution, prompt). Their prompts were written or approved by the filmmaker: change the smallest part that does the job and keep the rest word for word. Never touch a node they did not ask about.
+  - You may change an existing node when the filmmaker asks for it, or when changing it is plainly the way to do what they ask. List it under "nodes" with its c-key and only the fields that change (no "type"). What can be changed: a text node ("text": the complete new text), an image or video node (prompt, model, aspect, count, duration, params), a frame node (at), a vupscale node (method, resolution, prompt), a board (title; its contents are changed with links and unlink). Their prompts were written or approved by the filmmaker: change the smallest part that does the job and keep the rest word for word. Never touch a node they did not ask about.
   - A text or prompt shown ending in "… [shortened]" is not complete here: do not change that node. Ask the filmmaker to select it and send the request again.
   - A text node that feeds several generation nodes changes all of them: say so in "message".
   - "unlink":["fromKey>toKey.port", …] removes existing links (for example to swap a reference). Links into existing nodes are allowed; a port that takes one input replaces what was connected.
   - "rerun":["c7", …] lists existing generation nodes to generate again. An existing generation node you changed is generated again by itself; nodes that only sit after a changed text are not, so list the ones the filmmaker wants regenerated. Use it also when they just ask for another take of an existing node.
   - An existing node marked "no result" has nothing to hand on yet; do not build on it unless the filmmaker asks, and say so in "message" if you do.
-  - Nodes marked "selected" are the ones the filmmaker is pointing at with this message.
+  - Nodes marked "selected" are the ones the filmmaker is pointing at with this message. The mark can be on an existing node or on one of your own under "Current nodes"; both lists together are the whole canvas. A board shows its node name and, separately, its sequence title: the filmmaker may call it by either.
   - A node marked "locked" has a result the filmmaker locked: that is how they mark a result as decided / approved ("결정된 것", "확정"). When they refer to the decided ones, take the locked nodes if there are any; if nothing is locked or selected and you cannot tell from the conversation, ask which nodes they mean in one short question.
 
 How to plan
@@ -124,7 +124,10 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
   const keyOf = (n) => n.data.agent || canvasKey(n);
   // What the agent generates and asks about: its own nodes, and existing nodes it changed or was told to run again.
   const active = () => [...built(), ...others().filter((n) => st.edited.has(n.id) || st.force.has(n.id))];
-  const picked = () => canvas.selectedNodes().filter((n) => !n.data.agent && !NODE_TYPES[n.type].note);
+  const picked = () => canvas.selectedNodes().filter((n) => !NODE_TYPES[n.type].note); // whoever made them
+  // A copy of an agent node (Ctrl+D, copy and paste) carries the same key as its original. A key must name one node:
+  // the first keeps it, the copies count as ordinary nodes of the workflow.
+  const dedupe = () => { const seen = new Set(); for (const n of graph.doc.nodes) { if (!n.data.agent) continue; if (seen.has(n.data.agent)) delete n.data.agent; else seen.add(n.data.agent); } };
 
   // ---- panel
   const feed = h('div.agent-feed', { 'aria-live': 'polite' });
@@ -263,6 +266,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     while (out.length && out[out.length - 1] == null) out.pop();
   }
   async function brief() {
+    dedupe();
     const images = [], lines = [RULES, ''];
     for (const kind of ['image', 'video']) {
       const recent = recentModels(kind).slice(0, 3).map((m) => m.id);
@@ -297,7 +301,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       const ins = graph.ports(n, 'in').flatMap((p) => engine.sourceNodes(n, p.key).map((x) => `${keyOf(x)}>${p.key}`));
       const gives = n.type === 'board' ? 'collects shots (port: shots)' : item ? `gives ${item.type}${seen.has(n.id) ? ' (picture attached)' : MEDIA.includes(item.type) && item.type !== 'audio' ? ' (not attached)' : ''}` : def.spends ? 'no result' : 'empty';
       const gen = n.type === 'image' || n.type === 'video';
-      const about = [gen ? `model ${n.data.model}, aspect ${n.data.aspect}${n.type === 'video' ? `, ${n.data.duration}s` : ''}${n.data.params?.resolution ? `, ${n.data.params.resolution}` : ''}` : '', n.type === 'media' ? `${n.data.kind} file "${n.data.name || n.data.url || ''}"` : '', n.type === 'vupscale' ? `${n.data.method} ${n.data.resolution}` : ''].filter(Boolean).join('');
+      const about = [gen ? `model ${n.data.model}, aspect ${n.data.aspect}${n.type === 'video' ? `, ${n.data.duration}s` : ''}${n.data.params?.resolution ? `, ${n.data.params.resolution}` : ''}` : '', n.type === 'media' ? `${n.data.kind} file "${n.data.name || n.data.url || ''}"` : '', n.type === 'vupscale' ? `${n.data.method} ${n.data.resolution}` : '', n.type === 'board' ? `sequence title "${n.data.title || ''}"` : ''].filter(Boolean).join('');
       lines.push(`- ${canvasKey(n)} | ${n.type} | "${name(n)}"${sel.has(n.id) ? ' | selected' : ''}${n.data.locked && n.result ? ' | locked' : ''}${about ? ` | ${about}` : ''} | ${gives}${n.result?.v ? ` v${n.result.v}` : ''}${n.status === 'error' ? ` | failed: ${n.message}` : ''}${st.edited.has(n.id) ? ' | changed by you' : ''} | links in: ${ins.join(', ') || 'none'}`);
       const text = n.type === 'text' ? n.data.text : item?.type === 'text' ? item.text : gen || n.type === 'vupscale' ? n.data.prompt : '';
       if (text) lines.push(`  ${gen || n.type === 'vupscale' ? 'own prompt' : 'text'}: ${clip(n, text)}`);
@@ -309,7 +313,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       const ins = graph.ports(n, 'in').flatMap((p) => engine.sourceNodes(n, p.key).map((x) => `${keyOf(x)}>${p.key}`));
       const set = n.type === 'image' || n.type === 'video' ? { model: n.data.model, aspect: n.data.aspect, ...(n.type === 'video' ? { duration: +n.data.duration } : {}), count: +n.data.count, params: n.data.params } : n.type === 'frame' ? { at: n.data.at } : n.type === 'board' ? { title: n.data.title } : { method: n.data.method, resolution: n.data.resolution };
       const state = n.type === 'board' ? `shows ${engine.outItems(n).length} item(s)` : n.status === 'error' ? `failed: ${n.message}` : n.result ? `generated v${n.result.v || 1}${engine.isStale(n) ? ' (settings changed since)' : ''}` : 'not generated yet';
-      lines.push(`- ${n.data.agent} | ${n.type} | "${name(n)}" | ${JSON.stringify(set)} | links in: ${ins.join(', ') || 'none'} | ${state}${n.data.prompt ? `\n  prompt: ${n.data.prompt}` : ''}`);
+      lines.push(`- ${n.data.agent} | ${n.type} | "${name(n)}"${sel.has(n.id) ? ' | selected' : ''} | ${JSON.stringify(set)} | links in: ${ins.join(', ') || 'none'} | ${state}${n.data.prompt ? `\n  prompt: ${n.data.prompt}` : ''}`);
     }
     // What the last stage produced, for Claude to look at when the filmmaker reacts to it.
     const shown = st.stage.map((id) => graph.node(id)).filter((n) => n?.result);
