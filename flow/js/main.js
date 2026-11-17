@@ -5,7 +5,7 @@ import { Canvas } from './canvas.js';
 import { NODE_TYPES, buildRequest, finalizeRequest, describeRefs, upscaleRequest, TAG_PORTS } from './nodes.js';
 import { TEMPLATES } from './templates.js';
 import { initMedia, sweepMedia, displayUrl, frameBlobs, pictureData, saveBlob } from './media.js';
-import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS } from './providers.js';
+import { settings, saveSettings, bridge, refreshBridge, bridgeApi, serverReady, currentProvider, toolData, relayText, PROVIDERS, LLM_MODELS, llmModel } from './providers.js';
 import { setModels, isLiveCatalog, listModels } from './models.js';
 import { h, toast, menu, modal, confirmBox, askBox, relayBox, refStrip } from './ui.js';
 import { library } from './library.js';
@@ -268,7 +268,7 @@ const actions = {
         '(The complete revised prompt in English, ready to use as it is. Keep reference tags such as @Image 1 or @[Image 1](image_1) exactly as they are. No commentary.)',
       ].join('\n');
       if (bridge.online) {
-        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images }) });
+        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images, model: llmModel('review') }) });
         const body = await res.json().catch(() => ({}));
         if (res.ok) answer = body.text;
         else if (res.status !== 501) toast(/authenticat|OAuth|login|log in/i.test(body.error || '') ? '이 컴퓨터의 Claude Code 로그인이 만료되었습니다. 터미널에서 claude 를 실행해 /login 하세요. 지금은 Claude 채팅 전달로 진행합니다.' : `이 컴퓨터의 Claude Code로 보지 못했습니다 (${(body.error || '알 수 없는 오류').slice(0, 120)}). Claude 채팅 전달로 진행합니다.`, 'error');
@@ -362,7 +362,7 @@ const actions = {
         prompt += `\n\nPictures attached for you to look at before writing:\n${seen.lines.join('\n')}`;
       }
       if (bridge.online) {
-        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images }) });
+        const res = await fetch(`${bridge.base}/api/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images, model: llmModel('write') }) });
         const body = await res.json().catch(() => ({}));
         if (res.ok) text = body.text;
         // Claude Code on this computer could not write (not installed, or signed out): say why and fall back to the chat hand-off below.
@@ -722,6 +722,13 @@ async function drawConn() {
       }
       const par = h('select', { onchange: (e) => { settings.parallel = +e.target.value; saveSettings(); } }, [1, 2, 3, 4, 6].map((n) => h('option', { value: n, selected: +settings.parallel === n }, `${n}개`)));
       kids.push(h('h3', {}, '동시에 생성할 노드 수'), h('div.row', {}, par));
+      // Claude writes prompts, reviews results and plans for the agent through Claude Code on this computer; each call uses that account's allowance.
+      const pickLlm = (task) => h('select', { 'aria-label': `${task} 모델`, onchange: (e) => { (settings.llm ||= {})[task] = e.target.value; saveSettings(); } }, LLM_MODELS.map((m) => h('option', { value: m.value, selected: llmModel(task) === m.value }, m.label)));
+      kids.push(h('h3', {}, 'Claude 모델 (AI 작업)'),
+        h('div.row.llm', {}, h('span', {}, '에이전트'), pickLlm('agent')),
+        h('div.row.llm', {}, h('span', {}, 'AI로 쓰기'), pickLlm('write')),
+        h('div.row.llm', {}, h('span', {}, '피드백 받기'), pickLlm('review')),
+        h('p', {}, '이 컴퓨터의 Claude Code로 실행되며 그 계정의 사용량에서 나갑니다. "기본값"은 Claude Code에 설정된 모델을 그대로 씁니다. 가벼운 모델일수록 사용량이 적게 듭니다.'));
     }
   }
   if (settings.mode === 'relay') kids.push(h('h3', {}, '쓰는 법'), h('p', {}, '생성 노드를 실행하면 요청문이 뜹니다. 복사해 Claude 채팅에 붙여넣고, Claude가 답한 결과 주소를 다시 붙여넣으면 노드에 결과가 들어갑니다. 내 컴퓨터의 파일을 레퍼런스로 쓰려면 그 채팅에 파일을 직접 올려야 합니다.'));

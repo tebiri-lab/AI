@@ -7,6 +7,10 @@ import { getBlob, isLocal, saveBlob, imageSize, videoMeta } from './media.js';
 const SETTINGS_KEY = 'flow.settings.v1';
 export const settings = { mode: 'demo', bridgeUrl: 'http://localhost:8787', server: 'higgsfield', parallel: 3 };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch { /* defaults */ }
+// Which Claude model does each kind of AI work (through Claude Code on this computer). '' = Claude Code's own default.
+export const LLM_MODELS = [{ value: '', label: 'Claude Code 기본값' }, { value: 'haiku', label: 'Haiku — 가장 가볍고 빠름' }, { value: 'sonnet', label: 'Sonnet — 중간' }, { value: 'opus', label: 'Opus — 가장 무거움' }];
+export const llmModel = (task) => settings.llm?.[task] || '';
+export const llmName = (task) => (llmModel(task) ? llmModel(task)[0].toUpperCase() + llmModel(task).slice(1) : '');
 export function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* not saved */ } }
 
 export const bridge = { base: '', online: false, servers: [], tools: [], error: '' };

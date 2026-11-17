@@ -31,8 +31,10 @@ const workflowFile = (id) => (/^[\w-]{1,80}$/.test(id) ? path.join(WORKFLOW_DIR,
 const LLM_CMD = process.env.FLOW_LLM_CMD || 'claude';
 // `images` are pictures Claude should look at: they are written into a throw-away folder that the command runs in,
 // and Claude is allowed the Read tool for it.
-async function writeWithClaude(prompt, images = []) {
+async function writeWithClaude(prompt, images = [], model = '') {
   let cwd = os.tmpdir(), args = ['-p', '--output-format', 'text'];
+  // Which Claude model writes: an alias (haiku, sonnet, opus) or a full model id. Without it, Claude Code's own default.
+  if (model) { if (!/^[\w.\-\[\]]{1,60}$/.test(model)) throw httpError(400, '모델 이름이 올바르지 않습니다'); args.push('--model', model); }
   const files = [];
   if (images.length) {
     cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'flow-look-'));
@@ -62,6 +64,7 @@ async function writeWithClaude(prompt, images = []) {
       child.stdout.on('data', (d) => { out += d; });
       child.stderr.on('data', (d) => { err += d; });
       child.on('close', (code) => { clearTimeout(timer); if (code === 0 && out.trim()) resolve(out.trim()); else reject(httpError(502, (err || out).trim().slice(0, 300) || `claude 명령이 실패했습니다 (${code})`)); });
+      child.stdin.on('error', () => {}); // the command ended before reading its input (it reports why on close); must not take the bridge down
       child.stdin.end(prompt);
     });
   } finally { if (images.length) await fs.rm(cwd, { recursive: true, force: true }).catch(() => {}); }
@@ -252,9 +255,9 @@ async function handle(req, res) {
         }
       }
       if (p === '/api/llm' && req.method === 'POST') {
-        const { prompt, images } = JSON.parse((await readBody(req, 60e6)).toString() || '{}');
+        const { prompt, images, model } = JSON.parse((await readBody(req, 60e6)).toString() || '{}');
         if (!prompt?.trim()) throw httpError(400, '내용이 비어 있습니다');
-        return json(200, { text: await writeWithClaude(String(prompt), Array.isArray(images) ? images : []) });
+        return json(200, { text: await writeWithClaude(String(prompt), Array.isArray(images) ? images : [], typeof model === 'string' ? model.trim() : '') });
       }
       if (p === '/api/workflows' && req.method === 'GET') {
         await fs.mkdir(WORKFLOW_DIR, { recursive: true });
