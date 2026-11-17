@@ -2,7 +2,7 @@
 // A result is { items: [{ type, url?, text?, jobId?, mediaId?, name? }], at }. Downstream nodes receive the picked item.
 import { listModels, getModel, modelRoles, modelDurations, modelParams, touchModel } from './models.js';
 import { bridge } from './providers.js';
-import { grabFrame, cropImage } from './media.js';
+import { grabFrame, cropImage, videoMeta } from './media.js';
 
 const PROMPT_IN = { key: 'prompt', label: '프롬프트', type: 'text', multi: true };
 
@@ -148,6 +148,50 @@ export function finalizeRequest(node, item, resolution) {
   return { kind: 'video', model: model.id, prompt: '', params, medias: [], count: 1 };
 }
 
+// Raising a video's resolution. Two different things go by that name:
+//  - "다시 그리기": a video model (Wan, Kling) gets the clip as its reference video and renders it again at 1080p.
+//    This is a new generation, so small details and the sound can come out different.
+//  - a dedicated upscaler (upscale_video): the same footage, only larger and sharper.
+export const UPSCALE_METHODS = [
+  { id: 'wan', label: 'Wan 3.0 — 다시 그리기', model: 'wan3_0' },
+  { id: 'wan_prime', label: 'Wan 3.0 Prime — 다시 그리기', model: 'wan3_0_prime' },
+  { id: 'kling', label: 'Kling 3.0 Omni Edit — 다시 그리기', model: 'kling_video_edit' },
+  { id: 'bytedance', label: '전용 업스케일러 (ByteDance)', res: ['1080p', '2k', '4k'] },
+  { id: 'topaz', label: '전용 업스케일러 (Topaz)', res: ['1080p', '2160p'] },
+];
+export const UPSCALE_PROMPT = 'Re-render @Video 1 at higher resolution. Keep every shot, the framing, camera movement, timing, performances, faces, wardrobe, lighting and colors exactly as in @Video 1. Do not add, remove or change anything. Only raise sharpness and fine detail: natural skin texture, hair strands, fabric weave, clean edges, no compression artifacts.';
+const upscaleMethod = (node) => UPSCALE_METHODS.find((m) => m.id === node.data.method) || UPSCALE_METHODS[0];
+// Resolutions a method offers (for Kling, its quality tiers) and the one used when none is chosen.
+function upscaleChoices(m) {
+  if (m.res) return { options: m.res, fallback: '1080p' };
+  const model = getModel(m.model);
+  const p = model?.parameters?.find((x) => x.name === (m.id === 'kling' ? 'mode' : 'resolution'));
+  const options = (p?.options || (m.id === 'kling' ? ['std', 'pro', '4k'] : ['720p', '1080p'])).map(String).filter((o) => o !== '480p');
+  return { options, fallback: options.includes('1080p') ? '1080p' : options.includes('pro') ? 'pro' : options[0] };
+}
+// What an upscale node would send. For "다시 그리기" this is an ordinary video generation request;
+// for a dedicated upscaler it is { tool, item, resolution, preset }.
+export async function upscaleRequest(node, inputs) {
+  const item = inputs.video?.[0];
+  if (!item) throw new Error('영상을 연결하세요');
+  const m = upscaleMethod(node), pick = upscaleChoices(m);
+  const resolution = pick.options.includes(node.data.resolution) ? node.data.resolution : pick.fallback;
+  if (m.res) return { tool: m.id, label: m.label, item, resolution, preset: node.data.preset || 'aigc' };
+  const model = getModel(m.model);
+  if (!model) throw new Error(`모델 목록에 ${m.model}이(가) 없습니다. "연결"에서 모델 목록을 새로 받아 주세요.`);
+  const params = m.id === 'kling' ? { mode: resolution } : { resolution, generate_audio: node.data.audio !== false };
+  const req = { kind: 'video', model: model.id, prompt: tagify((node.data.prompt || '').trim() || UPSCALE_PROMPT, { Video: 1 }), params, medias: [{ role: 'video_references', item }], count: 1 };
+  if (model.aspect_ratios?.includes('auto')) req.aspect = 'auto';
+  const d = modelDurations(model);
+  if (d && !d.options) {
+    // Same length as the source clip.
+    const meta = await videoMeta(item.url).catch(() => null);
+    if (!meta?.duration && !item.demo) throw new Error('원본 영상의 길이를 읽지 못했습니다');
+    req.duration = Math.max(Math.max(2, d.min), Math.min(d.max, Math.round(meta?.duration || 5)));
+  }
+  return req;
+}
+
 function generatorFields(kind) {
   return (node) => {
     const model = pickModel(node, kind);
@@ -282,6 +326,37 @@ export const NODE_TYPES = {
       const item = ctx.inputs.image?.[0];
       if (!item) throw new Error('이미지를 연결하세요');
       return { items: await ctx.provider.upscale({ item, resolution: ctx.node.data.resolution }, ctx) };
+    },
+  },
+  vupscale: {
+    title: '영상 업스케일', category: 'edit', hint: '480p·720p 영상을 1080p 이상으로 (Wan·Kling으로 다시 그리기, 또는 전용 업스케일러)', spends: true, width: 320,
+    defaults: { method: 'wan', resolution: '1080p', prompt: '', audio: true, preset: 'aigc' },
+    inputs: [{ key: 'video', label: '영상', type: 'video' }],
+    outputs: [{ key: 'out', label: '영상', type: 'video' }],
+    fields: (node) => {
+      const m = upscaleMethod(node), pick = upscaleChoices(m);
+      const fields = [
+        { key: 'method', label: '방식', kind: 'select', structural: true, wide: true, options: UPSCALE_METHODS.map((x) => ({ value: x.id, label: x.label })) },
+        { key: 'resolution', label: m.id === 'kling' ? '품질' : '목표 해상도', kind: 'select', options: pick.options, fallback: pick.fallback },
+      ];
+      if (m.id === 'bytedance') fields.push({ key: 'preset', label: '원본 종류', kind: 'select', options: [{ value: 'aigc', label: 'AI 생성 영상' }, { value: 'common', label: '일반' }, { value: 'short_series', label: '숏폼 드라마' }, { value: 'ugc', label: '직접 찍은 영상' }, { value: 'old_film', label: '옛 필름' }] });
+      if (m.res) return [...fields, { kind: 'info', text: '같은 영상을 그대로 키우고 선명하게 합니다. 내용과 소리는 바뀌지 않습니다.' }];
+      if (m.id !== 'kling') fields.push({ key: 'audio', label: '오디오 새로 생성', kind: 'check' });
+      fields.push(
+        { key: 'prompt', label: '지시문 (비우면 기본 지시문)', kind: 'textarea', rows: 3, placeholder: UPSCALE_PROMPT },
+        { kind: 'info', text: '연결한 영상을 레퍼런스(@Video 1)로 넣고 이 모델이 높은 해상도로 다시 생성합니다. 업스케일이 아니라 새 생성이라, 얼굴·손·글자 같은 세부와 소리가 원본과 달라질 수 있습니다. 원본과 길이는 같게 보냅니다.' });
+      return fields;
+    },
+    onChange: (node, key) => { if (key !== 'method') return false; node.data.resolution = upscaleChoices(upscaleMethod(node)).fallback; return true; },
+    preview: 'media',
+    run: async (ctx) => {
+      const req = await upscaleRequest(ctx.node, ctx.inputs);
+      if (req.tool) {
+        ctx.request = { model: req.label, prompt: '', resolution: req.resolution, refs: describeRefs([{ role: 'video_references', item: req.item }]) };
+        return { items: await ctx.provider.upscaleVideo({ item: req.item, provider: req.tool, resolution: req.resolution, preset: req.preset }, ctx), request: ctx.request };
+      }
+      ctx.request = { model: req.model, prompt: req.prompt, resolution: req.params.resolution || req.params.mode, duration: req.duration, refs: describeRefs(req.medias) };
+      return { items: await ctx.provider.generate(req, ctx), request: ctx.request };
     },
   },
   crop: {

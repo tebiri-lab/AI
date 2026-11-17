@@ -129,7 +129,7 @@ export class Canvas {
     this.queueEdges(); this.actions.onSelection?.(); this.queueCost();
   }
   // Expected credits are asked for a moment after things settle, not on every keystroke.
-  queueCost() { clearTimeout(this.costTimer); this.costTimer = setTimeout(() => { for (const n of this.graph.doc.nodes) if (n.type === 'image' || n.type === 'video') this.actions.estimate?.(n); }, 700); }
+  queueCost() { clearTimeout(this.costTimer); this.costTimer = setTimeout(() => { for (const n of this.graph.doc.nodes) if (n.type === 'image' || n.type === 'video' || n.type === 'vupscale') this.actions.estimate?.(n); }, 700); }
   // Nodes after this one may now be out of date, and instant nodes (text joins, boards) can simply be recomputed.
   refreshDependents(node) {
     for (const id of this.graph.downstream(node.id)) {

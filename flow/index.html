@@ -22,6 +22,7 @@
       <button id="btnFile">파일 ▾</button>
       <input id="fileInput" type="file" accept=".json,application/json" hidden />
       <span class="sep"></span>
+      <button id="btnAgent" aria-pressed="false" title="원하는 이미지·영상을 말하면 에이전트가 노드를 만들고 생성합니다">에이전트</button>
       <button id="btnConn" class="conn" title="생성 실행 방식과 MCP 연결"><i class="led"></i><span id="connLabel">데모</span></button>
       <button id="btnRun" class="primary" title="모든 노드를 순서대로 실행. 이미 결과가 있고 설정이 그대로인 생성 노드는 건너뜁니다.">전체 실행</button>
     </div>
@@ -40,6 +41,7 @@
   <div id="runbar" hidden><span id="runText"></span><button id="btnStop">모두 중단</button></div>
 
   <aside id="connPanel" hidden aria-label="연결"></aside>
+  <aside id="agentPanel" hidden aria-label="에이전트"></aside>
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script type="module" src="js/main.js"></script>

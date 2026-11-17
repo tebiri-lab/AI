@@ -2,7 +2,7 @@
 //  - demo:   placeholder pictures drawn in the browser. Costs nothing; for building and checking a graph.
 //  - bridge: the local Node bridge (flow/server) holds the MCP connections (Higgsfield and others) and this page calls it.
 //  - relay:  no server. The page writes the request for a Claude chat that has the Higgsfield connector; the person pastes the result links back.
-import { getBlob, isLocal, saveBlob, imageSize } from './media.js';
+import { getBlob, isLocal, saveBlob, imageSize, videoMeta } from './media.js';
 
 const SETTINGS_KEY = 'flow.settings.v1';
 export const settings = { mode: 'demo', bridgeUrl: 'http://localhost:8787', server: 'higgsfield', parallel: 3 };
@@ -121,6 +121,7 @@ const demo = {
     return items;
   },
   async upscale({ item }, ctx) { await sleep(400, ctx.signal); return [{ ...item, demo: true }]; },
+  async upscaleVideo({ item }, ctx) { await sleep(400, ctx.signal); return [{ ...item, demo: true }]; },
   async callTool() { throw new Error('MCP 도구는 브리지 연결 모드에서만 실행됩니다'); },
   async cost() { return null; },
 };
@@ -225,6 +226,14 @@ const mcp = {
     const { width, height } = await imageSize(item.url);
     return submit('upscale_image', { image_id: await mediaValue(item, ctx), width, height, resolution }, 'image', ctx);
   },
+  // The dedicated video upscalers (upscale_video): the same footage at a higher resolution, nothing redrawn.
+  async upscaleVideo({ item, provider, resolution, preset }, ctx) {
+    this.ready();
+    const video_id = await mediaValue(item, ctx);
+    if (provider === 'topaz') return submit('upscale_video', { provider, video_id, resolution }, 'video', ctx);
+    const { width, height } = await videoMeta(item.url);
+    return submit('upscale_video', { provider: 'bytedance', video_id, width, height, resolution, preset }, 'video', ctx);
+  },
   // Wait for jobs that were submitted earlier (before a reload) and return their results.
   async collect(ids, kind, ctx, server) {
     if (!serverReady(server)) throw new Error('브리지 연결이 끊겨 결과를 받지 못했습니다');
@@ -322,6 +331,7 @@ const relay = {
     return urls.map((url, i) => ({ type: kindOfUrl(url, req.kind), url, ...(ids.length === urls.length ? { jobId: ids[i] } : {}) }));
   },
   async upscale() { throw new Error('업스케일은 MCP 연결 모드에서 실행됩니다'); },
+  async upscaleVideo() { throw new Error('전용 업스케일러는 MCP 연결 모드에서 실행됩니다. "다시 그리기" 방식은 여기서도 됩니다.'); },
   async callTool() { throw new Error('MCP 도구는 MCP 연결 모드에서만 실행됩니다'); },
   async cost() { return null; },
 };

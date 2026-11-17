@@ -66,6 +66,18 @@ export function imageSize(url) {
   });
 }
 
+// Size and length of a video, from its header (no pixels are read, so any server will do).
+export function videoMeta(url) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video');
+    v.preload = 'metadata'; v.muted = true;
+    const timer = setTimeout(() => reject(new Error('영상을 불러오는 데 너무 오래 걸립니다')), 30000);
+    v.onloadedmetadata = () => { clearTimeout(timer); resolve({ width: v.videoWidth, height: v.videoHeight, duration: Number.isFinite(v.duration) ? v.duration : 0 }); v.removeAttribute('src'); v.load(); };
+    v.onerror = () => { clearTimeout(timer); reject(new Error('영상을 불러올 수 없습니다')); };
+    v.src = displayUrl(url);
+  });
+}
+
 // One frame of a video as a stored PNG. Remote videos must allow cross-origin reads; with the bridge on, they are fetched through it.
 // Frames of a video as PNG blobs. `at` is 'first', 'last', a time in seconds, or { part: 0..1 } of the length.
 // Remote videos must allow cross-origin reads; with the bridge on, they are fetched through it.
