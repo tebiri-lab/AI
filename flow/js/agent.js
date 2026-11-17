@@ -6,7 +6,7 @@
 // Nodes the agent made carry data.agent = their key in the plan; reference material is ref1, ref2, …
 import { NODE_TYPES, buildRequest, finalResolutions, UPSCALE_METHODS } from './nodes.js';
 import { listModels, getModel, modelRoles, modelDurations, modelParams, recentModels } from './models.js';
-import { settings, bridge, refreshBridge, serverReady, PROVIDERS, llmModel, llmName } from './providers.js';
+import { settings, saveSettings, bridge, refreshBridge, serverReady, PROVIDERS, llmModel, llmName } from './providers.js';
 import { displayUrl, pictureData, frameBlobs, saveBlob } from './media.js';
 import { h, toast, relayBox, lightbox } from './ui.js';
 
@@ -14,6 +14,19 @@ const BUILDABLE = new Set(['image', 'video', 'frame', 'vupscale', 'board']);
 const EDITABLE = new Set(['text', 'image', 'video', 'frame', 'vupscale']); // existing nodes the agent may change
 const FIELD_KO = { text: '글', prompt: '프롬프트', model: '모델', aspect: '화면비', count: '변형 수', duration: '길이', params: '설정', at: '위치', method: '방식', resolution: '해상도' };
 const MEDIA = ['image', 'video', 'audio'];
+// Conversations are kept in the browser, one per workflow, so a reload (or opening the workflow again) continues them.
+const TALK_KEY = 'flow.agent.v1', TALK_MAX = 30;
+const talks = {
+  all() { try { return JSON.parse(localStorage.getItem(TALK_KEY) || '{}'); } catch { return {}; } },
+  get(id) { return (id && this.all()[id]) || null; },
+  put(id, talk) {
+    if (!id) return;
+    const all = this.all();
+    if (talk) all[id] = { ...talk, at: Date.now() }; else delete all[id];
+    const keep = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, TALK_MAX);
+    try { localStorage.setItem(TALK_KEY, JSON.stringify(Object.fromEntries(keep))); } catch { /* storage full: the conversation lives until the page closes */ }
+  },
+};
 const isRef = (key) => /^ref\d+$/.test(key);
 const isCanvas = (key) => /^c\d+$/.test(key); // a node of the existing workflow, as named to Claude
 
@@ -98,7 +111,7 @@ export function readPlan(raw) {
 }
 
 export function initAgent({ graph, engine, canvas, actions, guarded, panel, button }) {
-  const st = { log: [], files: [], busy: false, stage: [], abort: null, docId: null, keys: new Map(), seq: 0, edited: new Set(), force: new Set(), clipped: new Set() };
+  const st = { log: [], files: [], busy: false, stage: [], abort: null, docId: null, view: [], keys: new Map(), seq: 0, edited: new Set(), force: new Set(), clipped: new Set() };
   const mine = () => graph.doc.nodes.filter((n) => n.data.agent);
   const built = () => mine().filter((n) => !isRef(n.data.agent));
   const refs = () => mine().filter((n) => isRef(n.data.agent)).sort((a, b) => +a.data.agent.slice(3) - +b.data.agent.slice(3));
@@ -129,19 +142,49 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
   function bubble(who, text, ...kids) {
     const el = h(`div.agent-msg.${who}`, {}, text ? h('p', {}, text) : null, ...kids.filter(Boolean));
     feed.append(el); feed.scrollTop = feed.scrollHeight;
+    // What can be shown again after a reload: the words, the small notes, and which nodes' results were shown.
+    st.view.push({ who, text: text || '', hints: [...el.querySelectorAll(':scope > .hint')].map((x) => x.textContent), nodes: [...el.querySelectorAll('.agent-result')].map((x) => x.dataset.node) });
+    save();
     return el;
+  }
+  function save() {
+    if (!st.docId || st.docId !== graph.doc.id) return;
+    talks.put(st.docId, st.view.length ? { view: st.view.slice(-200), log: st.log.slice(-200), stage: st.stage, keys: [...st.keys], seq: st.seq, edited: [...st.edited], force: [...st.force] } : null);
+  }
+  // Bring back the conversation saved for the open workflow, and offer to pick up where it stopped.
+  function restore() {
+    const talk = talks.get(graph.doc.id);
+    if (!talk?.view?.length) return false;
+    const alive = (id) => !!graph.node(id);
+    st.log = talk.log || []; st.stage = (talk.stage || []).filter(alive);
+    st.keys = new Map((talk.keys || []).filter(([id]) => alive(id))); st.seq = talk.seq || 0;
+    st.edited = new Set((talk.edited || []).filter(alive)); st.force = new Set((talk.force || []).filter(alive));
+    const saved = talk.view; st.view = [];
+    for (const m of saved) {
+      const el = h(`div.agent-msg.${m.who}`, {}, m.text ? h('p', {}, m.text) : null, ...(m.nodes || []).map((id) => graph.node(id)).filter((n) => n?.result).map(resultBlock), ...(m.hints || []).map((t) => h('p.hint', {}, t)));
+      feed.append(el); st.view.push(m);
+    }
+    // The buttons of the last message are gone with the page: offer the step that was open.
+    const stageNodes = st.stage.map((id) => graph.node(id)), waiting = st.log.length && st.log[st.log.length - 1].who === 'me' && saved[saved.length - 1].who === 'me';
+    const opts = [
+      waiting ? { label: '마지막 요청 다시 보내기', primary: true, run: () => turn() } : null,
+      stageNodes.length ? { label: '마지막 생성 결과 확인', primary: !waiting, keep: true, run: (row) => { if (stageNodes.some((n) => engine.isRunning(n.id) || n.pending)) return toast('아직 생성 중입니다. 끝난 뒤에 다시 눌러 주세요'); row.remove(); showResults(); } } : null,
+      !waiting && nextStage().length ? { label: `이어서 생성 (${nextStage().map(name).join(', ')})`, run: () => runStage() } : null,
+    ].filter(Boolean);
+    const el2 = h('div.agent-msg.agent.resumed', {}, h('p.hint', {}, '이전 대화를 이어서 불러왔습니다.'), opts.length ? choices(opts) : null);
+    feed.append(el2); feed.scrollTop = feed.scrollHeight;
+    return true;
   }
   function say(who, text, ...kids) { if (text) st.log.push({ who, text }); return bubble(who, text, ...kids); }
   // Buttons under an agent message. Pressing one retires the whole row, so an old question cannot be answered twice.
   function choices(list) {
     const row = h('div.agent-choices');
-    row.append(...list.filter(Boolean).map((c) => h(`button${c.primary ? '.primary' : ''}`, { title: c.title || '', onclick: () => { if (st.busy) return; if (!c.keep) row.remove(); c.run(); } }, c.label)));
+    row.append(...list.filter(Boolean).map((c) => h(`button${c.primary ? '.primary' : ''}`, { title: c.title || '', onclick: () => { if (st.busy) return; if (!c.keep) row.remove(); c.run(row); } }, c.label)));
     return row;
   }
   function intro() {
-    feed.replaceChildren();
-    bubble('agent', '만들고 싶은 이미지나 영상을 말해 주세요. 필요한 노드를 만들고 생성까지 진행합니다.',
-      h('p.hint', {}, '참고할 사진·영상이 있으면 이 창에 끌어다 놓거나 붙여넣으세요. 캔버스에 이미 있는 워크플로우(텍스트, 이미지·영상 결과, 올려 둔 자료)도 살펴보고 필요한 것을 가져다 씁니다. 특정 노드를 가리키려면 선택해 두고 말하세요. 인물·제품처럼 제가 지어낼 수 없는 것이 필요하면 먼저 되묻고, 생성이 끝날 때마다 마음에 드는지 확인합니다.'));
+    feed.replaceChildren(h('div.agent-msg.agent', {}, h('p', {}, '만들고 싶은 이미지나 영상을 말해 주세요. 필요한 노드를 만들고 생성까지 진행합니다.'),
+      h('p.hint', {}, '참고할 사진·영상이 있으면 이 창에 끌어다 놓거나 붙여넣으세요. 캔버스에 이미 있는 워크플로우(텍스트, 이미지·영상 결과, 올려 둔 자료)도 살펴보고 필요한 것을 가져다 쓰거나 고칩니다. 특정 노드를 가리키려면 선택해 두고 말하세요. 인물·제품처럼 제가 지어낼 수 없는 것이 필요하면 먼저 되묻고, 생성이 끝날 때마다 마음에 드는지 확인합니다.')));
   }
   let timer = null;
   function setBusy(text, stop) {
@@ -167,14 +210,15 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
   function reset(strip) {
     if (st.busy) return toast('진행 중인 작업이 끝난 뒤에 새 작업을 시작할 수 있습니다');
     if (strip) for (const n of mine()) delete n.data.agent;
-    if (strip) graph.scheduleSave();
-    st.log = []; st.files = []; st.stage = []; st.docId = graph.doc.id; st.keys = new Map(); st.seq = 0; st.edited = new Set(); st.force = new Set(); st.clipped = new Set();
-    intro(); drawFiles();
+    if (strip) { graph.scheduleSave(); talks.put(graph.doc.id, null); }
+    st.view = []; st.log = []; st.files = []; st.stage = []; st.docId = graph.doc.id; st.keys = new Map(); st.seq = 0; st.edited = new Set(); st.force = new Set(); st.clipped = new Set();
+    intro(); restore(); drawFiles();
   }
   function toggle(open = panel.hidden) {
     panel.hidden = !open; document.body.classList.toggle('agent-open', open);
     button.setAttribute('aria-pressed', String(open));
-    if (open) { document.getElementById('connPanel').hidden = true; if (!feed.children.length) reset(false); if (!bridge.online) refreshBridge(); drawFiles(); input.focus(); }
+    settings.agentOpen = open; saveSettings();
+    if (open) { document.getElementById('connPanel').hidden = true; if (!feed.children.length || st.docId !== graph.doc.id) reset(false); if (!bridge.online) refreshBridge(); drawFiles(); input.focus(); }
     canvas.queueEdges?.();
   }
   button.onclick = () => toggle();
@@ -401,6 +445,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     let failed;
     try { failed = await guarded(st.stage, true, '에이전트 생성'); } finally { setBusy(''); }
     if (failed !== null) for (const id of st.stage) st.force.delete(id);
+    save();
     if (failed === null) return say('agent', '생성을 취소했습니다. 노드는 캔버스에 그대로 있습니다.', choices([{ label: '생성 시작', primary: true, run: () => runStage() }]));
     showResults();
   }
@@ -414,7 +459,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     const pickRow = h('div.agent-pick');
     const drawPick = () => pickRow.replaceChildren(...(items.length > 1 ? [h('span', {}, '다음 단계에 쓸 것'), ...items.map((_, i) => h(`button.small${(+n.data.pick || 0) === i ? '.on' : ''}`, { onclick: () => { n.data.pick = i; canvas.paintPreview(n); canvas.refreshDependents(n); graph.emit('node:data', n); drawPick(); } }, `${i + 1}번`))] : []));
     drawPick();
-    return h('div.agent-result', {}, h('b', {}, `${name(n)}${n.result?.v ? ` · v${n.result.v}` : ''}`), h('div.agent-thumbs', {}, tiles), pickRow);
+    return h('div.agent-result', { 'data-node': n.id }, h('b', {}, `${name(n)}${n.result?.v ? ` · v${n.result.v}` : ''}`), h('div.agent-thumbs', {}, tiles), pickRow);
   }
   function showResults() {
     const nodes = st.stage.map((id) => graph.node(id)).filter(Boolean);
