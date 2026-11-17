@@ -13,6 +13,7 @@ import { h, toast, relayBox, lightbox } from './ui.js';
 const BUILDABLE = new Set(['image', 'video', 'frame', 'vupscale']);
 const MEDIA = ['image', 'video', 'audio'];
 const isRef = (key) => /^ref\d+$/.test(key);
+const isCanvas = (key) => /^c\d+$/.test(key); // a node of the existing workflow, as named to Claude
 
 const RULES = `You are the production agent of a node-canvas tool for AI image and video generation. A filmmaker tells you what they want; you decide the nodes, models, settings and prompts, and the tool builds and runs them. The filmmaker wants photorealistic, live-action looking results unless they say otherwise.
 
@@ -27,7 +28,7 @@ Answer with exactly one JSON object and nothing else (no markdown fence, no comm
 {"action":"build","message":"...","nodes":[...],"links":[...]}
   "message": 1 to 3 sentences telling the filmmaker what you set up (or changed) and why.
 
-"message" is always written in Korean, plain and short.
+"message" is always written in Korean, plain and short. Refer to nodes by their names ("캐릭터 시트", "샷 1"), never by keys such as c1, ref2 or shot1: the filmmaker does not see keys.
 
 Nodes
   {"key":"still","type":"image","label":"시작 이미지","model":"<image model id>","prompt":"...","aspect":"16:9","count":2,"params":{}}
@@ -39,9 +40,18 @@ Nodes
   - "prompt": the complete prompt, in English, written for that model: subject, action, setting, light, lens and framing, and for a video the camera move and what happens over time.
   - "count" is the number of variants (1 to 4). Use 2 unless the filmmaker says otherwise.
 
-Links: "fromKey>toKey.port". fromKey is a node key or a reference key (ref1, ref2, …). Ports of image and video nodes, only those listed for the chosen model: start (first frame), end (last frame), refs (reference images), vref (reference videos), aref (reference audio). frame and vupscale nodes have the one port "video".
+Links: "fromKey>toKey.port". fromKey is a node key, a reference key (ref1, ref2, …) or the key of an existing node (c1, c2, …). Ports of image and video nodes, only those listed for the chosen model: start (first frame), end (last frame), refs (reference images), vref (reference videos), aref (reference audio), and prompt (takes text nodes only). frame and vupscale nodes have the one port "video".
   - Images linked to "refs" of a node are numbered in the order of your links: the first is @Image 1, the second @Image 2 (likewise @Video N for vref and @Audio N for aref). In that node's prompt, point at each reference with its tag and say what it is used for ("the woman from @Image 1", "the room from @Image 2"). start and end have no tag.
   - Never write a tag that has no link behind it.
+
+The existing workflow
+  The nodes the filmmaker already has on the canvas are listed under "Existing workflow" with the keys c1, c2, …: what each is, its text or prompt, whether it has a result, and how they are connected. Read it before planning.
+  - Use what is there instead of making it again: an existing character sheet, approved still, extracted frame or uploaded picture can be a link source exactly like a reference (c3>shot1.refs, c5>shot1.start), and an existing video can go to vref or to a frame or vupscale node.
+  - An existing text node (a look, a character description, a shot description) can be linked to the "prompt" port of your image or video node. Connected texts are sent first, in link order, followed by the node's own "prompt"; so write in "prompt" only what the connected texts do not already say.
+  - Match what is there: when the filmmaker's existing shots share a model, aspect ratio, look text or character reference, a shot you add should use the same unless they ask otherwise.
+  - Existing nodes are read-only for you: never list a c-key under "nodes". To vary an existing node, make a new one. The only link you may make INTO an existing node is into a board's "shots" port (c9.shots), to add your shot to their board.
+  - An existing node marked "no result" has nothing to hand on yet; do not build on it unless the filmmaker asks, and say so in "message" if you do.
+  - Nodes marked "selected" are the ones the filmmaker is pointing at with this message.
 
 How to plan
   - Keep it minimal: the fewest nodes that do the job.
@@ -78,14 +88,18 @@ export function readPlan(raw) {
 }
 
 export function initAgent({ graph, engine, canvas, actions, guarded, panel, button }) {
-  const st = { log: [], files: [], busy: false, stage: [], abort: null, docId: null };
+  const st = { log: [], files: [], busy: false, stage: [], abort: null, docId: null, keys: new Map(), seq: 0 };
   const mine = () => graph.doc.nodes.filter((n) => n.data.agent);
   const built = () => mine().filter((n) => !isRef(n.data.agent));
   const refs = () => mine().filter((n) => isRef(n.data.agent)).sort((a, b) => +a.data.agent.slice(3) - +b.data.agent.slice(3));
-  const name = (n) => n.data.label || NODE_TYPES[n.type].title;
+  const name = (n) => n.data.label || (n.type === 'board' && n.data.title) || NODE_TYPES[n.type].title;
   const nextRef = () => { const used = new Set(mine().map((n) => n.data.agent)); let i = 1; while (used.has(`ref${i}`)) i++; return `ref${i}`; };
-  // Nodes selected on the canvas that hold a picture, video or sound: handed to the agent as reference material too.
-  const pickedRefs = () => canvas.selectedNodes().filter((n) => !n.data.agent && engine.outItems(n).some((i) => MEDIA.includes(i.type)));
+  // The rest of the canvas: the workflow that was there before, or was made by hand. Each node gets a key (c1, c2, …)
+  // that stays the same for the whole conversation, so Claude can point at it.
+  const others = () => graph.doc.nodes.filter((n) => !n.data.agent && !NODE_TYPES[n.type].note);
+  const canvasKey = (n) => { if (!st.keys.has(n.id)) st.keys.set(n.id, `c${++st.seq}`); return st.keys.get(n.id); };
+  const keyOf = (n) => n.data.agent || canvasKey(n);
+  const picked = () => canvas.selectedNodes().filter((n) => !n.data.agent && !NODE_TYPES[n.type].note);
 
   // ---- panel
   const feed = h('div.agent-feed', { 'aria-live': 'polite' });
@@ -115,7 +129,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
   function intro() {
     feed.replaceChildren();
     bubble('agent', '만들고 싶은 이미지나 영상을 말해 주세요. 필요한 노드를 만들고 생성까지 진행합니다.',
-      h('p.hint', {}, '참고할 사진·영상이 있으면 이 창에 끌어다 놓거나 붙여넣으세요. 캔버스에서 노드를 선택해 두면 그 결과도 참고 자료로 함께 넘어갑니다. 인물·제품처럼 제가 지어낼 수 없는 것이 필요하면 먼저 되묻고, 생성이 끝날 때마다 마음에 드는지 확인합니다.'));
+      h('p.hint', {}, '참고할 사진·영상이 있으면 이 창에 끌어다 놓거나 붙여넣으세요. 캔버스에 이미 있는 워크플로우(텍스트, 이미지·영상 결과, 올려 둔 자료)도 살펴보고 필요한 것을 가져다 씁니다. 특정 노드를 가리키려면 선택해 두고 말하세요. 인물·제품처럼 제가 지어낼 수 없는 것이 필요하면 먼저 되묻고, 생성이 끝날 때마다 마음에 드는지 확인합니다.'));
   }
   let timer = null;
   function setBusy(text, stop) {
@@ -129,9 +143,9 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
   }
   function drawFiles() {
     chips.replaceChildren(...st.files.map((f, i) => h('span.agent-chip', {}, f.name, h('button', { 'aria-label': `${f.name} 빼기`, onclick: () => { st.files.splice(i, 1); drawFiles(); } }, '×'))));
-    const sel = pickedRefs();
+    const sel = picked();
     selNote.hidden = !sel.length;
-    selNote.textContent = sel.length ? `캔버스에서 선택한 노드 ${sel.length}개(${sel.map(name).join(', ')})도 참고 자료로 보냅니다.` : '';
+    selNote.textContent = sel.length ? `선택한 노드 ${sel.length}개(${sel.map(name).join(', ')})를 "이것"으로 가리켜 보냅니다.` : '';
   }
   function addFiles(list) {
     const ok = [...(list || [])].filter((f) => MEDIA.some((k) => f.type.startsWith(`${k}/`)));
@@ -142,7 +156,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     if (st.busy) return toast('진행 중인 작업이 끝난 뒤에 새 작업을 시작할 수 있습니다');
     if (strip) for (const n of mine()) delete n.data.agent;
     if (strip) graph.scheduleSave();
-    st.log = []; st.files = []; st.stage = []; st.docId = graph.doc.id;
+    st.log = []; st.files = []; st.stage = []; st.docId = graph.doc.id; st.keys = new Map(); st.seq = 0;
     intro(); drawFiles();
   }
   function toggle(open = panel.hidden) {
@@ -206,11 +220,36 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       lines.push(`- ${n.data.agent}: ${item ? item.type : 'empty'}${item?.type === 'audio' ? '' : ' (attached for you to look at)'} — "${name(n)}"`);
       await look(item, `reference ${n.data.agent} (${name(n)})`, images);
     }
-    lines.push('', 'Current nodes:');
+    // The existing workflow. Pictures: the selected nodes first, then the others, while there is room.
+    const rest = others(), sel = new Set(picked().map((n) => n.id));
+    const cut = rest.length > 40 ? 220 : 700, clip = (t) => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > cut ? `${x.slice(0, cut)}…` : x; };
+    const seen = new Set();
+    // Leave room for the latest results, which matter most when the filmmaker is reacting to them.
+    const room = Math.min(6, 8 - Math.min(4, st.stage.filter((id) => graph.node(id)?.result).length));
+    for (const n of [...rest.filter((x) => sel.has(x.id)), ...rest.filter((x) => !sel.has(x.id))]) {
+      const item = engine.outItems(n)[0];
+      if (!item || !MEDIA.includes(item.type) || item.type === 'audio' || images.length >= room) continue;
+      const before = images.length;
+      await look(item, `existing node ${canvasKey(n)} (${name(n)})`, images);
+      if (images.length > before) seen.add(n.id);
+    }
+    lines.push('', 'Existing workflow (read-only for you):');
+    if (!rest.length) lines.push('(the canvas has nothing else on it)');
+    for (const n of rest) {
+      const def = NODE_TYPES[n.type], item = engine.outItems(n)[0];
+      const ins = graph.ports(n, 'in').flatMap((p) => engine.sourceNodes(n, p.key).map((x) => `${keyOf(x)}>${p.key}`));
+      const gives = n.type === 'board' ? 'collects shots (port: shots)' : item ? `gives ${item.type}${seen.has(n.id) ? ' (picture attached)' : MEDIA.includes(item.type) && item.type !== 'audio' ? ' (not attached)' : ''}` : def.spends ? 'no result' : 'empty';
+      const gen = n.type === 'image' || n.type === 'video';
+      const about = [gen ? `model ${n.data.model}, aspect ${n.data.aspect}${n.type === 'video' ? `, ${n.data.duration}s` : ''}${n.data.params?.resolution ? `, ${n.data.params.resolution}` : ''}` : '', n.type === 'media' ? `${n.data.kind} file "${n.data.name || n.data.url || ''}"` : '', n.type === 'vupscale' ? `${n.data.method} ${n.data.resolution}` : ''].filter(Boolean).join('');
+      lines.push(`- ${canvasKey(n)} | ${n.type} | "${name(n)}"${sel.has(n.id) ? ' | selected' : ''}${about ? ` | ${about}` : ''} | ${gives}${n.result?.v ? ` v${n.result.v}` : ''} | links in: ${ins.join(', ') || 'none'}`);
+      const text = item?.type === 'text' ? item.text : gen ? n.data.prompt : '';
+      if (text) lines.push(`  ${item?.type === 'text' ? 'text' : 'own prompt'}: ${clip(text)}`);
+    }
+    lines.push('', 'Current nodes (the ones you made in this conversation):');
     const nodes = built();
     if (!nodes.length) lines.push('(none yet)');
     for (const n of nodes) {
-      const ins = graph.ports(n, 'in').flatMap((p) => engine.sourceNodes(n, p.key).map((s) => `${s.data.agent || `(${name(s)})`}>${p.key}`));
+      const ins = graph.ports(n, 'in').flatMap((p) => engine.sourceNodes(n, p.key).map((x) => `${keyOf(x)}>${p.key}`));
       const set = n.type === 'image' || n.type === 'video' ? { model: n.data.model, aspect: n.data.aspect, ...(n.type === 'video' ? { duration: +n.data.duration } : {}), count: +n.data.count, params: n.data.params } : n.type === 'frame' ? { at: n.data.at } : { method: n.data.method, resolution: n.data.resolution };
       const state = n.status === 'error' ? `failed: ${n.message}` : n.result ? `generated v${n.result.v || 1}${engine.isStale(n) ? ' (settings changed since)' : ''}` : 'not generated yet';
       lines.push(`- ${n.data.agent} | ${n.type} | "${name(n)}" | ${JSON.stringify(set)} | links in: ${ins.join(', ') || 'none'} | ${state}${n.data.prompt ? `\n  prompt: ${n.data.prompt}` : ''}`);
@@ -259,10 +298,12 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
   function apply(plan) {
     const problems = [], made = [];
     const byKey = new Map(mine().map((n) => [n.data.agent, n]));
+    for (const n of others()) if (st.keys.has(n.id)) byKey.set(st.keys.get(n.id), n);
     graph.checkpoint();
     const all = canvas.bounds(graph.doc.nodes), at = all ? { x: all.x0, y: all.y1 + 140 } : canvas.center();
     for (const spec of Array.isArray(plan.nodes) ? plan.nodes : []) {
       const key = String(spec?.key || '').trim();
+      if (isCanvas(key)) { problems.push(`${key}: 기존 노드는 바꾸지 않았습니다`); continue; }
       if (!/^\w+$/.test(key) || isRef(key)) { problems.push(`이름(${key || '없음'})을 쓸 수 없는 노드는 건너뛰었습니다`); continue; }
       const have = byKey.get(key), type = have?.type || spec.type;
       if (!BUILDABLE.has(type)) { problems.push(`${key}: 만들 수 없는 노드 종류(${spec.type})라 건너뛰었습니다`); continue; }
@@ -279,6 +320,8 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
       const m = /^\s*(\w+)(?:\.\w+)?\s*>\s*(\w+)\.(\w+)\s*$/.exec(String(link));
       const from = m && byKey.get(m[1]), to = m && byKey.get(m[2]);
       if (!from || !to) { problems.push(`연결 ${link}: 없는 노드를 가리켜 건너뛰었습니다`); continue; }
+      // Into the existing workflow only where it adds and never replaces: a board's list of shots.
+      if (!to.data.agent && !(to.type === 'board' && m[3] === 'shots')) { problems.push(`연결 ${link}: 기존 노드의 입력은 바꾸지 않았습니다`); continue; }
       const r = graph.connect({ node: from.id, port: 'out' }, { node: to.id, port: m[3] });
       if (r.error && !/이미 연결/.test(r.error)) { problems.push(`연결 ${link}: ${r.error}`); continue; }
       // References are numbered (@Image 1, 2, …) in the order of the plan's links, wherever the nodes end up on the canvas.
@@ -393,17 +436,16 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     if (st.busy || (!text && !st.files.length)) return;
     input.value = '';
     st.docId = graph.doc.id;
-    // Attached files and selected canvas nodes become reference material (ref1, ref2, …).
-    const files = st.files, picked = pickedRefs(), added = [];
+    // Attached files become reference material (ref1, ref2, …), placed on the canvas as media nodes.
+    const files = st.files, added = [];
     st.files = [];
-    if (files.length || picked.length) graph.checkpoint();
+    if (files.length) graph.checkpoint();
     const all = canvas.bounds(graph.doc.nodes), at = all ? { x: all.x0, y: all.y1 + 140 } : canvas.center();
     for (const [i, f] of files.entries()) {
       const node = graph.addNode('media', at.x + i * 300, at.y, { kind: MEDIA.find((k) => f.type.startsWith(`${k}/`)), file: await saveBlob(f), name: f.name, label: f.name.replace(/\.[^.]+$/, '').slice(0, 40), agent: nextRef() });
       await canvas.recompute(node); canvas.renderNode(node);
       added.push(node);
     }
-    for (const n of picked) { n.data.agent = nextRef(); added.push(n); }
     if (added.length) { canvas.afterChange(); graph.scheduleSave(); }
     drawFiles();
     const note = added.length ? `참고 자료 ${added.map((n) => `${n.data.agent} "${name(n)}"`).join(', ')}` : '';
