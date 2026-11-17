@@ -395,3 +395,4 @@ html, body { overscroll-behavior: none; }
 .agent-input .grow { flex: 1; }
 .row.llm > span { width: 84px; flex: none; color: var(--muted); font-size: 12px; }
 .row.llm > select { flex: 1; min-width: 0; }
+.agent-msg.resumed { align-self: stretch; max-width: none; background: transparent; border-style: dashed; }

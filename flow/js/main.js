@@ -767,6 +767,7 @@ addEventListener('wheel', (e) => {
   await switchTo(doc, !doc.updatedAt);
   if (settings.mode === 'bridge') { await refreshBridge(); repaintTools(); library.sync(); canvas.queueCost(); if (serverReady(settings.server)) await loadSpaces(); }
   paintConn();
+  if (settings.agentOpen) agent.toggle(true); // the agent panel was open when the page was left
   window.flow = { graph, engine, canvas, settings, currentProvider, library, agent };
 })();
 // Save at once when the page is being closed or hidden, not only after the short delay.
