@@ -81,6 +81,7 @@ How to plan
   - A video that needs a particular look, person or composition: make the still first (an image node) and link it to the video's start port; the video prompt then describes only the motion, the camera and what changes. A plain idea with no such need can be a single video node.
   - Use attached reference material the way the filmmaker says: a person goes to refs with identity wording, a style to refs with style wording, a first frame to start.
   - Video models that list the parameter "draft": make the first pass a draft with "params":{"draft":true,"resolution":"480p"}. The filmmaker renders the approved draft at 1080p afterwards.
+  - Videos are made at 480p unless the filmmaker asked for more in this conversation: set "resolution":"480p" on every video model that lists it. Anything above 480p costs several times as much, and the tool stops and asks the filmmaker for permission before running it, so do not raise the resolution on your own.
   - Several shots: one video node per shot. To continue a shot, put a frame node ("at":"last") after it and link the frame to the next shot's start.
   - The tool runs the nodes in stages (stills first, then the videos that depend on them) and asks the filmmaker after each stage, so you do not have to think about order.
 
@@ -111,7 +112,7 @@ export function readPlan(raw) {
 }
 
 export function initAgent({ graph, engine, canvas, actions, guarded, panel, button }) {
-  const st = { log: [], files: [], busy: false, stage: [], abort: null, docId: null, view: [], keys: new Map(), seq: 0, edited: new Set(), force: new Set(), clipped: new Set() };
+  const st = { log: [], files: [], busy: false, stage: [], abort: null, docId: null, view: [], keys: new Map(), seq: 0, edited: new Set(), force: new Set(), clipped: new Set(), okRes: new Map() };
   const mine = () => graph.doc.nodes.filter((n) => n.data.agent);
   const built = () => mine().filter((n) => !isRef(n.data.agent));
   const refs = () => mine().filter((n) => isRef(n.data.agent)).sort((a, b) => +a.data.agent.slice(3) - +b.data.agent.slice(3));
@@ -214,7 +215,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     if (st.busy) return toast('진행 중인 작업이 끝난 뒤에 새 작업을 시작할 수 있습니다');
     if (strip) for (const n of mine()) delete n.data.agent;
     if (strip) { graph.scheduleSave(); talks.put(graph.doc.id, null); }
-    st.view = []; st.log = []; st.files = []; st.stage = []; st.docId = graph.doc.id; st.keys = new Map(); st.seq = 0; st.edited = new Set(); st.force = new Set(); st.clipped = new Set();
+    st.view = []; st.log = []; st.files = []; st.stage = []; st.docId = graph.doc.id; st.keys = new Map(); st.seq = 0; st.edited = new Set(); st.force = new Set(); st.clipped = new Set(); st.okRes = new Map();
     intro(); restore(); drawFiles();
   }
   function toggle(open = panel.hidden) {
@@ -438,9 +439,44 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     const known = costs.filter((c) => c != null);
     return known.length ? ` 예상 크레딧 ${known.reduce((a, b) => a + b, 0)}${known.length < nodes.length ? ' (일부는 미리 알 수 없음)' : ''}.` : '';
   }
+  // The resolution a node would render a video at, when that is above 480p (or cannot be told): { label, lower }.
+  // `lower` says the node could be run at 480p instead. Stills and 480p videos give null.
+  const pixels = (r) => { const t = String(r).toLowerCase(); return t === '4k' ? 2160 : t === '2k' ? 1440 : parseInt(t, 10) || 0; };
+  function highRes(n) {
+    if (n.type === 'vupscale') return { label: n.data.resolution || '1080p', lower: false };
+    if (n.type !== 'video') return null;
+    let req; try { req = buildRequest(n, engine.inputsOf(n)); } catch { return null; } // it will fail when run and say why
+    const p = getModel(req.model)?.parameters?.find((x) => x.name === 'resolution'), res = req.params.resolution;
+    if (res != null && pixels(res) && pixels(res) <= 512) return null;
+    return { label: res != null ? String(res) : '모델 기본 해상도', lower: !!p?.options?.includes('480p') };
+  }
+  // Videos above 480p are only run with the filmmaker's say-so: asked once per node and resolution.
+  async function permit(stage) {
+    const high = stage.map((n) => ({ n, ...highRes(n) })).filter((x) => x.label && st.okRes.get(x.n.id) !== x.label);
+    if (!high.length) return true;
+    setBusy('예상 크레딧 확인 중…');
+    const cost = await stageCost(stage);
+    setBusy('');
+    const allow = () => { for (const x of high) st.okRes.set(x.n.id, x.label); };
+    const lowerable = high.filter((x) => x.lower);
+    say('agent', `480p보다 높은 화질로 영상을 만들려고 합니다: ${high.map((x) => `${name(x.n)} (${x.label})`).join(', ')}.${cost} 이대로 생성할까요?`,
+      choices([
+        { label: '허락 — 이 화질로 생성', primary: true, run: () => { st.log.push({ who: 'me', text: '(높은 화질로 생성하도록 허락함)' }); allow(); runStage(); } },
+        lowerable.length ? { label: lowerable.length < high.length ? `${lowerable.map((x) => name(x.n)).join(', ')}만 480p로 낮추고, ${high.filter((x) => !x.lower).map((x) => `${name(x.n)}(480p 없음)`).join(', ')}은 그대로 생성` : '480p로 낮춰서 생성', run: () => {
+          st.log.push({ who: 'me', text: '(480p로 낮춰서 생성하라고 함)' });
+          graph.checkpoint();
+          for (const x of lowerable) { (x.n.data.params ||= {}).resolution = '480p'; canvas.renderNode(x.n); graph.emit('node:data', x.n); }
+          for (const x of high) if (!x.lower) st.okRes.set(x.n.id, x.label);
+          runStage();
+        } } : null,
+        { label: '생성하지 않기', run: () => { st.log.push({ who: 'me', text: '(높은 화질 생성을 허락하지 않음)' }); say('agent', '생성하지 않았습니다. 노드는 캔버스에 그대로 있습니다. 화질이나 내용을 바꾸려면 말씀해 주세요.'); } },
+      ]));
+    return false;
+  }
   async function runStage() {
     const stage = nextStage();
     if (!stage.length) return finish();
+    if (!(await permit(stage))) return;
     st.stage = stage.map((n) => n.id);
     setBusy('예상 크레딧 확인 중…');
     const cost = await stageCost(stage);
@@ -497,6 +533,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     const node = graph.addNode('vupscale', src.x + src.w + 90, src.y, { label: `${name(src)} 1080p`, method: 'wan', resolution: '1080p', agent: `up${i}` });
     graph.connect({ node: src.id, port: 'out' }, { node: node.id, port: 'video' });
     canvas.afterChange(); canvas.reveal([src, node]);
+    st.okRes.set(node.id, '1080p'); // asked for by pressing the button
     runStage();
   }
 
