@@ -309,6 +309,7 @@ export class Canvas {
     if (f.kind === 'info') return f.label ? h('div.field.wide', {}, h('span', {}, f.label), h('p.info.boxed', {}, f.text)) : h('p.info', {}, f.text);
     if (f.kind === 'tags') return h('div.tags', { hidden: true });
     if (f.kind === 'crop') return this.cropField(node);
+    if (f.kind === 'trim') return this.trimField(node);
     if (f.kind === 'action') return h('button.action', { title: f.hint || '', onclick: () => this.actions[f.action](node) }, f.label);
     if (f.kind === 'model') return this.modelField(node, f);
     let v = getPath(node.data, f.key);
@@ -426,6 +427,80 @@ export class Canvas {
     const big = large ? null : h('button.small', { onclick: async () => { await modal('크롭', this.cropField(node, true), [{ label: '완료', primary: true }], 'wide'); this.paintFields(node); } }, '크게 편집');
     draw();
     return h('div.field.wide.crop', {}, h('span', {}, '자를 부분 — 안쪽을 끌면 이동, 모서리를 끌면 크기, 바깥을 끌면 새로 그리기'), box, h('div.crop-foot', {}, size, h('span', {}, big, whole)));
+  }
+  // The range editor of a trim node: the video, and under it a time bar with the kept part between two handles.
+  // Drag a handle to move the start or the end (the picture follows), drag the kept part to slide it, press or drag
+  // elsewhere on the bar to look around. Times can also be typed, or taken from where the playhead is.
+  trimField(node, large) {
+    const src = this.engine.inputsOf(node).video?.[0];
+    if (!src) {
+      const from = this.graph.edgesInto(node.id, 'video').map((e) => this.graph.node(e.from.node))[0];
+      const name = from && (from.data.label || NODE_TYPES[from.type].title);
+      return h('p.info', {}, !from ? '왼쪽 "영상" 포트에 영상을 연결하면 여기에 영상과 구간을 고르는 막대가 나타납니다.' : from.status === 'error' ? `연결된 "${name}"에서 영상을 받지 못했습니다: ${from.message}` : `연결된 "${name}"에 아직 영상이 없습니다. 그 노드를 먼저 실행하거나 파일을 넣어 주세요.`);
+    }
+    if (src.still) return h('p.info', {}, '데모 영상은 정지 그림이라 자를 구간이 없습니다. 실제 영상을 연결하면 구간을 고를 수 있습니다.');
+    const video = h('video', { src: displayUrl(src.url), playsInline: true, preload: 'auto', muted: !large });
+    const sel = h('div.trim-sel', {}, h('i.trim-h.l', { dataset: { h: 'l' }, title: '시작' }), h('i.trim-h.r', { dataset: { h: 'r' }, title: '끝' }));
+    const head = h('i.trim-head'), bar = h('div.trim-bar', { title: '손잡이를 끌어 시작·끝을 정하고, 가운데를 끌어 구간을 옮깁니다' }, sel, head);
+    const inS = h('input', { type: 'number', min: 0, step: 0.1, 'aria-label': '시작(초)' }), inE = h('input', { type: 'number', min: 0, step: 0.1, 'aria-label': '끝(초)' });
+    const len = h('small.trim-len'), playBtn = h('button.small', {}, '▶ 구간 재생');
+    let dur = 0, playing = false;
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    const range = () => { const s = clamp(+node.data.start || 0, 0, dur); return { s, e: Math.max(s, +node.data.end > 0 ? Math.min(+node.data.end, dur) : dur) }; };
+    const seek = (t) => { if (dur) video.currentTime = clamp(t, 0, dur); };
+    const draw = () => {
+      if (!dur) return;
+      const { s, e } = range(), l = e - s, off = l < 2 || l > 30;
+      sel.style.left = `${(s / dur) * 100}%`; sel.style.width = `${(l / dur) * 100}%`;
+      if (document.activeElement !== inS) inS.value = s.toFixed(1);
+      if (document.activeElement !== inE) inE.value = e.toFixed(1);
+      len.textContent = `${l.toFixed(1)}초 (원본 ${dur.toFixed(1)}초)${off ? ' · 레퍼런스 영상은 2~30초' : ''}`;
+      len.classList.toggle('warn', off);
+    };
+    const commit = () => { this.cropping = false; this.graph.emit('node:data', node); this.recompute(node).then(() => this.refreshDependents(node)); };
+    // The end is kept as 0 while it sits at the end of the clip, so it still means "to the end" when the clip is replaced.
+    const set = (s, e, done) => {
+      s = clamp(s, 0, Math.max(0, dur - 0.1)); e = clamp(e, s + 0.1, dur);
+      node.data.start = +s.toFixed(2); node.data.end = e >= dur - 0.02 ? 0 : +e.toFixed(2);
+      draw();
+      if (done) commit();
+    };
+    const stop = () => { playing = false; video.pause(); playBtn.textContent = '▶ 구간 재생'; };
+    video.addEventListener('loadedmetadata', () => { dur = Number.isFinite(video.duration) ? video.duration : 0; draw(); seek(range().s); });
+    video.addEventListener('timeupdate', () => { if (dur) head.style.left = `${(video.currentTime / dur) * 100}%`; if (playing && video.currentTime >= range().e) stop(); });
+    video.addEventListener('ended', stop);
+    playBtn.onclick = () => { if (playing) return stop(); seek(range().s); playing = true; playBtn.textContent = '■ 정지'; video.play().catch(stop); };
+    bar.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !dur) return;
+      e.stopPropagation(); e.preventDefault(); stop();
+      const b = bar.getBoundingClientRect(), at = (ev) => clamp((ev.clientX - b.left) / b.width, 0, 1) * dur;
+      const hnd = e.target.dataset?.h, inside = !hnd && e.target === sel, { s: s0, e: e0 } = range(), t0 = at(e);
+      const edits = !!hnd || inside;
+      let moved = false;
+      if (edits) { this.cropping = true; this.graph.checkpoint(); }
+      this.drag(e, (ev) => {
+        if (!moved && Math.abs(ev.clientX - e.clientX) < 3) return;
+        moved = true;
+        const t = at(ev);
+        if (hnd === 'l') { set(Math.min(t, e0 - 0.1), e0); seek(range().s); }
+        else if (hnd === 'r') { set(s0, Math.max(t, s0 + 0.1)); seek(range().e); }
+        else if (inside) { const d = clamp(t - t0, -s0, dur - e0); set(s0 + d, e0 + d); seek(range().s); }
+        else seek(t);
+      }, () => {
+        if (!edits) { if (!moved) seek(t0); return; }
+        if (moved) commit(); else { this.cropping = false; this.graph.undoStack.pop(); seek(t0); }
+      });
+    });
+    const typed = (which) => () => { if (!dur) return; const { s, e } = range(); this.graph.checkpoint(); if (which === 's') set(+inS.value || 0, Math.max(e, (+inS.value || 0) + 0.1), true); else set(s, +inE.value > 0 ? +inE.value : dur, true); };
+    inS.onchange = typed('s'); inE.onchange = typed('e');
+    for (const el of [inS, inE]) el.addEventListener('keydown', (e) => e.stopPropagation());
+    const here = (which) => h('button.small', { title: which === 's' ? '지금 보이는 위치를 시작으로' : '지금 보이는 위치를 끝으로', onclick: () => { if (!dur) return; stop(); const { s, e } = range(), t = video.currentTime; this.graph.checkpoint(); if (which === 's') set(t, Math.max(e, t + 0.1), true); else set(Math.min(s, t - 0.1), t, true); } }, which === 's' ? '여기를 시작으로' : '여기를 끝으로');
+    const whole = h('button.small', { onclick: () => { if (!dur) return; this.graph.checkpoint(); set(0, dur, true); } }, '전체로');
+    const big = large ? null : h('button.small', { onclick: async () => { stop(); await modal('영상 자르기', this.trimField(node, true), [{ label: '완료', primary: true }], 'wide'); this.paintFields(node); } }, '크게 편집');
+    return h('div.field.wide.trim', {}, h('span', {}, '남길 구간 — 손잡이를 끌어 시작·끝, 가운데를 끌어 이동, 막대의 다른 곳을 눌러 살펴보기'),
+      h('div.trim-view', {}, video), bar,
+      h('div.trim-row', {}, playBtn, h('label', {}, '시작', inS), h('label', {}, '끝', inE), len),
+      h('div.trim-row', {}, here('s'), here('e'), h('span.grow'), big, whole));
   }
   // Model chooser: a button that opens a list with a tab per company and the recently used models first.
   modelField(node, f) {

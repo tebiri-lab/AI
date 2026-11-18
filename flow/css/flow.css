@@ -396,3 +396,23 @@ html, body { overscroll-behavior: none; }
 .row.llm > span { width: 84px; flex: none; color: var(--muted); font-size: 12px; }
 .row.llm > select { flex: 1; min-width: 0; }
 .agent-msg.resumed { align-self: stretch; max-width: none; background: transparent; border-style: dashed; }
+
+/* ---- trim editor */
+.field.trim > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.trim-view { background: #000; border-radius: 6px; overflow: hidden; line-height: 0; }
+.trim-view video { display: block; width: 100%; max-height: 260px; object-fit: contain; }
+.trim-bar { position: relative; height: 30px; margin: 8px 6px 6px; border-radius: 4px; background: #1a1e24; border: 1px solid var(--line-2); cursor: pointer; touch-action: none; user-select: none; }
+.trim-sel { position: absolute; top: -1px; bottom: -1px; min-width: 2px; background: rgba(255,90,78,.22); border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); cursor: grab; box-sizing: border-box; }
+.trim-h { position: absolute; top: -3px; bottom: -3px; width: 12px; background: var(--accent); border-radius: 3px; cursor: ew-resize; }
+.trim-h::after { content: ''; position: absolute; left: 5px; top: 30%; bottom: 30%; width: 2px; background: rgba(255,255,255,.85); border-radius: 1px; }
+.trim-h.l { left: -6px; } .trim-h.r { right: -6px; }
+.trim-head { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: #fff; pointer-events: none; box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
+.trim-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.trim-row label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.trim-row input[type=number] { width: 62px; }
+.trim-row .grow { flex: 1; }
+.trim-row .small { margin: 0; }
+.trim-len { color: var(--muted); font-size: 11px; }
+.trim-len.warn { color: var(--accent-2); }
+.modal .trim-view video { max-height: 62vh; }
+.modal .trim-bar { height: 40px; }

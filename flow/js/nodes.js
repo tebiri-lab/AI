@@ -381,15 +381,11 @@ export const NODE_TYPES = {
     },
   },
   trim: {
-    title: '영상 자르기', category: 'edit', hint: '영상에서 필요한 구간만 남기기 (레퍼런스 영상은 2~30초만 받습니다)', instant: true, cache: true, slow: true, width: 300,
+    title: '영상 자르기', category: 'edit', hint: '영상에서 필요한 구간만 남기기 (레퍼런스 영상은 2~30초만 받습니다)', instant: true, cache: true, slow: true, liveFields: true, width: 340,
     defaults: { start: 0, end: 0 },
     inputs: [{ key: 'video', label: '영상', type: 'video' }],
     outputs: [{ key: 'out', label: '영상', type: 'video' }],
-    fields: () => [
-      { key: 'start', label: '시작(초)', kind: 'number', min: 0, step: 0.1 },
-      { key: 'end', label: '끝(초) · 0은 끝까지', kind: 'number', min: 0, step: 0.1 },
-      { kind: 'info', text: '칸에서 나오면 잘라냅니다. 레퍼런스 영상으로 쓰려면 잘라낸 길이가 2~30초여야 합니다.' },
-    ],
+    fields: () => [{ kind: 'trim' }],
     preview: 'media',
     run: async ({ node, inputs }) => {
       const item = inputs.video?.[0];
