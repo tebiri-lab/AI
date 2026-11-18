@@ -66,6 +66,64 @@ export function imageSize(url) {
   });
 }
 
+// The bytes of a media file: a stored one, or a remote one (through the bridge when its server does not allow reading from a page).
+async function mediaBlob(url) {
+  let blob = getBlob(url);
+  const src = displayUrl(url);
+  if (!blob && src) { try { const r = await fetch(src); if (r.ok) blob = await r.blob(); } catch { blob = null; } }
+  if (!blob && /^https:/.test(src) && bridge.online) { try { const r = await fetch(`${bridge.base}/api/proxy?url=${encodeURIComponent(src)}`); if (r.ok) blob = await r.blob(); } catch { blob = null; } }
+  if (!blob) throw new Error('영상 파일을 읽을 수 없습니다. 브리지를 켜면 브리지를 거쳐 읽습니다.');
+  return blob;
+}
+// The part of a video between `start` and `end` (seconds), as a stored file. With the bridge and ffmpeg on this
+// computer the cut is exact and comes back as MP4; otherwise the browser plays that part once and records it
+// (takes as long as the part itself; MP4 where the browser can record it, else WebM).
+let noFfmpeg = '';
+export async function trimVideo(url, start, end) {
+  const blob = await mediaBlob(url);
+  if (bridge.online && noFfmpeg !== bridge.base) {
+    const res = await fetch(`${bridge.base}/api/trim?start=${start}&length=${end - start}`, { method: 'POST', headers: { 'content-type': blob.type || 'application/octet-stream' }, body: blob });
+    if (res.ok) return { url: await saveBlob(await res.blob()), ext: 'mp4', by: 'ffmpeg' };
+    if (res.status !== 501) throw new Error((await res.json().catch(() => ({}))).error || '영상을 자르지 못했습니다');
+    noFfmpeg = bridge.base; // no ffmpeg on that computer: do not send it the file again this visit
+  }
+  const out = await recordPart(blob, start, end);
+  return { url: await saveBlob(out), ext: /mp4/.test(out.type) ? 'mp4' : 'webm', by: 'browser' };
+}
+function recordPart(blob, start, end) {
+  const mime = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find((m) => window.MediaRecorder?.isTypeSupported(m));
+  if (!mime) throw new Error('이 브라우저는 영상을 자를 수 없습니다. 브리지를 켜고 ffmpeg를 설치하면 자를 수 있습니다.');
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video'), src = URL.createObjectURL(blob);
+    video.muted = true; video.playsInline = true; video.preload = 'auto';
+    let rec = null, done = false;
+    const finish = (err) => {
+      if (done) return; done = true;
+      video.pause(); video.removeAttribute('src'); video.load(); URL.revokeObjectURL(src);
+      if (err) reject(err);
+    };
+    const timer = setTimeout(() => finish(new Error('영상을 자르는 데 너무 오래 걸립니다')), (end - start) * 1000 * 3 + 30000);
+    video.onerror = () => { clearTimeout(timer); finish(new Error('영상을 불러올 수 없습니다')); };
+    video.onloadedmetadata = () => { video.currentTime = start; };
+    video.onseeked = async () => {
+      if (rec) return;
+      try {
+        const stream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
+        const chunks = [];
+        rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16e6 });
+        rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+        rec.onstop = () => { clearTimeout(timer); const out = new Blob(chunks, { type: mime.split(';')[0] }); finish(); if (out.size) resolve(out); else reject(new Error('잘라낸 영상이 비어 있습니다')); };
+        const stop = () => { if (rec.state !== 'inactive') rec.stop(); };
+        video.ontimeupdate = () => { if (video.currentTime >= end) stop(); };
+        video.onended = stop;
+        rec.start();
+        await video.play();
+      } catch (e) { clearTimeout(timer); finish(new Error(`영상을 자르지 못했습니다: ${e.message}`)); }
+    };
+    video.src = src;
+  });
+}
+
 // Size and length of a video, from its header (no pixels are read, so any server will do).
 export function videoMeta(url) {
   return new Promise((resolve, reject) => {
