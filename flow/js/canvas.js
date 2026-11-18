@@ -154,7 +154,7 @@ export class Canvas {
     try {
       const sig = this.engine.signature(n);
       const res = await def.run({ node: n, inputs: this.engine.inputsOf(n) });
-      n.result = { items: res.items, at: Date.now() }; n.sig = sig; n.status = 'done'; n.message = '';
+      n.result = { items: res.items, at: Date.now() }; n.sig = sig; n.status = 'done'; n.message = res.note || '';
     } catch (e) {
       ok = false;
       if (def.cache) { n.status = 'error'; n.message = e?.message || String(e); }

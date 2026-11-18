@@ -29,6 +29,26 @@ const WORKFLOW_DIR = path.join(STATE_DIR, 'workflows');
 const workflowFile = (id) => (/^[\w-]{1,80}$/.test(id) ? path.join(WORKFLOW_DIR, `${id}.json`) : null);
 // Text writing uses the Claude Code command on this computer (the person's own subscription), when it is installed.
 const LLM_CMD = process.env.FLOW_LLM_CMD || 'claude';
+const FFMPEG_CMD = process.env.FLOW_FFMPEG || 'ffmpeg';
+// Cut [start, start + length) seconds out of a video file and return it as an MP4. Re-encoded, so the cut is exact
+// to the frame (a stream copy could only cut at keyframes).
+async function trimWithFfmpeg(bytes, start, length) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'flow-trim-'));
+  const src = path.join(dir, 'in'), out = path.join(dir, 'out.mp4');
+  try {
+    await fs.writeFile(src, bytes);
+    const args = ['-y', '-v', 'error', '-ss', String(start), '-i', src, '-t', String(length), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out];
+    await new Promise((resolve, reject) => {
+      const child = spawn(FFMPEG_CMD, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      const timer = setTimeout(() => { child.kill(); reject(httpError(504, '영상 자르기가 너무 오래 걸려 멈췄습니다')); }, 300000);
+      child.on('error', (e) => { clearTimeout(timer); reject(e.code === 'ENOENT' ? httpError(501, '이 컴퓨터에서 ffmpeg를 찾지 못했습니다') : httpError(500, e.message)); });
+      child.stderr.on('data', (d) => { err += d; });
+      child.on('close', (code) => { clearTimeout(timer); if (code === 0) resolve(); else reject(httpError(502, err.trim().slice(-300) || `ffmpeg가 실패했습니다 (${code})`)); });
+    });
+    return await fs.readFile(out);
+  } finally { fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
 // `images` are pictures Claude should look at: they are written into a throw-away folder that the command runs in,
 // and Claude is allowed the Read tool for it.
 async function writeWithClaude(prompt, images = [], model = '') {
@@ -304,6 +324,14 @@ async function handle(req, res) {
         const done = await callTool(server, 'media_confirm', { media_id: up.media_id, type: kind });
         if (done.isError) throw httpError(502, toolJson(done).error || toolJson(done).text || '업로드 확인에 실패했습니다');
         return json(200, { mediaId: up.media_id });
+      }
+      // Cut a piece out of a video with this computer's ffmpeg. 501 when there is none: the page then cuts it itself.
+      if (p === '/api/trim' && req.method === 'POST') {
+        const start = Math.max(0, +url.searchParams.get('start') || 0), length = +url.searchParams.get('length');
+        if (!(length > 0)) throw httpError(400, '자를 길이가 올바르지 않습니다');
+        const out = await trimWithFfmpeg(await readBody(req, 600e6), start, length);
+        res.writeHead(200, { ...cors, 'content-type': 'video/mp4', 'content-length': out.length });
+        return res.end(out);
       }
       // Media through the bridge, so the page can read pixels of a result video (frame extraction).
       if (p === '/api/proxy' && req.method === 'GET') {

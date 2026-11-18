@@ -2,7 +2,7 @@
 // A result is { items: [{ type, url?, text?, jobId?, mediaId?, name? }], at }. Downstream nodes receive the picked item.
 import { listModels, getModel, modelRoles, modelDurations, modelParams, touchModel } from './models.js';
 import { bridge } from './providers.js';
-import { grabFrame, cropImage, videoMeta } from './media.js';
+import { grabFrame, cropImage, videoMeta, trimVideo } from './media.js';
 
 const PROMPT_IN = { key: 'prompt', label: '프롬프트', type: 'text', multi: true };
 
@@ -378,6 +378,33 @@ export const NODE_TYPES = {
       if (r.x <= 0 && r.y <= 0 && r.w >= 1 && r.h >= 1) return { items: [item] };
       const out = await cropImage(item.url, r);
       return { items: [{ type: 'image', url: out.url, name: 'crop.png', local: true }] };
+    },
+  },
+  trim: {
+    title: '영상 자르기', category: 'edit', hint: '영상에서 필요한 구간만 남기기 (레퍼런스 영상은 2~30초만 받습니다)', instant: true, cache: true, slow: true, width: 300,
+    defaults: { start: 0, end: 0 },
+    inputs: [{ key: 'video', label: '영상', type: 'video' }],
+    outputs: [{ key: 'out', label: '영상', type: 'video' }],
+    fields: () => [
+      { key: 'start', label: '시작(초)', kind: 'number', min: 0, step: 0.1 },
+      { key: 'end', label: '끝(초) · 0은 끝까지', kind: 'number', min: 0, step: 0.1 },
+      { kind: 'info', text: '칸에서 나오면 잘라냅니다. 레퍼런스 영상으로 쓰려면 잘라낸 길이가 2~30초여야 합니다.' },
+    ],
+    preview: 'media',
+    run: async ({ node, inputs }) => {
+      const item = inputs.video?.[0];
+      if (!item) return { items: [] };
+      if (item.still) return { items: [item], note: '데모 영상(정지 그림)이라 자르지 않고 그대로 넘깁니다' };
+      const { duration } = await videoMeta(item.url);
+      if (!duration) throw new Error('원본 영상의 길이를 읽지 못했습니다');
+      const start = Math.max(0, Math.min(+node.data.start || 0, duration)), end = +node.data.end > 0 ? Math.min(+node.data.end, duration) : duration;
+      if (end - start < 0.1) throw new Error(`자를 구간이 없습니다 (원본 ${duration.toFixed(1)}초, 시작 ${start}초, 끝 ${end.toFixed(1)}초)`);
+      const len = end - start, fit = len < 2 || len > 30 ? ' · 레퍼런스 영상으로 쓰려면 2~30초여야 합니다' : '';
+      const span = `원본 ${duration.toFixed(1)}초 → ${start.toFixed(1)}~${end.toFixed(1)}초 (${len.toFixed(1)}초)${fit}`;
+      // The whole clip: hand it on as it is (keeps its server id, so it is not uploaded again).
+      if (start < 0.05 && end > duration - 0.05) return { items: [item], note: span };
+      const out = await trimVideo(item.url, start, end);
+      return { items: [{ type: 'video', url: out.url, name: `trim-${len.toFixed(1)}s.${out.ext}`, local: true }], note: `${span}${out.by === 'browser' ? ' · 브라우저로 잘랐습니다 (ffmpeg가 있으면 더 정확하고 빠릅니다)' : ''}` };
     },
   },
   frame: {
