@@ -82,8 +82,15 @@ res8 = (res * 255 + 0.5).astype(np.uint8)[..., ::-1]
 cv2.imwrite(out, res8, [cv2.IMWRITE_JPEG_QUALITY, 95])
 cv2.imwrite(out.replace('.jpg', '_mask.png'), (m * 255).astype(np.uint8))
 
-# 6) 2배 해상도본: Lanczos4 보간 + 출력 샤프닝 (보간이며 생성 아님)
-up = cv2.resize(res8, (W * 2, H * 2), interpolation=cv2.INTER_LANCZOS4).astype(np.float32)
-up = np.clip(up + 0.5 * (up - cv2.GaussianBlur(up, (0, 0), 1.6)), 0, 255).astype(np.uint8)
+# 6) 2배 해상도본: Lanczos4 보간 + 출력 샤프닝 (보간이며 생성 아님) — float 정밀도로 처리
+upf = cv2.resize(res[..., ::-1].astype(np.float32), (W * 2, H * 2), interpolation=cv2.INTER_LANCZOS4)
+upf = np.clip(upf + 0.5 * (upf - cv2.GaussianBlur(upf, (0, 0), 1.6)), 0, 1)
+up = (upf * 255 + 0.5).astype(np.uint8)
 cv2.imwrite(out.replace('.jpg', '_2x.jpg'), up, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+# 7) 16비트 무손실 출력 (TIFF: LZW 압축, PNG: 무손실)
+to16 = lambda f: (np.clip(f, 0, 1) * 65535 + 0.5).astype(np.uint16)
+for img, tag in ((res[..., ::-1], ''), (upf, '_2x')):
+    cv2.imwrite(out.replace('.jpg', f'{tag}_16bit.tif'), to16(img), [cv2.IMWRITE_TIFF_COMPRESSION, 5])
+    cv2.imwrite(out.replace('.jpg', f'{tag}_16bit.png'), to16(img), [cv2.IMWRITE_PNG_COMPRESSION, 6])
 print('done', res8.shape, up.shape)
