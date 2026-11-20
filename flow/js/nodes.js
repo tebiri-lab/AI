@@ -400,7 +400,7 @@ export const NODE_TYPES = {
       // The whole clip: hand it on as it is (keeps its server id, so it is not uploaded again).
       if (start < 0.05 && end > duration - 0.05) return { items: [item], note: span };
       const out = await trimVideo(item.url, start, end);
-      return { items: [{ type: 'video', url: out.url, name: `trim-${len.toFixed(1)}s.${out.ext}`, local: true }], note: `${span}${out.by === 'browser' ? ' · 브라우저로 잘랐습니다 (ffmpeg가 있으면 더 정확하고 빠릅니다)' : ''}` };
+      return { items: [{ type: 'video', url: out.url, name: `trim-${len.toFixed(1)}s.${out.ext}`, local: true }], note: `${span}${out.by === 'browser' ? ` · 브라우저로 잘랐습니다 (${{ old: '브리지가 예전 버전으로 켜져 있습니다. 연결 창에서 끄고 다시 켜면 ffmpeg로 정확하고 빠르게 자릅니다', none: '이 컴퓨터에 ffmpeg가 없습니다. 설치하면 더 정확하고 빠릅니다', off: '브리지를 켜고 ffmpeg가 있으면 더 정확하고 빠릅니다' }[out.why]})` : ''}` };
     },
   },
   frame: {
