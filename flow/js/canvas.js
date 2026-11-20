@@ -454,7 +454,7 @@ export class Canvas {
       sel.style.left = `${(s / dur) * 100}%`; sel.style.width = `${(l / dur) * 100}%`;
       if (document.activeElement !== inS) inS.value = s.toFixed(1);
       if (document.activeElement !== inE) inE.value = e.toFixed(1);
-      len.textContent = `${l.toFixed(1)}초 (원본 ${dur.toFixed(1)}초)${off ? ' · 레퍼런스 영상은 2~30초' : ''}`;
+      len.textContent = `${l.toFixed(1)}초 (원본 ${dur.toFixed(1)}초)${l < 2 ? ' · 레퍼런스로는 짧음 (2초 이상)' : l > 30 ? ' · 레퍼런스로는 김 (합계 30초까지)' : ''}`;
       len.classList.toggle('warn', off);
     };
     const commit = () => { this.cropping = false; this.graph.emit('node:data', node); this.recompute(node).then(() => this.refreshDependents(node)); };
