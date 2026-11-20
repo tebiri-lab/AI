@@ -160,6 +160,15 @@ async function mediaValue(item, ctx) {
   return id;
 }
 
+// Why a job ended without a result, for the person: the known refusals in Korean, followed by what the server said.
+const REFUSALS = {
+  ip_detected: '저작권·초상권 검사에 걸려 생성이 거부되었습니다. 레퍼런스(영상·이미지)나 프롬프트에 실존 인물, 기존 작품·캐릭터, 브랜드·로고가 들어 있는지 확인하세요.',
+  nsfw: '유해 콘텐츠 검사에 걸려 생성이 거부되었습니다. 프롬프트와 레퍼런스를 확인하세요.',
+};
+function refusal(j) {
+  const status = String(j.status || '').toLowerCase(), said = j.error || j.message || '';
+  return [REFUSALS[status] || `생성이 실패했습니다 (${j.status || '상태 없음'}).`, said && `서버 답: ${said}`].filter(Boolean).join(' ');
+}
 async function waitJobs(ids, kind, ctx, server = settings.server) {
   const done = new Map();
   let pending = ids.map((job_id, index) => ({ index, job_id }));
@@ -168,9 +177,10 @@ async function waitJobs(ids, kind, ctx, server = settings.server) {
     const data = await call(server, 'jobs_wait', { jobs: pending, timeout_seconds: 15 }, ctx.signal);
     for (const j of data.jobs || []) {
       const status = String(j.status || '').toLowerCase();
-      if (/fail|error|cancel|nsfw|reject/.test(status)) throw new Error(j.error || j.message || `생성 실패 (${j.status})`);
       const links = findUrls(j, kind);
-      if (/complete|success|done|finish/.test(status) || (data.all_terminal && links.length)) done.set(j.job_id, links);
+      if (/complete|success|done|finish/.test(status) || (data.all_terminal && links.length)) { done.set(j.job_id, links); continue; }
+      // Any other state that will not change any more is a refusal or a failure: say which, in the server's own words too.
+      if (/fail|error|cancel|nsfw|reject|ip_detected|block|moderat|timeout|expired|not_found/.test(status) || data.all_terminal) throw new Error(refusal(j));
     }
     pending = pending.filter((p) => !done.has(p.job_id));
     if (!pending.length) break;
