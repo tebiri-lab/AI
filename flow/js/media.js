@@ -78,17 +78,20 @@ async function mediaBlob(url) {
 // The part of a video between `start` and `end` (seconds), as a stored file. With the bridge and ffmpeg on this
 // computer the cut is exact and comes back as MP4; otherwise the browser plays that part once and records it
 // (takes as long as the part itself; MP4 where the browser can record it, else WebM).
-let noFfmpeg = '';
+let noFfmpeg = '', why = 'off'; // why the browser does the cutting: bridge off, an old bridge, or no ffmpeg there
 export async function trimVideo(url, start, end) {
   const blob = await mediaBlob(url);
+  if (noFfmpeg !== bridge.base) why = bridge.online ? '' : 'off';
   if (bridge.online && noFfmpeg !== bridge.base) {
     const res = await fetch(`${bridge.base}/api/trim?start=${start}&length=${end - start}`, { method: 'POST', headers: { 'content-type': blob.type || 'application/octet-stream' }, body: blob });
     if (res.ok) return { url: await saveBlob(await res.blob()), ext: 'mp4', by: 'ffmpeg' };
-    if (res.status !== 501) throw new Error((await res.json().catch(() => ({}))).error || '영상을 자르지 못했습니다');
-    noFfmpeg = bridge.base; // no ffmpeg on that computer: do not send it the file again this visit
+    // 501: no ffmpeg on that computer. 404: a bridge started before it learned to cut (it has to be restarted).
+    // Either way the page cuts the part itself, and the file is not sent there again this visit.
+    if (res.status !== 501 && res.status !== 404) throw new Error((await res.json().catch(() => ({}))).error || '영상을 자르지 못했습니다');
+    noFfmpeg = bridge.base; why = res.status === 404 ? 'old' : 'none';
   }
   const out = await recordPart(blob, start, end);
-  return { url: await saveBlob(out), ext: /mp4/.test(out.type) ? 'mp4' : 'webm', by: 'browser' };
+  return { url: await saveBlob(out), ext: /mp4/.test(out.type) ? 'mp4' : 'webm', by: 'browser', why };
 }
 function recordPart(blob, start, end) {
   const mime = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find((m) => window.MediaRecorder?.isTypeSupported(m));
