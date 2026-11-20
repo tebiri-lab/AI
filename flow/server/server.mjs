@@ -32,12 +32,12 @@ const LLM_CMD = process.env.FLOW_LLM_CMD || 'claude';
 const FFMPEG_CMD = process.env.FLOW_FFMPEG || 'ffmpeg';
 // Cut [start, start + length) seconds out of a video file and return it as an MP4. Re-encoded, so the cut is exact
 // to the frame (a stream copy could only cut at keyframes).
-async function trimWithFfmpeg(bytes, start, length) {
+async function trimWithFfmpeg(bytes, start, length, mute) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'flow-trim-'));
   const src = path.join(dir, 'in'), out = path.join(dir, 'out.mp4');
   try {
     await fs.writeFile(src, bytes);
-    const args = ['-y', '-v', 'error', '-ss', String(start), '-i', src, '-t', String(length), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out];
+    const args = ['-y', '-v', 'error', '-ss', String(start), '-i', src, '-t', String(length), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-pix_fmt', 'yuv420p', ...(mute ? ['-an'] : ['-c:a', 'aac', '-b:a', '192k']), '-movflags', '+faststart', out];
     await new Promise((resolve, reject) => {
       const child = spawn(FFMPEG_CMD, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       let err = '';
@@ -329,8 +329,10 @@ async function handle(req, res) {
       if (p === '/api/trim' && req.method === 'POST') {
         const start = Math.max(0, +url.searchParams.get('start') || 0), length = +url.searchParams.get('length');
         if (!(length > 0)) throw httpError(400, '자를 길이가 올바르지 않습니다');
-        const out = await trimWithFfmpeg(await readBody(req, 600e6), start, length);
-        res.writeHead(200, { ...cors, 'content-type': 'video/mp4', 'content-length': out.length });
+        const mute = url.searchParams.get('mute') === '1';
+        const out = await trimWithFfmpeg(await readBody(req, 600e6), start, length, mute);
+        // x-flow-muted tells the page the sound really was left out (a bridge from before that option would not say so).
+        res.writeHead(200, { ...cors, 'access-control-expose-headers': 'x-flow-muted', 'x-flow-muted': mute ? '1' : '0', 'content-type': 'video/mp4', 'content-length': out.length });
         return res.end(out);
       }
       // Media through the bridge, so the page can read pixels of a result video (frame extraction).

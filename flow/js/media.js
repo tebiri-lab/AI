@@ -79,21 +79,25 @@ async function mediaBlob(url) {
 // computer the cut is exact and comes back as MP4; otherwise the browser plays that part once and records it
 // (takes as long as the part itself; MP4 where the browser can record it, else WebM).
 let noFfmpeg = '', why = 'off'; // why the browser does the cutting: bridge off, an old bridge, or no ffmpeg there
-export async function trimVideo(url, start, end) {
+export async function trimVideo(url, start, end, mute = false) {
   const blob = await mediaBlob(url);
   if (noFfmpeg !== bridge.base) why = bridge.online ? '' : 'off';
   if (bridge.online && noFfmpeg !== bridge.base) {
-    const res = await fetch(`${bridge.base}/api/trim?start=${start}&length=${end - start}`, { method: 'POST', headers: { 'content-type': blob.type || 'application/octet-stream' }, body: blob });
-    if (res.ok) return { url: await saveBlob(await res.blob()), ext: 'mp4', by: 'ffmpeg' };
+    const res = await fetch(`${bridge.base}/api/trim?start=${start}&length=${end - start}${mute ? '&mute=1' : ''}`, { method: 'POST', headers: { 'content-type': blob.type || 'application/octet-stream' }, body: blob });
+    // A bridge started before it could leave the sound out would hand the sound back: then the page cuts it itself.
+    if (res.ok && (!mute || res.headers.get('x-flow-muted') === '1')) return { url: await saveBlob(await res.blob()), ext: 'mp4', by: 'ffmpeg' };
+    if (res.ok) why = 'old';
+    else {
     // 501: no ffmpeg on that computer. 404: a bridge started before it learned to cut (it has to be restarted).
     // Either way the page cuts the part itself, and the file is not sent there again this visit.
     if (res.status !== 501 && res.status !== 404) throw new Error((await res.json().catch(() => ({}))).error || '영상을 자르지 못했습니다');
     noFfmpeg = bridge.base; why = res.status === 404 ? 'old' : 'none';
+    }
   }
-  const out = await recordPart(blob, start, end);
+  const out = await recordPart(blob, start, end, mute);
   return { url: await saveBlob(out), ext: /mp4/.test(out.type) ? 'mp4' : 'webm', by: 'browser', why };
 }
-function recordPart(blob, start, end) {
+function recordPart(blob, start, end, mute) {
   const mime = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find((m) => window.MediaRecorder?.isTypeSupported(m));
   if (!mime) throw new Error('이 브라우저는 영상을 자를 수 없습니다. 브리지를 켜고 ffmpeg를 설치하면 자를 수 있습니다.');
   return new Promise((resolve, reject) => {
@@ -112,6 +116,7 @@ function recordPart(blob, start, end) {
       if (rec) return;
       try {
         const stream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
+        if (mute) for (const t of stream.getAudioTracks()) stream.removeTrack(t);
         const chunks = [];
         rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16e6 });
         rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };

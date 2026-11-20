@@ -496,11 +496,13 @@ export class Canvas {
     for (const el of [inS, inE]) el.addEventListener('keydown', (e) => e.stopPropagation());
     const here = (which) => h('button.small', { title: which === 's' ? '지금 보이는 위치를 시작으로' : '지금 보이는 위치를 끝으로', onclick: () => { if (!dur) return; stop(); const { s, e } = range(), t = video.currentTime; this.graph.checkpoint(); if (which === 's') set(t, Math.max(e, t + 0.1), true); else set(Math.min(s, t - 0.1), t, true); } }, which === 's' ? '여기를 시작으로' : '여기를 끝으로');
     const whole = h('button.small', { onclick: () => { if (!dur) return; this.graph.checkpoint(); set(0, dur, true); } }, '전체로');
+    const mute = h('label.trim-mute', { title: '잘라낸 영상에서 소리를 뺍니다. 춤·동작만 참고시키고 원래 음악은 넘기지 않을 때 씁니다.' }, h('input', { type: 'checkbox', checked: !!node.data.mute, onchange: (e) => { this.graph.checkpoint(); node.data.mute = e.target.checked; commit(); } }), '오디오 끄기');
     const big = large ? null : h('button.small', { onclick: async () => { stop(); await modal('영상 자르기', this.trimField(node, true), [{ label: '완료', primary: true }], 'wide'); this.paintFields(node); } }, '크게 편집');
     return h('div.field.wide.trim', {}, h('span', {}, '남길 구간 — 손잡이를 끌어 시작·끝, 가운데를 끌어 이동, 막대의 다른 곳을 눌러 살펴보기'),
       h('div.trim-view', {}, video), bar,
       h('div.trim-row', {}, playBtn, h('label', {}, '시작', inS), h('label', {}, '끝', inE), len),
-      h('div.trim-row', {}, here('s'), here('e'), h('span.grow'), big, whole));
+      h('div.trim-row', {}, here('s'), here('e'), h('span.grow'), big, whole),
+      h('div.trim-row', {}, mute));
   }
   // Model chooser: a button that opens a list with a tab per company and the recently used models first.
   modelField(node, f) {
