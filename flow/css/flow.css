@@ -416,3 +416,5 @@ html, body { overscroll-behavior: none; }
 .trim-len.warn { color: var(--accent-2); }
 .modal .trim-view video { max-height: 62vh; }
 .modal .trim-bar { height: 40px; }
+.trim-mute { cursor: pointer; }
+.trim-mute input { margin: 0 2px 0 0; }

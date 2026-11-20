@@ -12,7 +12,7 @@ import { h, toast, relayBox, lightbox } from './ui.js';
 
 const BUILDABLE = new Set(['image', 'video', 'frame', 'trim', 'vupscale', 'board']);
 const EDITABLE = new Set(['text', 'image', 'video', 'frame', 'trim', 'vupscale', 'board']); // existing nodes the agent may change
-const FIELD_KO = { start: '시작', end: '끝', title: '시퀀스 이름', text: '글', prompt: '프롬프트', model: '모델', aspect: '화면비', count: '변형 수', duration: '길이', params: '설정', at: '위치', method: '방식', resolution: '해상도' };
+const FIELD_KO = { mute: '오디오 끄기', start: '시작', end: '끝', title: '시퀀스 이름', text: '글', prompt: '프롬프트', model: '모델', aspect: '화면비', count: '변형 수', duration: '길이', params: '설정', at: '위치', method: '방식', resolution: '해상도' };
 const MEDIA = ['image', 'video', 'audio'];
 // Conversations are kept in the browser, one per workflow, so a reload (or opening the workflow again) continues them.
 const TALK_KEY = 'flow.agent.v1', TALK_MAX = 30;
@@ -49,7 +49,7 @@ Nodes
   {"key":"still","type":"image","label":"시작 이미지","model":"<image model id>","prompt":"...","aspect":"16:9","count":2,"params":{}}
   {"key":"shot1","type":"video","label":"샷 1","model":"<video model id>","prompt":"...","aspect":"16:9","duration":5,"count":2,"params":{}}
   {"key":"last1","type":"frame","label":"샷 1 마지막 프레임","at":"last"}   takes a video and gives its first or last frame as an image ("at": "first" or "last")
-  {"key":"cut1","type":"trim","label":"레퍼런스 구간","start":3,"end":11}   takes a video and gives the part between "start" and "end" seconds ("end":0 = to the end). Free. Reference videos (vref) are limited: each at least 2 seconds, and for Seedance 2.5 all the reference videos of one node together at most 30 seconds. Put a trim node before vref when the total would be longer, or when only part of a clip matters, and leave room for the other reference videos of that node.
+  {"key":"cut1","type":"trim","label":"레퍼런스 구간","start":3,"end":11}   takes a video and gives the part between "start" and "end" seconds ("end":0 = to the end; add "mute":true to leave the sound out, for a clip that is only a motion reference). Free. Reference videos (vref) are limited: each at least 2 seconds, and for Seedance 2.5 all the reference videos of one node together at most 30 seconds. Put a trim node before vref when the total would be longer, or when only part of a clip matters, and leave room for the other reference videos of that node.
   {"key":"up1","type":"vupscale","label":"샷 1 1080p","method":"wan","resolution":"1080p"}   takes a video and renders it again at a higher resolution (methods: ${UPSCALE_METHODS.map((m) => m.id).join(', ')}). Only when the filmmaker asks for upscaling.
   {"key":"board1","type":"board","title":"확정 샷"}   a shot board: collects images and videos in the order of your links into its "shots" port and shows them side by side. It generates nothing and costs nothing.
   - "key": short and unique, letters, digits and underscore only. "label": a short Korean name shown on the node.
@@ -313,7 +313,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     if (!nodes.length) lines.push('(none yet)');
     for (const n of nodes) {
       const ins = graph.ports(n, 'in').flatMap((p) => engine.sourceNodes(n, p.key).map((x) => `${keyOf(x)}>${p.key}`));
-      const set = n.type === 'image' || n.type === 'video' ? { model: n.data.model, aspect: n.data.aspect, ...(n.type === 'video' ? { duration: +n.data.duration } : {}), count: +n.data.count, params: n.data.params } : n.type === 'frame' ? { at: n.data.at } : n.type === 'trim' ? { start: n.data.start, end: n.data.end } : n.type === 'board' ? { title: n.data.title } : { method: n.data.method, resolution: n.data.resolution };
+      const set = n.type === 'image' || n.type === 'video' ? { model: n.data.model, aspect: n.data.aspect, ...(n.type === 'video' ? { duration: +n.data.duration } : {}), count: +n.data.count, params: n.data.params } : n.type === 'frame' ? { at: n.data.at } : n.type === 'trim' ? { start: n.data.start, end: n.data.end, mute: !!n.data.mute } : n.type === 'board' ? { title: n.data.title } : { method: n.data.method, resolution: n.data.resolution };
       const state = n.type === 'board' ? `shows ${engine.outItems(n).length} item(s)` : n.status === 'error' ? `failed: ${n.message}` : n.result ? `generated v${n.result.v || 1}${engine.isStale(n) ? ' (settings changed since)' : ''}` : 'not generated yet';
       lines.push(`- ${n.data.agent} | ${n.type} | "${name(n)}"${sel.has(n.id) ? ' | selected' : ''} | ${JSON.stringify(set)} | links in: ${ins.join(', ') || 'none'} | ${state}${n.data.prompt ? `\n  prompt: ${n.data.prompt}` : ''}`);
     }
@@ -358,6 +358,7 @@ export function initAgent({ graph, engine, canvas, actions, guarded, panel, butt
     } else if (type === 'trim') {
       if (spec.start != null) data.start = Math.max(0, +spec.start || 0);
       if (spec.end != null) data.end = Math.max(0, +spec.end || 0);
+      if (spec.mute != null) data.mute = spec.mute === true || spec.mute === 'true';
     } else if (type === 'frame') {
       if (spec.at === 'first' || spec.at === 'last') data.at = spec.at;
     } else if (type === 'vupscale') {

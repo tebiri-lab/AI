@@ -395,7 +395,7 @@ export const NODE_TYPES = {
   },
   trim: {
     title: '영상 자르기', category: 'edit', hint: '영상에서 필요한 구간만 남기기 (레퍼런스 영상 길이 제한에 맞출 때)', instant: true, cache: true, slow: true, liveFields: true, width: 340,
-    defaults: { start: 0, end: 0 },
+    defaults: { start: 0, end: 0, mute: false },
     inputs: [{ key: 'video', label: '영상', type: 'video' }],
     outputs: [{ key: 'out', label: '영상', type: 'video' }],
     fields: () => [{ kind: 'trim' }],
@@ -409,11 +409,12 @@ export const NODE_TYPES = {
       const start = Math.max(0, Math.min(+node.data.start || 0, duration)), end = +node.data.end > 0 ? Math.min(+node.data.end, duration) : duration;
       if (end - start < 0.1) throw new Error(`자를 구간이 없습니다 (원본 ${duration.toFixed(1)}초, 시작 ${start}초, 끝 ${end.toFixed(1)}초)`);
       const len = end - start, fit = len < 2 ? ' · 레퍼런스 영상으로 쓰기에는 짧습니다 (2초 이상)' : len > 30 ? ' · 레퍼런스 영상으로 쓰기에는 깁니다 (Seedance 2.5는 레퍼런스 영상을 모두 합쳐 30초까지)' : '';
-      const span = `원본 ${duration.toFixed(1)}초 → ${start.toFixed(1)}~${end.toFixed(1)}초 (${len.toFixed(1)}초)${fit}`;
+      const mute = !!node.data.mute;
+      const span = `원본 ${duration.toFixed(1)}초 → ${start.toFixed(1)}~${end.toFixed(1)}초 (${len.toFixed(1)}초)${mute ? ' · 소리 없음' : ''}${fit}`;
       // The whole clip: hand it on as it is (keeps its server id, so it is not uploaded again).
-      if (start < 0.05 && end > duration - 0.05) return { items: [item], note: span };
-      const out = await trimVideo(item.url, start, end);
-      return { items: [{ type: 'video', url: out.url, name: `trim-${len.toFixed(1)}s.${out.ext}`, local: true }], note: `${span}${out.by === 'browser' ? ` · 브라우저로 잘랐습니다 (${{ old: '브리지가 예전 버전으로 켜져 있습니다. 연결 창에서 끄고 다시 켜면 ffmpeg로 정확하고 빠르게 자릅니다', none: '이 컴퓨터에 ffmpeg가 없습니다. 설치하면 더 정확하고 빠릅니다', off: '브리지를 켜고 ffmpeg가 있으면 더 정확하고 빠릅니다' }[out.why]})` : ''}` };
+      if (start < 0.05 && end > duration - 0.05 && !mute) return { items: [item], note: span };
+      const out = await trimVideo(item.url, start, end, mute);
+      return { items: [{ type: 'video', url: out.url, name: `trim-${len.toFixed(1)}s${mute ? '-mute' : ''}.${out.ext}`, local: true }], note: `${span}${out.by === 'browser' ? ` · 브라우저로 잘랐습니다 (${{ old: '브리지가 예전 버전으로 켜져 있습니다. 연결 창에서 끄고 다시 켜면 ffmpeg로 정확하고 빠르게 자릅니다', none: '이 컴퓨터에 ffmpeg가 없습니다. 설치하면 더 정확하고 빠릅니다', off: '브리지를 켜고 ffmpeg가 있으면 더 정확하고 빠릅니다' }[out.why]})` : ''}` };
     },
   },
   frame: {
