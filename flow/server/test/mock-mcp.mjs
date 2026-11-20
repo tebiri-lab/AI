@@ -59,6 +59,7 @@ function tool(name, a) {
       const j = jobs.get(job_id);
       if (!j) return { index, job_id, status: 'lookup_failed', error: 'Generation not found', retryable: false };
       if (Date.now() < j.readyAt) return { index, job_id, status: 'in_progress' };
+      if (/IPCHECK/.test(j.prompt)) return { index, job_id, status: 'ip_detected', error: 'Rejected due to copyright restrictions.' };
       if (j.fail) return { index, job_id, status: 'failed', error: 'Mock failure requested by the prompt' };
       return { index, job_id, status: 'completed', results: [{ url: `${BASE}/media/${job_id}.${j.kind === 'video' ? 'mp4' : 'svg'}`, thumbnail_url: `${BASE}/media/${job_id}.svg` }] };
     });
