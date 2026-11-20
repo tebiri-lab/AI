@@ -121,8 +121,21 @@ export function buildRequest(node, inputs) {
   else if (req.params.mode === 'omni_reference' && !medias.length) req.params.mode = 't2v';
   return req;
 }
+// Limits a model puts on its reference videos, checked here so the request is not sent only to be refused.
+// Seedance 2.5 counts all reference videos together: at most 30 seconds in total (its own error message, 2026-11-20).
+const REF_VIDEO_TOTAL = { seedance_2_5: 30 };
+async function checkRefVideos(req) {
+  const max = REF_VIDEO_TOTAL[req.model], vids = req.medias.filter((m) => ROLE_TAG[m.role] === 'Video' && !m.item.still);
+  if (!max || !vids.length) return;
+  const secs = await Promise.all(vids.map((m) => videoMeta(m.item.url).then((x) => x.duration, () => 0)));
+  const total = secs.reduce((a, b) => a + b, 0);
+  if (total <= max + 0.05) return;
+  const list = secs.map((d, i) => `@Video ${i + 1} ${d ? `${d.toFixed(1)}초` : '길이 모름'}`).join(' + ');
+  throw new Error(`레퍼런스 영상이 합쳐서 ${total.toFixed(1)}초입니다 (${list}). ${getModel(req.model)?.name || req.model}은(는) 레퍼런스 영상을 모두 합쳐 ${max}초까지만 받습니다. "영상 자르기" 노드로 ${(total - max).toFixed(1)}초 이상 줄여 주세요.`);
+}
 async function runGenerate(kind, ctx) {
   const req = buildRequest(ctx.node, ctx.inputs);
+  await checkRefVideos(req);
   touchModel(req.model);
   // Known before the result arrives, so it can be kept with a generation that is still running when the page is reloaded.
   ctx.request = { model: req.model, prompt: req.prompt, draft: !!req.params.draft, resolution: req.params.resolution, aspect: req.aspect, duration: req.duration, refs: describeRefs(req.medias) };
@@ -381,7 +394,7 @@ export const NODE_TYPES = {
     },
   },
   trim: {
-    title: '영상 자르기', category: 'edit', hint: '영상에서 필요한 구간만 남기기 (레퍼런스 영상은 2~30초만 받습니다)', instant: true, cache: true, slow: true, liveFields: true, width: 340,
+    title: '영상 자르기', category: 'edit', hint: '영상에서 필요한 구간만 남기기 (레퍼런스 영상 길이 제한에 맞출 때)', instant: true, cache: true, slow: true, liveFields: true, width: 340,
     defaults: { start: 0, end: 0 },
     inputs: [{ key: 'video', label: '영상', type: 'video' }],
     outputs: [{ key: 'out', label: '영상', type: 'video' }],
@@ -395,7 +408,7 @@ export const NODE_TYPES = {
       if (!duration) throw new Error('원본 영상의 길이를 읽지 못했습니다');
       const start = Math.max(0, Math.min(+node.data.start || 0, duration)), end = +node.data.end > 0 ? Math.min(+node.data.end, duration) : duration;
       if (end - start < 0.1) throw new Error(`자를 구간이 없습니다 (원본 ${duration.toFixed(1)}초, 시작 ${start}초, 끝 ${end.toFixed(1)}초)`);
-      const len = end - start, fit = len < 2 || len > 30 ? ' · 레퍼런스 영상으로 쓰려면 2~30초여야 합니다' : '';
+      const len = end - start, fit = len < 2 ? ' · 레퍼런스 영상으로 쓰기에는 짧습니다 (2초 이상)' : len > 30 ? ' · 레퍼런스 영상으로 쓰기에는 깁니다 (Seedance 2.5는 레퍼런스 영상을 모두 합쳐 30초까지)' : '';
       const span = `원본 ${duration.toFixed(1)}초 → ${start.toFixed(1)}~${end.toFixed(1)}초 (${len.toFixed(1)}초)${fit}`;
       // The whole clip: hand it on as it is (keeps its server id, so it is not uploaded again).
       if (start < 0.05 && end > duration - 0.05) return { items: [item], note: span };
