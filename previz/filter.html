@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>프롬프트 게이지 · Video Skill</title>
-<meta name="description" content="노스탤지어 필터·자막 지우기 같은 범용 프롬프트를 게이지와 옵션으로 조절하면 영어 프롬프트 문장이 자동으로 바뀝니다.">
+<meta name="description" content="노스탤지어 필터·필름 룩·자막 지우기 같은 범용 프롬프트를 게이지와 옵션으로 조절하면 영어 프롬프트 문장이 자동으로 바뀝니다.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
@@ -66,7 +66,7 @@ button, input, textarea { font: inherit; color: inherit; }
 .card h2 small { font-family: var(--font-data); font-weight: 500; font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
 .note { margin: 0; font-size: 12px; color: var(--muted); }
 
-.modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; }
 .modes button { background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: pointer; text-align: left; font-weight: 700; font-size: 13.5px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .modes button small { font-weight: 400; font-size: 11.5px; color: var(--muted); }
 .modes button:hover { border-color: #3d434d; }
@@ -141,6 +141,7 @@ pre.prompt.plain mark { background: none; color: inherit; padding: 0; }
       <h2>프롬프트 종류 <small>Prompt</small></h2>
       <div class="modes" id="modes">
         <button type="button" data-mode="filter">노스탤지어 필터<small>이미지 · 추억 필터</small></button>
+        <button type="button" data-mode="film">필름 룩<small>이미지·영상 · 필름 에뮬레이션</small></button>
         <button type="button" data-mode="sub">자막 지우기<small>영상 · 하드 자막 제거</small></button>
       </div>
     </div>
@@ -154,6 +155,29 @@ pre.prompt.plain mark { background: none; color: inherit; padding: 0; }
     <div class="card" data-for="filter">
       <h2>효과 강도 <small>Gauges</small></h2>
       <div id="gauges" style="display:flex;flex-direction:column;gap:16px"></div>
+    </div>
+
+    <div class="card" data-for="film">
+      <h2>프리셋 <small>Preset</small></h2>
+      <div class="presets" id="fpresets"></div>
+      <p class="note">● 표시가 기본값입니다. 프리셋은 필름 룩 설정만 바꿉니다.</p>
+    </div>
+
+    <div class="card" data-for="film">
+      <h2>필름 선택 <small>Stock</small></h2>
+      <div id="fchoices" style="display:flex;flex-direction:column;gap:16px"></div>
+    </div>
+
+    <div class="card" data-for="film">
+      <h2>필름 질감 <small>Gauges</small></h2>
+      <div id="fgauges" style="display:flex;flex-direction:column;gap:16px"></div>
+    </div>
+
+    <div class="card" data-for="film">
+      <h2>옵션 <small>Options</small></h2>
+      <label class="field">참조 이름 (비우면 대상에 맞춰 자동)
+        <input id="fRef" spellcheck="false" autocomplete="off">
+      </label>
     </div>
 
     <div class="card" data-for="sub">
@@ -192,6 +216,15 @@ pre.prompt.plain mark { background: none; color: inherit; padding: 0; }
         <li>이 프롬프트는 <b>"이미지를 새로 그리지 말라"</b>는 지시에 의존합니다. 편집 모델이 이 지시를 완벽히 지키지 못할 수 있어요.</li>
         <li>작은 글씨는 필터 단계에서도 틀어질 수 있습니다. 글씨가 중요하면 <b>글씨를 먼저 확정하고 필터를 마지막 단계</b>로 두세요.</li>
         <li>그래도 내용이 바뀌면 Camera Raw나 DaVinci Resolve 같은 보정 도구로 블룸·그레인·비네트를 직접 입히는 편이 더 안정적입니다.</li>
+      </ul>
+    </div>
+
+    <div class="card" data-for="film">
+      <h2>알아둘 한계 <small>Notes</small></h2>
+      <ul class="tips">
+        <li>필름 이름은 <b>색 반응의 방향</b>을 알려 주는 힌트입니다. 모델이 실제 필름을 정확히 재현하지는 않아요.</li>
+        <li>영상은 프레임마다 그레인이 <b>지글거리거나 깜빡일 수 있습니다.</b> 그레인은 약하게 두고 편집 단계에서 그레인 오버레이로 얹는 편이 안정적입니다.</li>
+        <li>얼굴·피부가 바뀌면 이 프롬프트 대신 DaVinci Resolve의 Film Look Creator나 LUT로 직접 입히세요.</li>
       </ul>
     </div>
 
@@ -238,19 +271,62 @@ const SUB_CHOICES = [
   { id: 'subBar', name: '자막 배경 바', def: 0, labels: ['있음', '없음 (글자만)'], values: [true, false] },
 ];
 
+// Film-look prompt (new, no original text): defaults are this page's base film look.
+const FILM_CHOICES = [
+  { id: 'fTarget', name: '대상', def: 0, labels: ['이미지', '영상'], values: ['image', 'video'] },
+  { id: 'fStock', name: '필름 스톡', def: 1,
+    labels: ['Portra 400 (따뜻한 인물)', 'Vision3 500T (시네마)', 'Eterna (차분한 청록)', 'Ektachrome (선명한 슬라이드)', 'Tri-X (흑백)'],
+    values: ['Kodak Portra 400 color negative film', 'Kodak Vision3 500T motion picture film', 'Fujifilm Eterna motion picture film', 'Kodak Ektachrome slide film', 'Kodak Tri-X 400 black-and-white film'],
+    desc: ['natural warm skin tones, soft pastel highlights, gentle contrast, and slightly lifted shadows',
+      'rich cinematic color, deep but detailed shadows, slightly cool shadows against warm highlights, and smooth highlight roll-off',
+      'muted, restrained colors, soft contrast, and cool teal-green shadows',
+      'clean, vivid colors, crisp contrast, and neutral-cool whites',
+      'a fully monochrome black-and-white image with rich silver tones, deep blacks, and bright whites'] },
+  { id: 'fFmt', name: '필름 포맷', def: 1, labels: ['16mm', '35mm', '65mm'], values: ['16mm', '35mm', '65mm'] },
+];
+const FILM_BW = 4;
+const FILM_GAUGES = [
+  { id: 'fVis', name: '전체 체감 강도', def: 2, labels: ['아주 약하게', '약하게', '기본', '강하게'],
+    values: ['very subtle, just barely noticeable', 'subtle but noticeable', 'clearly visible at first glance', 'strong and unmistakable at first glance'] },
+  { id: 'fGrain', name: '필름 그레인', def: 2, labels: ['끔', '약', '기본', '강', '매우 강'],
+    values: [null, 'very fine, subtle', 'fine, visible', 'strong, clearly visible', 'heavy, coarse'] },
+  { id: 'fHal', name: '할레이션 (붉은 빛 번짐)', def: 2, labels: ['끔', '약', '기본', '강'],
+    values: [null, 'Faint halation', 'Halation', 'Strong halation'] },
+  { id: 'fCon', name: '톤 대비', def: 1, labels: ['부드럽게', '기본', '강하게'],
+    values: ['soft low contrast with lifted, slightly milky blacks and gentle highlight roll-off',
+      'a natural filmic S-curve with a soft highlight shoulder',
+      'punchy high contrast with deep, dense blacks while keeping the highlight roll-off smooth'] },
+  { id: 'fSat', name: '채도', def: 1, labels: ['낮게', '기본', '높게'],
+    values: ['muted, slightly desaturated colors', 'natural colors true to the stock', 'richer, more saturated colors'] },
+  { id: 'fSoft', name: '렌즈 질감', def: 1, labels: ['선명', '기본', '부드럽게'],
+    values: ['crisp vintage cinema lens rendering', 'slightly soft vintage lens rendering with gentle micro-contrast', 'noticeably soft, low micro-contrast vintage lens rendering'] },
+  { id: 'fWeave', name: '게이트 위브 · 플리커 (영상 전용)', def: 0, only: 1, labels: ['끔', '약', '강'],
+    values: [null, 'a very subtle gate weave and faint exposure flicker', 'a noticeable gate weave and exposure flicker like a projected film print'] },
+];
+const FILM_PRESETS = [
+  { name: '기본값', set: {} },
+  { name: '따뜻한 인물', set: { fStock: 0, fCon: 0 } },
+  { name: '차분한 드라마', set: { fStock: 2, fSat: 0 } },
+  { name: '선명한 광고', set: { fStock: 3, fCon: 2, fSat: 2, fGrain: 1 } },
+  { name: '16mm 다큐', set: { fFmt: 0, fGrain: 3, fSoft: 2 } },
+  { name: '흑백 고전', set: { fStock: FILM_BW, fCon: 2, fGrain: 3 } },
+  { name: '옛날 영사 필름', set: { fTarget: 1, fWeave: 2, fGrain: 3, fHal: 3 } },
+];
+
 const DEFAULT_IMG = '@Image 1';
 const STORE_KEY = 'filter-gauge-v1';
 
-const state = { mode: 'filter', img: DEFAULT_IMG, text: true, marks: true };
-SUB_CHOICES.forEach(c => { state[c.id] = c.def; });
-GAUGES.forEach(g => { state[g.id] = g.def; });
+const ALL_LEVELS = [...GAUGES, ...SUB_CHOICES, ...FILM_CHOICES, ...FILM_GAUGES];
+const state = { mode: 'filter', img: DEFAULT_IMG, text: true, marks: true, fRef: '' };
+ALL_LEVELS.forEach(g => { state[g.id] = g.def; });
 
 try {
   const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
   if (saved) for (const k of Object.keys(state)) if (k in saved) state[k] = saved[k];
 } catch (e) {}
-[...GAUGES, ...SUB_CHOICES].forEach(g => { const v = state[g.id]; if (!Number.isInteger(v) || v < 0 || v >= g.values.length) state[g.id] = g.def; });
-if (state.mode !== 'filter' && state.mode !== 'sub') state.mode = 'filter';
+ALL_LEVELS.forEach(g => { const v = state[g.id]; if (!Number.isInteger(v) || v < 0 || v >= g.values.length) state[g.id] = g.def; });
+if (!['filter', 'film', 'sub'].includes(state.mode)) state.mode = 'filter';
+if (typeof state.fRef !== 'string') state.fRef = '';
 
 const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} };
 
@@ -327,8 +403,60 @@ function buildSub(s) {
   return { parts: out, bulletCount: 1 };
 }
 
+function buildFilm(s) {
+  const out = [];
+  const t = str => out.push([str, false]);
+  const v = (str, changed) => out.push([str, changed]);
+  const L = id => ALL_LEVELS.find(g => g.id === id);
+  const val = id => L(id).values[s[id]];
+  const ch = id => s[id] !== L(id).def;
+  const video = s.fTarget === 1;
+  const bw = s.fStock === FILM_BW;
+  const autoRef = video ? '@Video 1' : DEFAULT_IMG;
+  const ref = s.fRef.trim() || autoRef;
+  const refCh = ref !== DEFAULT_IMG;
+  const R = () => v(ref, refCh);
+
+  t('Apply a realistic analog film look on top of '); R();
+  t('. This is a color-grading and film-emulation pass, not a redraw: treat '); R();
+  if (video) v(' as finished footage', true); else t(' as a finished photograph');
+  t(' and change only color, tone, and optical texture. The film character must be '); v(val('fVis'), ch('fVis'));
+  t(', but the content must remain exactly identical to '); R(); t('.\n\n');
+
+  t('Content that must stay exactly as in '); R();
+  t(', and changing any of it counts as failure: the composition, framing, camera angle, and perspective; every subject\'s pose, position, expression, identity, and skin detail; all objects and backgrounds, with nothing added, removed, or moved; the time of day and lighting direction; and all text, numbers, and logos.');
+  if (video) v(' Camera motion, subject motion, timing, and duration stay exactly as in the source video, and the look stays consistent from the first frame to the last.', true);
+  t('\n\n');
+
+  const bullets = [];
+  bullets.push(() => { t('Film stock: the color and tone response of '); v(val('fStock'), ch('fStock')); t(', with '); v(L('fStock').desc[s.fStock], ch('fStock')); t('.'); });
+  bullets.push(() => { t('Tone: '); v(val('fCon'), ch('fCon')); t('.'); });
+  if (!bw) bullets.push(() => { t('Color: '); v(val('fSat'), ch('fSat')); t(', with no teal-and-orange push and no digital color banding.'); });
+  if (val('fGrain')) bullets.push(() => { t('Film texture: '); v(val('fGrain'), ch('fGrain')); t(' organic '); v(val('fFmt'), ch('fFmt')); t(' film grain across the whole frame'); if (video) v(', with grain that changes naturally from frame to frame', true); t('.'); });
+  if (val('fHal')) bullets.push(() => { v(val('fHal'), ch('fHal')); t(': a thin red-orange glow bleeding around bright highlights and light sources where they meet darker edges.'); });
+  bullets.push(() => { t('Lens: '); v(val('fSoft'), ch('fSoft')); t(', with no digital sharpening.'); });
+  if (video && val('fWeave')) bullets.push(() => { t('Projection feel: '); v(val('fWeave'), true); t('.'); });
+
+  t('Film emulation to add (these are the only changes):');
+  bullets.forEach(fn => { t('\n- '); fn(); });
+  t('\n\n');
+
+  t('Keep it photographic and real: faces and eyes stay sharp and natural, skin keeps its real texture with no plastic smoothing, no HDR look, and no added light leaks, scratches, dust, or frame borders. Do not regenerate, reposition, re-pose, re-light, or re-frame anything. Keep the original aspect ratio and resolution.');
+  return { parts: out, bulletCount: bullets.length };
+}
+
 function warnings(s, bulletCount) {
   if (s.mode === 'sub') return [];
+  if (s.mode === 'film') {
+    const w = [];
+    if (s.fStock === FILM_BW && s.fSat !== 1) w.push('흑백 스톡(Tri-X)에서는 채도 게이지가 무시됩니다. 색 문장이 프롬프트에서 빠집니다.');
+    if (s.fFmt === 2 && s.fGrain >= 3) w.push('65mm는 입자가 아주 고운 대형 포맷인데 그레인을 강하게 설정했습니다. 서로 반대 신호라 결과가 들쭉날쭉할 수 있습니다.');
+    if (s.fFmt === 0 && s.fGrain <= 1) w.push('16mm는 입자가 굵은 게 특징인데 그레인이 약하거나 꺼져 있습니다. 16mm 느낌이 약하게 나올 수 있습니다.');
+    if (s.fVis <= 1 && (s.fGrain >= 3 || s.fHal >= 3 || s.fCon === 2)) w.push('전체 체감 강도는 약하게, 개별 효과는 강하게 설정되어 있습니다. 서로 반대 신호라 결과가 들쭉날쭉할 수 있습니다.');
+    if (s.fTarget === 1 && s.fGrain >= 3) w.push('영상에서 그레인이 강하면 프레임마다 지글거리거나 얼굴 디테일이 흔들릴 수 있습니다.');
+    if (s.fTarget === 0 && s.fWeave > 0) w.push('게이트 위브·플리커는 영상 전용이라 이미지 프롬프트에는 들어가지 않습니다.');
+    return w;
+  }
   const w = [];
   if (bulletCount === 0) w.push('효과가 모두 꺼져 있어서 "Filter effects" 목록이 비어 있습니다. 모델이 아무것도 바꾸지 않을 가능성이 큽니다.');
   if (s.warm > 0) w.push('따뜻함을 켜면 흰 옷이나 파란 하늘 같은 색이 변할 수 있습니다. 충돌을 막으려고 금지 목록에서 golden hour·sepia는 빼고, 저녁 노을(sunset)만 금지로 남기고, 색 정체성 유지 문장도 따뜻한 캐스트는 허용하도록 약하게 바꿉니다.');
@@ -341,8 +469,7 @@ const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&g
 const $ = id => document.getElementById(id);
 
 // --- UI ---
-const gaugesEl = $('gauges');
-GAUGES.forEach(g => {
+function makeGauge(container, g) {
   const wrap = document.createElement('div');
   wrap.className = 'gauge';
   wrap.innerHTML = `
@@ -350,38 +477,47 @@ GAUGES.forEach(g => {
     <input type="range" id="g-${g.id}" min="0" max="${g.values.length - 1}" step="1">
     <div class="ticks">${g.labels.map((l, i) => `<button type="button" data-i="${i}" class="${i === g.def ? 'is-def' : ''}">${l}</button>`).join('')}</div>
     <div class="phrase" id="p-${g.id}"></div>`;
-  gaugesEl.appendChild(wrap);
+  if ('only' in g) wrap.dataset.only = g.only;
+  container.appendChild(wrap);
   wrap.querySelector('input').addEventListener('input', e => { state[g.id] = +e.target.value; render(); });
   wrap.querySelectorAll('.ticks button').forEach(b => b.addEventListener('click', () => { state[g.id] = +b.dataset.i; render(); }));
-});
+}
+GAUGES.forEach(g => makeGauge($('gauges'), g));
+FILM_GAUGES.forEach(g => makeGauge($('fgauges'), g));
 
-const choicesEl = $('choices');
-SUB_CHOICES.forEach(c => {
+function makeChoice(container, c) {
   const wrap = document.createElement('div');
   wrap.className = 'gauge';
   wrap.innerHTML = `
     <div class="gauge-head"><label>${c.name}</label></div>
     <div class="choice-row" id="c-${c.id}">${c.labels.map((l, i) => `<button type="button" data-i="${i}" class="${i === c.def ? 'is-def' : ''}">${l}</button>`).join('')}</div>`;
-  choicesEl.appendChild(wrap);
+  if (c.desc) wrap.insertAdjacentHTML('beforeend', `<div class="phrase" id="p-${c.id}"></div>`);
+  container.appendChild(wrap);
   wrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state[c.id] = +b.dataset.i; render(); }));
-});
+}
+SUB_CHOICES.forEach(c => makeChoice($('choices'), c));
+FILM_CHOICES.forEach(c => makeChoice($('fchoices'), c));
 
 document.querySelectorAll('#modes button').forEach(b => b.addEventListener('click', () => { state.mode = b.dataset.mode; render(); }));
 
-const presetsEl = $('presets');
-PRESETS.forEach(p => {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.textContent = p.name;
-  b.addEventListener('click', () => {
-    GAUGES.forEach(g => { state[g.id] = g.def; });
-    Object.assign(state, p.set);
-    render();
+function makePresets(container, list, levels) {
+  list.forEach(p => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = p.name;
+    b.addEventListener('click', () => {
+      levels.forEach(g => { state[g.id] = g.def; });
+      Object.assign(state, p.set);
+      render();
+    });
+    container.appendChild(b);
   });
-  presetsEl.appendChild(b);
-});
+}
+makePresets($('presets'), PRESETS, GAUGES);
+makePresets($('fpresets'), FILM_PRESETS, [...FILM_CHOICES, ...FILM_GAUGES]);
 
 $('imgRef').addEventListener('input', e => { state.img = e.target.value; render(); });
+$('fRef').addEventListener('input', e => { state.fRef = e.target.value; render(); });
 $('protectText').addEventListener('change', e => { state.text = e.target.checked; render(); });
 $('toggleMark').addEventListener('click', () => { state.marks = !state.marks; render(); });
 
@@ -399,7 +535,7 @@ $('copyBtn').addEventListener('click', async () => {
 });
 
 function render() {
-  GAUGES.forEach(g => {
+  [...GAUGES, ...FILM_GAUGES].forEach(g => {
     const i = state[g.id];
     $('g-' + g.id).value = i;
     const o = $('o-' + g.id);
@@ -410,13 +546,19 @@ function render() {
     $('p-' + g.id).textContent = val ? `“${val}”` : '— 문장에서 제외';
   });
   if ($('imgRef').value !== state.img) $('imgRef').value = state.img;
+  if ($('fRef').value !== state.fRef) $('fRef').value = state.fRef;
+  $('fRef').placeholder = state.fTarget === 1 ? '@Video 1' : DEFAULT_IMG;
+  document.querySelectorAll('[data-only]').forEach(el => { el.hidden = +el.dataset.only !== state.fTarget; });
   $('protectText').checked = state.text;
 
   document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode)));
   document.querySelectorAll('[data-for]').forEach(el => { el.hidden = el.dataset.for !== state.mode; });
-  SUB_CHOICES.forEach(c => document.querySelectorAll(`#c-${c.id} button`).forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.i === state[c.id]))));
+  [...SUB_CHOICES, ...FILM_CHOICES].forEach(c => {
+    document.querySelectorAll(`#c-${c.id} button`).forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.i === state[c.id])));
+    if (c.desc) $('p-' + c.id).textContent = `“${c.desc[state[c.id]]}”`;
+  });
 
-  const { parts, bulletCount } = state.mode === 'sub' ? buildSub(state) : build(state);
+  const { parts, bulletCount } = state.mode === 'sub' ? buildSub(state) : state.mode === 'film' ? buildFilm(state) : build(state);
   plainText = parts.map(p => p[0]).join('');
   $('prompt').innerHTML = parts.map(([s, c]) => c ? `<mark>${esc(s)}</mark>` : esc(s)).join('');
   $('prompt').classList.toggle('plain', !state.marks);
