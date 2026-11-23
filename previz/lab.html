@@ -506,6 +506,27 @@ function kelvinRGB(K) {
   return [clamp(r, 0, 255), clamp(g, 0, 255), clamp(b, 0, 255)].map(Math.round);
 }
 function nearestK(K) { let best = K_INFO[0]; for (const k of K_INFO) if (Math.abs(k.k - K) < Math.abs(best.k - K)) best = k; return best; }
+// Seedance-style lens wording: the model ignores bare focal-length numbers
+// (field test 2026-11-23), so the prompt describes what the lens visibly does.
+function fmtDist(m) { return m < 10 ? `about ${(Math.round(m * 10) / 10)} meters` : `about ${Math.round(m)} meters`; }
+function lensEvidence(f, distM) {
+  const d = fmtDist(distM);
+  let t;
+  if (f < 21) t = `The camera is only ${d} from the subject, so the space looks vast: the background feels far away and small, straight lines near the frame edges bow and lean outward, near objects look large and far objects tiny`;
+  else if (f < 40) t = `The camera is ${d} from the subject; the subject shares the frame with plenty of the surrounding space, with mild wide perspective — the background a little smaller and farther than the eye would see it`;
+  else if (f < 70) t = `The camera is ${d} from the subject; perspective looks natural, as the human eye sees it — straight lines stay straight and the background sits at its normal size`;
+  else if (f < 120) t = `The camera stands back ${d} from the subject; the background looks pulled in, noticeably closer and larger behind the subject than in reality, only a modest slice of the location visible, the face free of any distortion`;
+  else t = `The camera stands far back, ${d} from the subject; the background is heavily compressed — buildings, lights and anything behind look enormous and stacked right behind the subject as if only a few meters away, and only a narrow slice of the location is visible`;
+  return `${t} (lens about ${Math.round(f)}mm).`;
+}
+function blurEvidence(N, subj) {
+  const b = N <= 1.8 ? "everything behind dissolves into soft shapes and large round bokeh discs of any lights, no background detail readable"
+    : N <= 3.2 ? "the background is softly blurred, its shapes readable but no fine detail"
+    : N <= 6 ? "the background is slightly soft but clearly readable"
+    : N <= 9 ? "the background is nearly as sharp as the subject"
+    : "everything is sharp from the foreground to the far background";
+  return `Focus is locked on ${subj}; ${b} (about f/${N}).`;
+}
 function stopInfo(N) { return STOP_INFO.find((s) => N <= s.max); }
 function lensInfo(f) {
   if (f < 21) return { ko: "초광각", desc: "공간이 넓게 담기고 <b>원근이 과장</b>돼요. 가까운 것은 크게, 먼 것은 아주 작게.", en: "ultra-wide lens" };
@@ -749,9 +770,10 @@ function buildPrompt() {
   parts.push((SPEEDS.find((v) => v.id === s.speed) || SPEEDS[0]).en);
   parts.push(...extrasSentences());
   parts.push(cap(MOVES.find((m) => m.id === s.move).en) + (s.move === "static" ? "." : `, ${easeById(s.ease).en}, over about ${s.moveDur.toFixed(1)} seconds.`));
-  parts.push(`Shot on a ${s.focal}mm ${lensInfo(s.focal).en} at f/${N}, ${stopInfo(N).en}.`);
+  parts.push(lensEvidence(s.focal, live.focusM));
+  parts.push(blurEvidence(N, subj));
   parts.push(lightSentence());
-  parts.push(`Photorealistic, cinematic, natural film grain, aspect ratio ${s.ratio}.`);
+  parts.push("Photorealistic real-world footage.");
   return parts.filter(Boolean).join(" ");
 }
 function writePrompt() { $("promptOut").textContent = buildPrompt(); }
