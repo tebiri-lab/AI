@@ -439,6 +439,20 @@ const EASE_EN = {
   steps: 'in choppy stepped jumps like stop-motion',
 };
 
+// Seedance-style lens wording: the model ignores bare focal-length numbers
+// (field test 2026-11-23), so the prompt describes what the lens visibly does.
+function fmtDist(m) { return m < 10 ? `about ${(Math.round(m * 10) / 10)} meters` : `about ${Math.round(m)} meters`; }
+function lensEvidence(f, distM) {
+  const d = fmtDist(distM);
+  let t;
+  if (f < 21) t = `The camera is only ${d} from the subject, so the space looks vast: the background feels far away and small, straight lines near the frame edges bow and lean outward, near objects look large and far objects tiny`;
+  else if (f < 40) t = `The camera is ${d} from the subject; the subject shares the frame with plenty of the surrounding space, with mild wide perspective — the background a little smaller and farther than the eye would see it`;
+  else if (f < 70) t = `The camera is ${d} from the subject; perspective looks natural, as the human eye sees it — straight lines stay straight and the background sits at its normal size`;
+  else if (f < 120) t = `The camera stands back ${d} from the subject; the background looks pulled in, noticeably closer and larger behind the subject than in reality, only a modest slice of the location visible, the face free of any distortion`;
+  else t = `The camera stands far back, ${d} from the subject; the background is heavily compressed — buildings, lights and anything behind look enormous and stacked right behind the subject as if only a few meters away, and only a narrow slice of the location is visible`;
+  return `${t} (lens about ${Math.round(f)}mm).`;
+}
+
 function lensFeel(f) {
   if (f <= 20) return 'ultra-wide lens with strong perspective';
   if (f <= 28) return 'wide-angle lens';
@@ -489,10 +503,14 @@ export function describeShot(shot, project, index) {
   if ((keys[0]?.roll || 0) !== 0) parts.push('Dutch tilt');
   if (shot.shake > 0) parts.push('handheld camera with subtle natural shake');
   if (lockName) parts.push('camera keeps the subject locked in frame');
-  parts.push(`shot on ${lens} ${lensFeel(f1)}, ${sensor.en} sensor`);
-  parts.push(`${aspect}:1 aspect ratio`);
   parts.push(`${shot.duration} seconds`);
   let en = parts.join(', ') + '.';
+  const kEnd = keys[keys.length - 1];
+  if (kEnd && kEnd.pos && kEnd.target) {
+    const dist = Math.hypot(kEnd.pos[0] - kEnd.target[0], kEnd.pos[1] - kEnd.target[1], kEnd.pos[2] - kEnd.target[2]);
+    en += ' ' + lensEvidence(f1, dist);
+    if (f0 !== f1) en += ` The focal length changes during the shot from about ${Math.round(f0)}mm to ${Math.round(f1)}mm, so the background visibly ${f1 > f0 ? 'grows and crowds in behind the subject' : 'falls away and widens around the subject'}.`;
+  }
   if (shot.desc) en += ` Action: ${shot.desc.trim().replace(/[.。!?]+$/, '')}.`;
   if (project.style) en += ` ${project.style}`;
   return { ko, en };
